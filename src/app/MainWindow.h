@@ -74,6 +74,7 @@ private:
     void deleteGuides();
     void modelInfo();
     void roundCorners();
+    void traceImage();
     void about();
     void showShortcuts();
     void contextMenu(const QPoint& globalPos, const PickResult& pick);

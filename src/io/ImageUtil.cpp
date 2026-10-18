@@ -93,6 +93,41 @@ Color averageColor(const QImage& imgIn) {
     return Color(float(r / n), float(g / n), float(b / n), 1.0f);
 }
 
+ScalarImage scalarImage(const QImage& imgIn, TraceSource src, int maxSide) {
+    QImage img = imgIn;
+    if (img.width() > maxSide || img.height() > maxSide)
+        img = img.scaled(maxSide, maxSide, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    img = img.convertToFormat(QImage::Format_RGBA8888);
+    ScalarImage s;
+    s.width = img.width();
+    s.height = img.height();
+    s.values.resize(size_t(s.width) * s.height);
+    for (int y = 0; y < s.height; ++y) {
+        const uchar* row = img.constScanLine(y);
+        for (int x = 0; x < s.width; ++x) {
+            const uchar* p = row + 4 * x;
+            float a = p[3] / 255.f;
+            // Transparent pixels count as white paper for the brightness modes.
+            float lum = (0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2]) / 255.f;
+            lum = lum * a + (1 - a);
+            float v = src == TraceSource::Alpha ? a : (src == TraceSource::Dark ? 1 - lum : lum);
+            s.values[size_t(y) * s.width + x] = v;
+        }
+    }
+    return s;
+}
+
+bool hasTransparency(const QImage& imgIn) {
+    if (!imgIn.hasAlphaChannel()) return false;
+    QImage img = imgIn.convertToFormat(QImage::Format_RGBA8888);
+    for (int y = 0; y < img.height(); ++y) {
+        const uchar* row = img.constScanLine(y);
+        for (int x = 0; x < img.width(); ++x)
+            if (row[4 * x + 3] < 250) return true;
+    }
+    return false;
+}
+
 bool isImageFile(const QString& path) {
     QString s = QFileInfo(path).suffix().toLower();
     static const QStringList exts = {"png", "jpg", "jpeg", "bmp", "gif", "webp", "tga", "tif", "tiff", "ppm", "avif", "jxl", "heic"};

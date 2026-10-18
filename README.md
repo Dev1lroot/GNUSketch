@@ -140,10 +140,40 @@ Drag an image file (PNG, JPEG, WebP, BMP, TIFF, …) from your file manager onto
 face. It becomes a new material and the image is **fitted to that face**. Hold
 **Ctrl** while dropping to **tile it at real-world size** instead (default tile
 1 m wide; change it in Materials → Edit). If the face is part of the selection, every
-selected face receives the texture. Dropping onto empty space or onto the Materials
-panel just adds the material. Right-click → Texture → Fit to Face / Reset Position
+selected face receives the texture. Dropping onto the Materials panel just adds the
+material. Right-click → Texture → Fit to Face / Reset Position
 re-maps selected faces. The Materials panel also ships generated textures (brick,
 wood, tiles, grass, concrete, gravel, water, stone) and a colour palette.
+
+**Images as planes:** drop an image file from the desktop or Dolphin onto **empty
+space** and it becomes a flat rectangle showing the image, at 1 pixel = 1 mm. It lies
+on the axis plane that faces the camera most: the ground in a top view, a vertical
+wall (standing on the ground) in front or side views. The new plane is selected, so
+you can Scale it to size or trace it straight away.
+
+## Trace Image
+
+**Tools → Trace Image…** (also in the tool set and the right-click menu) turns the
+picture on the selected faces into outline geometry. It works on any face that shows
+an image, typically one made by dropping an image into the scene.
+
+* **Alpha cutout**: outlines the opaque parts of an image with a transparent
+  background (logos, sprites, cut-out PNGs). Chosen by default when the image has
+  transparency.
+* **Dark shapes**: outlines black-on-white artwork (scanned drawings, stencils,
+  text). **Light shapes** does the opposite.
+* **Threshold** sets where the edge is (50 % = halfway between background and shape).
+  **Smoothing** sets how far the outline may stray from the image, in pixels; larger
+  values give fewer, straighter edges. **Ignore specks below** drops dust and noise.
+* **Remove the background** cuts the shape out, leaving only faces inside the outline
+  (holes such as the inside of an "O" stay open). Untick it to keep the whole face and
+  just split it along the outline.
+
+The preview updates live as you change the settings; OK keeps it as one undo step.
+Outlines are traced with sub-pixel precision and simplified, and sharp corners are
+restored, so rectangular artwork stays rectangular. The pieces keep the image as their
+texture and can be push/pulled into solid letters, logos or stencils. Only one copy of
+the image is traced, so on a tiled texture fit the image to the face first.
 
 ## File formats
 
@@ -165,7 +195,7 @@ File → Export → FBX) or with assimp (`assimp export model.gltf model.fbx`).
 
 ```
 src/core    Math, Mesh (B-rep kernel + face inference), Triangulate, Units, Document (undo),
-            FollowMe (profile sweeps), RoundCorners (fillets)
+            FollowMe (profile sweeps), RoundCorners (fillets), ImageTrace (image outlines)
 src/io      NativeFormat, ObjIO, GltfExport, StlExport, ImageUtil
 src/render  Camera, Renderer (GL 3.3: faces, geometry-shader wide/dashed lines, sky/ground)
 src/app     Viewport, Inference, tools (Draw/Modify/Camera), Panels (tray), MainWindow, Icons

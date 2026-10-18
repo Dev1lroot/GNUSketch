@@ -4,6 +4,7 @@
 #include "core/Mesh.h"
 #include "core/RoundCorners.h"
 #include "core/FollowMe.h"
+#include "core/ImageTrace.h"
 #include "core/Triangulate.h"
 #include "core/Units.h"
 
@@ -510,6 +511,73 @@ int main() {
         Mesh m;
         std::vector<Id> path = m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {1, 1, 1}}, false);
         CHECK_EQ((int)edgeChain(m, path[1]).size(), 3);
+    });
+
+    // Synthetic image: value 1 where inside(x, y) (pixel centres), else 0.
+    auto makeImage = [](int w, int h, const std::function<bool(double, double)>& inside) {
+        ScalarImage img;
+        img.width = w;
+        img.height = h;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) img.values.push_back(inside(x + 0.5, y + 0.5) ? 1.f : 0.f);
+        return img;
+    };
+    auto loopArea = [](const std::vector<Vec2>& L) {
+        return std::fabs(signedArea2D((int)L.size(), [&](int i) { return L[i]; }));
+    };
+
+    test("trace image: disc contour", [&] {
+        ScalarImage img = makeImage(64, 64, [](double x, double y) { return std::hypot(x - 32, y - 32) < 20; });
+        TraceOptions opt;
+        auto loops = traceContours(img, opt);
+        CHECK_EQ((int)loops.size(), 1);
+        if (!loops.empty()) CHECK(std::fabs(loopArea(loops[0]) - kPi * 400) < 0.03 * kPi * 400);
+    });
+
+    test("trace image: ring gives outer and inner contour, specks dropped", [&] {
+        ScalarImage img = makeImage(64, 64, [](double x, double y) {
+            double r = std::hypot(x - 32, y - 32);
+            return (r < 25 && r > 12) || (std::fabs(x - 2) < 1 && std::fabs(y - 2) < 1);
+        });
+        TraceOptions opt;
+        CHECK_EQ((int)traceContours(img, opt).size(), 2);
+    });
+
+    test("trace image: shape touching the border closes along it", [&] {
+        ScalarImage img = makeImage(40, 20, [](double x, double) { return x < 20; });
+        TraceOptions opt;
+        auto loops = traceContours(img, opt);
+        CHECK_EQ((int)loops.size(), 1);
+        if (!loops.empty()) CHECK(std::fabs(loopArea(loops[0]) - 20 * 20) < 1e-6);
+    });
+
+    test("trace image: cut out an alpha shape from an image plane", [&] {
+        Mesh m;
+        rect(m, 0, 0, 2, 1);
+        Id f = onlyFace(m);
+        bool front = m.faces[f].normal.z > 0;
+        TexMap map = fitTextureToFace(m, f, front);
+        // A square with a square hole, in a 200 x 100 image of the 2 x 1 face.
+        ScalarImage img = makeImage(200, 100, [](double x, double y) {
+            bool outer = x > 20 && x < 80 && y > 20 && y < 80;
+            bool hole = x > 40 && x < 60 && y > 40 && y < 60;
+            return outer && !hole;
+        });
+        TraceOptions opt;
+        std::string err;
+        CHECK(traceImageOnFace(m, f, map, img, opt, &err));
+        CHECK_EQ(m.aliveFaceCount(), 1);
+        Id g = onlyFace(m);
+        CHECK(g != kNone && m.faces[g].holes.size() == 1);
+        CHECK(std::fabs(totalArea(m) - (0.6 * 0.6 - 0.2 * 0.2)) < 1e-6);
+        CHECK_EQ(m.aliveEdgeCount(), 8);
+        // Keeping the background splits the face instead.
+        Mesh k;
+        rect(k, 0, 0, 2, 1);
+        opt.removeBackground = false;
+        CHECK(traceImageOnFace(k, onlyFace(k), map, img, opt, &err));
+        CHECK_EQ(k.aliveFaceCount(), 3);
+        CHECK(std::fabs(totalArea(k) - 2) < 1e-6);
     });
 
     test("circle push/pull has soft sides", [] {

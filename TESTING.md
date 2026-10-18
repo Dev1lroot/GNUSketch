@@ -30,6 +30,8 @@ bottom. Screenshots help.
 - [ ] Drag an image onto a face (fit), Ctrl+drop (tile), drop onto Materials panel
 - [ ] Paint Bucket with Ctrl/Shift/Alt; colour palette and generated textures
 - [ ] Edit tab: colour, opacity, tile size
+- [ ] Drop an image from the desktop/Dolphin onto empty space: plane in top view (ground) and front/side view (vertical, on the ground), correct orientation, 1 px = 1 mm
+- [ ] Trace Image: alpha cutout of a transparent PNG logo, dark shapes of a black-on-white scan, light shapes; threshold/smoothing/specks live preview; remove background on/off; push/pull the result
 
 ## Files
 - [ ] Save/Open `.gsketch`; Export OBJ/glTF/STL and open them in Blender; Import OBJ

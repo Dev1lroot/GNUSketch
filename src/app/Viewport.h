@@ -48,6 +48,9 @@ public:
     QString glError() const { return glError_; }
     // Applies an image file as texture to the face under (x, y). Returns true if applied.
     bool dropImage(const QString& path, double x, double y, bool tile);
+    // Places an image file as a textured rectangle (1 px = 1 mm) on the axis
+    // plane that faces the camera most, centred under (x, y).
+    bool addImagePlane(const QString& path, double x, double y);
 
 signals:
     void statusText(const QString& text);

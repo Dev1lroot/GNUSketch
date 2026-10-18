@@ -3,6 +3,7 @@
 
 #include "MainWindow.h"
 #include "Viewport.h"
+#include "io/ImageUtil.h"
 #include "io/NativeFormat.h"
 #include "render/Renderer.h"
 
@@ -14,6 +15,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFunctions>
+#include <QPainter>
 #include <QSet>
 #include <QTemporaryDir>
 
@@ -286,6 +288,37 @@ int runSelfTest(MainWindow& w) {
     }
     doc.style = RenderStyle();
     d.check(colors.size() > 20, "rendered frames are not blank");
+
+    // Image dropped into empty space becomes a textured plane; trace its alpha.
+    {
+        QImage cut(200, 100, QImage::Format_ARGB32);
+        cut.fill(Qt::transparent);
+        QPainter pt(&cut);
+        pt.setBrush(Qt::red);
+        pt.setPen(Qt::NoPen);
+        pt.drawEllipse(QRectF(60, 10, 80, 80));
+        pt.end();
+        QString cutPng = tmp.filePath("cutout.png");
+        cut.save(cutPng);
+        vp->setStandardView(Vec3(0, 0, -1));
+        size_t mats = doc.state.materials.size();
+        bool placed = vp->addImagePlane(cutPng, 8, 8);
+        d.pump();
+        d.check(placed && doc.state.materials.size() == mats + 1 && !doc.selection.faces.empty(), "image drop into empty space adds a plane");
+        if (!doc.selection.faces.empty()) {
+            Id f = *doc.selection.faces.begin();
+            const Material* mat = doc.material(d.mesh().faces[f].front.material);
+            bool traced = false;
+            if (mat) {
+                ScalarImage si = scalarImage(decodeTexture(mat->texture), TraceSource::Alpha);
+                doc.beginOp("Trace Image");
+                traced = traceImageOnFace(d.mesh(), f, effectiveTexMap(d.mesh().faces[f], true, mat), si, TraceOptions());
+                doc.commitOp();
+            }
+            d.check(traced, "trace image cuts out the alpha shape");
+        }
+        vp->zoomExtents();
+    }
 
     // Undo everything, redo everything.
     int steps = 0;

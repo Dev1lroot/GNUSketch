@@ -18,6 +18,7 @@ add_library(gs_core STATIC
   src/core/Mesh.h src/core/Mesh.cpp
   src/core/RoundCorners.h src/core/RoundCorners.cpp
   src/core/FollowMe.h src/core/FollowMe.cpp
+  src/core/ImageTrace.h src/core/ImageTrace.cpp
   src/core/Units.h src/core/Units.cpp
   src/core/Document.h src/core/Document.cpp
 )

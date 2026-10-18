@@ -490,9 +490,86 @@ void Viewport::dropEvent(QDropEvent* e) {
     }
     e->acceptProposedAction();
     bool tile = e->modifiers() & Qt::ControlModifier;
-    if (!dropImage(paths.first(), e->position().x(), e->position().y(), tile)) emit imageDropped(paths.first());
+    if (!dropImage(paths.first(), e->position().x(), e->position().y(), tile))
+        addImagePlane(paths.first(), e->position().x(), e->position().y());
     for (int i = 1; i < paths.size(); ++i) emit imageDropped(paths[i]);
     update();
+}
+
+bool Viewport::addImagePlane(const QString& path, double x, double y) {
+    Texture tex;
+    QString err;
+    if (!loadTextureFile(path, tex, &err)) {
+        emit statusText(err);
+        return false;
+    }
+    QImage img = decodeTexture(tex);
+    int pw = tex.pixelWidth > 0 ? tex.pixelWidth : img.width(), ph = tex.pixelHeight > 0 ? tex.pixelHeight : img.height();
+    if (pw <= 0 || ph <= 0) return false;
+    const double W = pw * 0.001, H = ph * 0.001;
+
+    // Axis plane facing the camera most; ground plane at z = 0, vertical planes
+    // through the camera target.
+    const Vec3 f = camera_.forward();
+    int ax = 0;
+    for (int i = 1; i < 3; ++i)
+        if (std::fabs(f[i]) > std::fabs(f[ax])) ax = i;
+    Vec3 n;
+    n[ax] = f[ax] > 0 ? -1 : 1;
+    Plane pl = ax == 2 ? Plane(Vec3(0, 0, 1), Vec3()) : Plane(n, camera_.target);
+    Ray r = camera_.ray(x, y);
+    double t;
+    Vec3 anchor = intersectRayPlane(r, pl, t) ? r.at(t) : pl.project(camera_.target);
+    // Image "up": world up on vertical planes, the in-plane axis closest to the
+    // screen's up on the ground. right x up = n, so the image faces the camera.
+    Vec3 up(0, 0, 1);
+    if (ax == 2) {
+        Vec3 su = camera_.trueUp();
+        up = std::fabs(su.x) > std::fabs(su.y) ? Vec3(su.x > 0 ? 1 : -1, 0, 0) : Vec3(0, su.y > 0 ? 1 : -1, 0);
+    }
+    const Vec3 right = up.cross(n);
+    Vec3 o = anchor - right * (W / 2) - up * (H / 2);
+    if (ax != 2 && o.z < 0) o.z = 0; // stand on the ground
+
+    Material mat;
+    mat.name = QFileInfo(path).completeBaseName().toStdString();
+    tex.worldWidth = W;
+    tex.worldHeight = H;
+    mat.texture = tex;
+    mat.color = averageColor(img);
+
+    doc_->beginOp("Add Image");
+    Mesh& m = doc_->mesh();
+    Id mid = doc_->addMaterial(mat);
+    m.drawPolyline({o, o + right * W, o + right * W + up * H, o + up * H}, true);
+    TexMap map;
+    map.valid = true;
+    map.origin = o;
+    map.u = right / W;
+    map.v = up / H;
+    const Plane face(n, o);
+    doc_->selection.clear();
+    for (Id g = 0; g < (Id)m.faces.size(); ++g) {
+        Face& F = m.faces[g];
+        if (!F.alive || std::fabs(F.normal.dot(n)) < 1 - 1e-6 || !face.contains(m.faceInteriorPoint(g))) continue;
+        Vec3 d = m.faceInteriorPoint(g) - o;
+        double u = d.dot(map.u), v = d.dot(map.v);
+        if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+        for (FaceSide* s : {&F.front, &F.back}) {
+            s->material = mid;
+            s->tex = map;
+        }
+        doc_->selection.faces.insert(g);
+    }
+    doc_->currentMaterial = mid;
+    m.touch();
+    doc_->commitOp();
+    doc_->notifySelection();
+    emit materialPicked();
+    emit statusText(QStringLiteral("Image placed at 1 px = 1 mm (%1 × %2). Scale it to size; Tools → Trace Image outlines its shape.")
+                        .arg(QString::fromStdString(doc_->units.format(W)), QString::fromStdString(doc_->units.format(H))));
+    update();
+    return true;
 }
 
 bool Viewport::dropImage(const QString& path, double x, double y, bool tile) {

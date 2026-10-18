@@ -16,6 +16,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QDialog>
@@ -172,6 +173,8 @@ void MainWindow::buildActions() {
     act("exportobj", "export", QStringLiteral("Export OBJ (n-gons)…"), QKeySequence(), [this] { exportObj(); });
     act("roundcorners", "roundcorners", QStringLiteral("&Round Corners…"), QKeySequence(), [this] { roundCorners(); })
         ->setStatusTip(QStringLiteral("Round the selected edges or corners with a radius and number of segments."));
+    act("traceimage", "traceimage", QStringLiteral("&Trace Image…"), QKeySequence(), [this] { traceImage(); })
+        ->setStatusTip(QStringLiteral("Turn the alpha cutout or the dark/light shapes of a face's image into outline geometry."));
     act("exportgltf", "", QStringLiteral("Export glTF 2.0…"), QKeySequence(), [this] { exportGltf(); });
     act("exportstl", "", QStringLiteral("Export STL…"), QKeySequence(), [this] { exportStl(); });
     act("quit", "", QStringLiteral("E&xit"), QKeySequence::Quit, [this] { close(); });
@@ -377,6 +380,7 @@ void MainWindow::buildMenus() {
     tools->addAction(toolActions_[ToolId::Tape]);
     tools->addSeparator();
     tools->addAction(acts_["roundcorners"]);
+    tools->addAction(acts_["traceimage"]);
 
     QMenu* win = menuBar()->addMenu(QStringLiteral("&Window"));
     win->addAction(acts_["modelinfo"]);
@@ -448,7 +452,7 @@ void MainWindow::buildToolbars() {
     gl->setHorizontalSpacing(1);
     gl->setVerticalSpacing(1);
     // Cell values: tool id, -1 = empty, -2 = separator row, -3 = zoom extents,
-    // -4 = round corners.
+    // -4 = round corners, -5 = trace image.
     const int rows[][2] = {
         {(int)ToolId::Select, (int)ToolId::Paint},
         {(int)ToolId::Eraser, (int)ToolId::Tape},
@@ -460,7 +464,7 @@ void MainWindow::buildToolbars() {
         {(int)ToolId::Move, (int)ToolId::PushPull},
         {(int)ToolId::Rotate, (int)ToolId::Offset},
         {(int)ToolId::Scale, (int)ToolId::FollowMe},
-        {-4, -1},
+        {-4, -5},
         {-2, -2},
         {(int)ToolId::Orbit, (int)ToolId::Pan},
         {(int)ToolId::Zoom, (int)ToolId::ZoomWindow},
@@ -482,6 +486,7 @@ void MainWindow::buildToolbars() {
             b->setAutoRaise(true);
             b->setDefaultAction(row[c] == -3 ? acts_["zoomext"]
                                 : row[c] == -4 ? acts_["roundcorners"]
+                                : row[c] == -5 ? acts_["traceimage"]
                                                : toolActions_[(ToolId)row[c]]);
             gl->addWidget(b, r, c);
         }
@@ -562,6 +567,7 @@ void MainWindow::onSelectionChanged() {
     entityInfo_->refresh();
     bool any = !doc_.selection.empty();
     for (const char* k : {"cut", "copy", "delete", "hide", "roundcorners"}) acts_[k]->setEnabled(any);
+    acts_["traceimage"]->setEnabled(!doc_.selection.faces.empty());
     viewport_->update();
 }
 
@@ -1070,6 +1076,127 @@ void MainWindow::roundCorners() {
     viewport_->update();
 }
 
+void MainWindow::traceImage() {
+    viewport_->cancelTool();
+    // Selected faces that show an image, with the side and mapping to trace.
+    struct Target {
+        Id face;
+        TexMap map;
+        Id material;
+    };
+    std::vector<Target> targets;
+    const Mesh& mesh = doc_.mesh();
+    for (Id f : doc_.selection.faces) {
+        const Face& F = mesh.faces[f];
+        for (bool front : {true, false}) {
+            Id mid = front ? F.front.material : F.back.material;
+            const Material* mat = doc_.material(mid);
+            if (!mat || !mat->hasTexture()) continue;
+            targets.push_back({f, effectiveTexMap(F, front, mat), mid});
+            break;
+        }
+    }
+    if (targets.empty()) {
+        statusBar()->showMessage(QStringLiteral("Select a face that shows an image (drop an image file into the scene to make one)."), 6000);
+        return;
+    }
+    std::map<Id, QImage> images;
+    bool alpha = false;
+    for (const Target& t : targets) {
+        if (images.count(t.material)) continue;
+        images[t.material] = decodeTexture(doc_.material(t.material)->texture);
+        alpha = alpha || hasTransparency(images[t.material]);
+    }
+
+    QSettings settings;
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Trace Image"));
+    auto* fl = new QFormLayout(&dlg);
+    auto* source = new QComboBox(&dlg);
+    source->addItems({QStringLiteral("Alpha cutout (transparent background)"), QStringLiteral("Dark shapes (black on white)"),
+                      QStringLiteral("Light shapes (white on black)")});
+    source->setCurrentIndex(alpha ? 0 : 1);
+    auto* threshold = new QSpinBox(&dlg);
+    threshold->setRange(1, 99);
+    threshold->setSuffix(QStringLiteral(" %"));
+    threshold->setValue(settings.value("traceImage/threshold", 50).toInt());
+    auto* detail = new QDoubleSpinBox(&dlg);
+    detail->setRange(0.2, 20);
+    detail->setSingleStep(0.25);
+    detail->setSuffix(QStringLiteral(" px"));
+    detail->setValue(settings.value("traceImage/simplify", 1.0).toDouble());
+    detail->setToolTip(QStringLiteral("How far the outline may deviate from the image. Larger values give fewer edges."));
+    auto* specks = new QSpinBox(&dlg);
+    specks->setRange(0, 100000);
+    specks->setSuffix(QStringLiteral(" px²"));
+    specks->setValue(settings.value("traceImage/minArea", 16).toInt());
+    auto* removeBg = new QCheckBox(QStringLiteral("Remove the background (cut out the shape)"), &dlg);
+    removeBg->setChecked(settings.value("traceImage/removeBackground", true).toBool());
+    auto* msg = new QLabel(&dlg);
+    msg->setWordWrap(true);
+    fl->addRow(QStringLiteral("Trace:"), source);
+    fl->addRow(QStringLiteral("Threshold:"), threshold);
+    fl->addRow(QStringLiteral("Smoothing:"), detail);
+    fl->addRow(QStringLiteral("Ignore specks below:"), specks);
+    fl->addRow(removeBg);
+    fl->addRow(msg);
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    fl->addRow(bb);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    // Per-material pixel values for the current source (recomputed on change).
+    std::map<Id, ScalarImage> values;
+    int valuesSource = -1;
+    bool ok = false;
+    doc_.beginOp("Trace Image");
+    auto apply = [&] {
+        doc_.cancelOp();
+        doc_.beginOp("Trace Image");
+        if (valuesSource != source->currentIndex()) {
+            values.clear();
+            for (const auto& [mid, img] : images) values[mid] = scalarImage(img, (TraceSource)source->currentIndex());
+            valuesSource = source->currentIndex();
+        }
+        TraceOptions opt;
+        opt.threshold = threshold->value() / 100.0;
+        opt.simplify = detail->value();
+        opt.minArea = specks->value();
+        opt.removeBackground = removeBg->isChecked();
+        std::string err;
+        int traced = 0;
+        for (const Target& t : targets) {
+            std::string e;
+            if (traceImageOnFace(doc_.mesh(), t.face, t.map, values[t.material], opt, &e)) ++traced;
+            else err = e;
+        }
+        ok = traced > 0;
+        msg->setText(ok ? QStringLiteral("%1 faces, %2 edges in the model.").arg(doc_.mesh().aliveFaceCount()).arg(doc_.mesh().aliveEdgeCount())
+                        : QString::fromStdString(err));
+        bb->button(QDialogButtonBox::Ok)->setEnabled(ok);
+        viewport_->update();
+    };
+    connect(source, &QComboBox::currentIndexChanged, &dlg, apply);
+    connect(threshold, &QSpinBox::valueChanged, &dlg, apply);
+    connect(detail, &QDoubleSpinBox::valueChanged, &dlg, apply);
+    connect(specks, &QSpinBox::valueChanged, &dlg, apply);
+    connect(removeBg, &QCheckBox::toggled, &dlg, apply);
+    apply();
+
+    if (dlg.exec() == QDialog::Accepted && ok) {
+        settings.setValue("traceImage/threshold", threshold->value());
+        settings.setValue("traceImage/simplify", detail->value());
+        settings.setValue("traceImage/minArea", specks->value());
+        settings.setValue("traceImage/removeBackground", removeBg->isChecked());
+        doc_.selection.clear();
+        doc_.commitOp();
+        doc_.notifySelection();
+    } else {
+        doc_.cancelOp();
+    }
+    viewport_->update();
+}
+
 void MainWindow::about() {
     QMessageBox::about(this, QStringLiteral("About GNUSketch"),
                        QStringLiteral("<h3>GNUSketch %1</h3><p>A native Linux 3D sketching tool.</p>"
@@ -1115,6 +1242,7 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
         menu.addAction(acts_["delete"]);
         menu.addAction(acts_["hide"]);
         menu.addAction(acts_["roundcorners"]);
+        if (!s.faces.empty()) menu.addAction(acts_["traceimage"]);
         menu.addSeparator();
         QAction* conn = menu.addAction(QStringLiteral("Select All Connected"));
         connect(conn, &QAction::triggered, this, [this] {

@@ -1017,6 +1017,9 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
     std::unordered_map<Id, Id> vm;
     for (const auto& L : loops)
         for (Id v : L) vm[v] = addVertex(pos(v) + off);
+    // New vertices landing on existing edges (e.g. the far side of a wall) split
+    // them so the new faces share topology with their neighbours.
+    for (const auto& kv : vm) splitEdgesThrough(kv.second);
 
     std::map<Id, Id> curveMap;
     auto mapCurve = [&](Id c) {
@@ -1029,6 +1032,7 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
     };
 
     std::vector<std::pair<Id, Id>> oldEdges;
+    std::vector<Id> created;
     const double sgn = isFree ? 1.0 : (dist > 0 ? 1.0 : -1.0);
     for (const auto& L : loops) {
         size_t k = L.size();
@@ -1040,7 +1044,7 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
             Vec3 sideN = t.cross(n) * sgn;
             Id eab = findEdge(a, b), epa = findEdge(p, a);
             Edge eabCopy = eab != kNone ? edges[eab] : Edge();
-            addFaceRaw({a, b, b2, a2}, {}, sideN);
+            created.push_back(addFaceRaw({a, b, b2, a2}, {}, sideN));
             // Top edge inherits the curve/soft flags of the bottom edge.
             Id top = findEdge(a2, b2);
             if (top != kNone && eab != kNone) {
@@ -1100,35 +1104,56 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
         for (Id v : L)
             if (vertices[v].alive) mergeCollinearAt(v);
 
-    // Pushed all the way through: the moved face lands on an opposite-facing
-    // coplanar face. Cut that face along the moved boundary and remove both
-    // coincident faces, leaving a hole through the solid.
-    if (moved != kNone && faces[moved].alive && !isFree) {
-        Plane mp = facePlane(moved);
-        Vec3 inner = faceInteriorPoint(moved);
-        bool through = false;
-        for (Id g = 0; g < (Id)faces.size() && !through; ++g) {
-            if (g == moved || !faces[g].alive) continue;
-            if (faces[g].normal.dot(faces[moved].normal) > -1 + 1e-6) continue;
-            if (!facePlane(g).coincident(mp, kTol * 10)) continue;
-            through = pointInFace(g, inner, false);
+    // New faces landing coplanar with an opposite-facing face cancel out where
+    // they overlap: the moved face when pushed all the way through a solid, or
+    // a side face sliding along a neighbour (the floor of a doorway). Cut the
+    // plane along the new face's boundary and remove both coincident parts.
+    created.push_back(moved);
+    for (Id s : created) {
+        if (s == kNone || !faces[s].alive) continue;
+        const Plane sp = facePlane(s);
+        const Vec3 sn = faces[s].normal;
+        std::vector<FaceSnapshot> opposite;
+        for (Id g = 0; g < (Id)faces.size(); ++g) {
+            if (g == s || !faces[g].alive || faces[g].normal.dot(sn) > -1 + 1e-6) continue;
+            if (facePlane(g).coincident(sp, kTol * 10)) opposite.push_back(snapshot(g));
         }
-        if (through) {
-            std::vector<Id> me = faceEdges(moved);
-            rebuildPlane(mp, std::set<Id>(me.begin(), me.end()), {});
-            Id key = moved;
-            eraseFace(key);
-            // The region of the opposite face that coincides with the moved face.
-            for (Id g = 0; g < (Id)faces.size(); ++g) {
-                if (!faces[g].alive || !facePlane(g).coincident(mp, kTol * 10)) continue;
-                std::vector<Id> a = faceVertices(g), b = faceVertices(key);
-                std::sort(a.begin(), a.end());
-                std::sort(b.begin(), b.end());
-                if (a == b) eraseFace(g);
-            }
-            return kNone;
+        if (opposite.empty()) continue;
+        const FaceSnapshot ss = snapshot(s);
+        std::vector<Id> se = faceEdges(s);
+        rebuildPlane(sp, std::set<Id>(se.begin(), se.end()), {});
+        std::vector<Id> loose;
+        for (Id g = 0; g < (Id)faces.size(); ++g) {
+            if (!faces[g].alive || std::fabs(faces[g].normal.dot(sn)) < 1 - 1e-6) continue;
+            if (!facePlane(g).coincident(sp, kTol * 10)) continue;
+            Vec3 p = faceInteriorPoint(g);
+            if (!snapshotContains(ss, p)) continue;
+            bool covered = false;
+            for (const FaceSnapshot& o : opposite) covered = covered || snapshotContains(o, p);
+            if (!covered) continue;
+            std::vector<Id> ge = faceEdges(g);
+            loose.insert(loose.end(), ge.begin(), ge.end());
+            eraseFace(g);
         }
+        // Edges that only bounded the cancelled area go away too.
+        std::set<Id> ends;
+        for (Id e : loose) {
+            if (!edges[e].alive) continue;
+            bool used = false;
+            for (Id g : edgeFaces(e)) used = used || faces[g].alive;
+            if (used) continue;
+            ends.insert(edges[e].v[0]);
+            ends.insert(edges[e].v[1]);
+            edgeMapErase(e);
+            edges[e].alive = false;
+            adjDirty_ = true;
+            ++revision;
+        }
+        removeOrphanVertices();
+        for (Id v : ends)
+            if (vertices[v].alive) mergeCollinearAt(v);
     }
+    if (moved != kNone && !faces[moved].alive) return kNone;
     return moved;
 }
 

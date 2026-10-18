@@ -269,6 +269,57 @@ int main() {
         CHECK(std::fabs(totalArea(m) - (2 * 3 + 4 * 2 + 4 * 1)) < 1e-9);
     });
 
+    // A wall (x 0..4, y 0..0.5, z 0..3) with a door rectangle on the front face
+    // that touches the bottom edge.
+    auto doorWall = [](Mesh& m) {
+        rect(m, 0, 0, 4, 0.5);
+        m.pushPull(onlyFace(m), -3);
+        m.drawPolyline({{1.5, 0, 0}, {1.5, 0, 2}, {2.5, 0, 2}, {2.5, 0, 0}}, false);
+        Id door = kNone;
+        for (Id g = 0; g < (Id)m.faces.size(); ++g)
+            if (m.faces[g].alive && m.faces[g].normal.y < -0.99 && std::fabs(m.faceArea(g) - 2.0) < 1e-9)
+                door = g;
+        return door;
+    };
+    // No two coplanar, opposite-facing faces may overlap (z-fighting).
+    auto noCoincidentOpposites = [](const Mesh& m) {
+        for (Id a = 0; a < (Id)m.faces.size(); ++a)
+            for (Id b = a + 1; b < (Id)m.faces.size(); ++b) {
+                if (!m.faces[a].alive || !m.faces[b].alive) continue;
+                if (m.faces[a].normal.dot(m.faces[b].normal) > -1 + 1e-6) continue;
+                if (!m.facePlane(a).coincident(m.facePlane(b), 1e-6)) continue;
+                if (m.pointInFace(b, m.faceInteriorPoint(a), false) ||
+                    m.pointInFace(a, m.faceInteriorPoint(b), false))
+                    return false;
+            }
+        return true;
+    };
+
+    test("push/pull doorway through a wall cuts the floor", [&] {
+        Mesh m;
+        Id door = doorWall(m);
+        CHECK(door != kNone);
+        m.pushPull(door, -0.5);
+        CHECK(noCoincidentOpposites(m));
+        // front, back, top, 2 ends, 2 bottom pieces, 2 jambs, lintel
+        CHECK_EQ(m.aliveFaceCount(), 10);
+        double expected = 2 * (12 - 2) + 4 * 0.5 /*top*/ + 2 * 1.5 /*ends*/ + 3 * 0.5 /*bottom*/ +
+                          2 * 2 * 0.5 /*jambs*/ + 0.5 /*lintel*/;
+        CHECK(std::fabs(totalArea(m) - expected) < 1e-9);
+        for (const Edge& e : m.edges)
+            if (e.alive) CHECK(!m.edgeFaces(&e - &m.edges[0]).empty());
+    });
+
+    test("push/pull doorway recess notches the floor", [&] {
+        Mesh m;
+        Id door = doorWall(m);
+        m.pushPull(door, -0.2);
+        CHECK(noCoincidentOpposites(m));
+        double expected = 2 * 12 /*front with recess + back*/ + 4 * 0.5 + 2 * 1.5 + (2 - 0.2) /*bottom*/ +
+                          2 * 2 * 0.2 + 0.2;
+        CHECK(std::fabs(totalArea(m) - expected) < 1e-9);
+    });
+
     test("circle push/pull has soft sides", [] {
         Mesh m;
         std::vector<Vec3> pts;

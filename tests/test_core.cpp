@@ -2,6 +2,7 @@
 // Headless tests for the geometry kernel.
 #include "core/Document.h"
 #include "core/Mesh.h"
+#include "core/RoundCorners.h"
 #include "core/Triangulate.h"
 #include "core/Units.h"
 
@@ -318,6 +319,110 @@ int main() {
         double expected = 2 * 12 /*front with recess + back*/ + 4 * 0.5 + 2 * 1.5 + (2 - 0.2) /*bottom*/ +
                           2 * 2 * 0.2 + 0.2;
         CHECK(std::fabs(totalArea(m) - expected) < 1e-9);
+    });
+
+    // Closed, consistently oriented solid: every edge has exactly two faces that
+    // traverse it in opposite directions.
+    auto watertight = [](const Mesh& m) {
+        for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+            if (!m.edges[e].alive) continue;
+            std::vector<Id> fs;
+            for (Id f : m.edgeFaces(e))
+                if (m.faces[f].alive) fs.push_back(f);
+            if (fs.size() != 2) return false;
+            Id a = m.edges[e].v[0], b = m.edges[e].v[1];
+            if (m.faceEdgeDirection(fs[0], a, b) + m.faceEdgeDirection(fs[1], a, b) != 0) return false;
+        }
+        return true;
+    };
+    auto volume = [](const Mesh& m) {
+        double v = 0;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) v += m.pos(m.faces[f].outer[0]).dot(m.faces[f].normal) * m.faceArea(f) / 3;
+        return v;
+    };
+    auto unitCube = [](Mesh& m) {
+        rect(m, 0, 0, 1, 1);
+        m.pushPull(onlyFace(m), -1);
+    };
+    auto edgesWhere = [](const Mesh& m, const std::function<bool(const Vec3&, const Vec3&)>& pred) {
+        std::set<Id> r;
+        for (Id e = 0; e < (Id)m.edges.size(); ++e)
+            if (m.edges[e].alive && pred(m.pos(m.edges[e].v[0]), m.pos(m.edges[e].v[1]))) r.insert(e);
+        return r;
+    };
+    // Area cut away from a corner of a square by an N-segment fillet of radius R.
+    auto cornerLoss = [](double R, int N) { return R * R - N * 0.5 * R * R * std::sin(kPi / 2 / N); };
+
+    test("round corners of a rectangle (2D)", [&] {
+        Mesh m;
+        rect(m, 0, 0, 2, 1);
+        std::set<Id> all = edgesWhere(m, [](const Vec3&, const Vec3&) { return true; });
+        std::string err;
+        CHECK(roundCorners(m, all, 0.1, 6, &err));
+        CHECK_EQ(m.aliveFaceCount(), 1);
+        CHECK_EQ(m.aliveEdgeCount(), 4 + 4 * 6);
+        CHECK(std::fabs(totalArea(m) - (2 - 4 * cornerLoss(0.1, 6))) < 1e-9);
+        // The rounded outline can still be extruded.
+        m.pushPull(onlyFace(m), -0.5);
+        CHECK(watertight(m));
+    });
+
+    test("round one edge of a cube", [&] {
+        Mesh m;
+        unitCube(m);
+        std::set<Id> top = edgesWhere(m, [](const Vec3& a, const Vec3& b) {
+            return a.z > 0.99 && b.z > 0.99 && a.y < 0.01 && b.y < 0.01;
+        });
+        CHECK_EQ((int)top.size(), 1);
+        std::string err;
+        CHECK(roundCorners(m, top, 0.2, 4, &err));
+        CHECK(watertight(m));
+        CHECK_EQ(m.aliveFaceCount(), 6 + 4);
+        CHECK(std::fabs(volume(m) - (1 - cornerLoss(0.2, 4))) < 1e-9);
+    });
+
+    test("round the four top edges of a cube (mitred corners)", [&] {
+        Mesh m;
+        unitCube(m);
+        std::set<Id> top = edgesWhere(m, [](const Vec3& a, const Vec3& b) { return a.z > 0.99 && b.z > 0.99; });
+        CHECK_EQ((int)top.size(), 4);
+        std::string err;
+        CHECK(roundCorners(m, top, 0.25, 5, &err));
+        CHECK(watertight(m));
+        CHECK(volume(m) < 1 - 4 * 0.75 * cornerLoss(0.25, 5) + 1e-9);
+    });
+
+    test("round all edges of a cube (spherical corners)", [&] {
+        Mesh m;
+        unitCube(m);
+        std::set<Id> all = edgesWhere(m, [](const Vec3&, const Vec3&) { return true; });
+        std::string err;
+        CHECK(roundCorners(m, all, 0.2, 4, &err));
+        CHECK(watertight(m));
+        Vec3 c(0.5, 0.5, 0.5);
+        for (Id g = 0; g < (Id)m.faces.size(); ++g)
+            if (m.faces[g].alive) CHECK(m.faces[g].normal.dot(m.faceInteriorPoint(g) - c) > 0);
+        // Facets cut slightly inside the true rounding; with more segments the
+        // volume converges to that of the exactly rounded cube.
+        double exact = 1 - 12 * 0.6 * (0.2 * 0.2 - kPi * 0.04 / 4) - 8 * (0.008 - kPi * 0.008 / 6);
+        CHECK(volume(m) < exact);
+        Mesh fine;
+        unitCube(fine);
+        CHECK(roundCorners(fine, edgesWhere(fine, [](const Vec3&, const Vec3&) { return true; }), 0.2, 16, &err));
+        CHECK(watertight(fine));
+        CHECK(std::fabs(volume(fine) - exact) < 1e-3);
+    });
+
+    test("round corners rejects a radius that is too large", [&] {
+        Mesh m;
+        unitCube(m);
+        std::set<Id> all = edgesWhere(m, [](const Vec3&, const Vec3&) { return true; });
+        std::string err;
+        int faces = m.aliveFaceCount();
+        CHECK(!roundCorners(m, all, 0.6, 4, &err));
+        CHECK(!err.empty());
+        CHECK_EQ(m.aliveFaceCount(), faces);
     });
 
     test("circle push/pull has soft sides", [] {

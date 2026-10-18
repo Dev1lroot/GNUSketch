@@ -73,6 +73,7 @@ private:
     void textureFitSelection(bool fit);
     void deleteGuides();
     void modelInfo();
+    void roundCorners();
     void about();
     void showShortcuts();
     void contextMenu(const QPoint& globalPos, const PickResult& pick);

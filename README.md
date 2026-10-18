@@ -63,6 +63,10 @@ include its output in the bug report.
 * **Push/Pull** extrudes faces. When a face's edges all border perpendicular faces,
   it stretches the solid instead. Coplanar side faces are healed, pushing through a
   solid cuts a hole, and the sides of circles and arcs become soft and smooth-shaded.
+* **Round Corners** (Tools menu, tool set, right-click) rounds the selected edges
+  with a radius in mm and a number of segments, with a live preview. Edges between
+  two faces get a rounded strip with mitred or spherical corners; corners of
+  rectangles and polylines get a tangent arc.
 
 ## Tools (SketchUp-compatible shortcuts)
 

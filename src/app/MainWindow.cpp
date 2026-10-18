@@ -5,6 +5,7 @@
 #include "ModifyTools.h"
 #include "Panels.h"
 #include "Viewport.h"
+#include "core/RoundCorners.h"
 #include "io/GltfExport.h"
 #include "io/ImageUtil.h"
 #include "io/NativeFormat.h"
@@ -16,6 +17,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDockWidget>
@@ -30,6 +32,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
@@ -166,6 +169,8 @@ void MainWindow::buildActions() {
     act("saveas", "", QStringLiteral("Save &As…"), QKeySequence::SaveAs, [this] { saveAs(); });
     act("importobj", "import", QStringLiteral("Import OBJ…"), QKeySequence(), [this] { importObj(); });
     act("exportobj", "export", QStringLiteral("Export OBJ (n-gons)…"), QKeySequence(), [this] { exportObj(); });
+    act("roundcorners", "roundcorners", QStringLiteral("&Round Corners…"), QKeySequence(), [this] { roundCorners(); })
+        ->setStatusTip(QStringLiteral("Round the selected edges or corners with a radius and number of segments."));
     act("exportgltf", "", QStringLiteral("Export glTF 2.0…"), QKeySequence(), [this] { exportGltf(); });
     act("exportstl", "", QStringLiteral("Export STL…"), QKeySequence(), [this] { exportStl(); });
     act("quit", "", QStringLiteral("E&xit"), QKeySequence::Quit, [this] { close(); });
@@ -368,6 +373,8 @@ void MainWindow::buildMenus() {
     for (ToolId id : {ToolId::Move, ToolId::Rotate, ToolId::Scale, ToolId::PushPull, ToolId::Offset}) tools->addAction(toolActions_[id]);
     tools->addSeparator();
     tools->addAction(toolActions_[ToolId::Tape]);
+    tools->addSeparator();
+    tools->addAction(acts_["roundcorners"]);
 
     QMenu* win = menuBar()->addMenu(QStringLiteral("&Window"));
     win->addAction(acts_["modelinfo"]);
@@ -438,7 +445,8 @@ void MainWindow::buildToolbars() {
     gl->setContentsMargins(2, 2, 2, 2);
     gl->setHorizontalSpacing(1);
     gl->setVerticalSpacing(1);
-    // Cell values: tool id, -1 = empty, -2 = separator row, -3 = zoom extents.
+    // Cell values: tool id, -1 = empty, -2 = separator row, -3 = zoom extents,
+    // -4 = round corners.
     const int rows[][2] = {
         {(int)ToolId::Select, (int)ToolId::Paint},
         {(int)ToolId::Eraser, (int)ToolId::Tape},
@@ -449,7 +457,7 @@ void MainWindow::buildToolbars() {
         {-2, -2},
         {(int)ToolId::Move, (int)ToolId::PushPull},
         {(int)ToolId::Rotate, (int)ToolId::Offset},
-        {(int)ToolId::Scale, -1},
+        {(int)ToolId::Scale, -4},
         {-2, -2},
         {(int)ToolId::Orbit, (int)ToolId::Pan},
         {(int)ToolId::Zoom, (int)ToolId::ZoomWindow},
@@ -469,7 +477,9 @@ void MainWindow::buildToolbars() {
             auto* b = new QToolButton(grid);
             b->setIconSize(QSize(28, 28));
             b->setAutoRaise(true);
-            b->setDefaultAction(row[c] == -3 ? acts_["zoomext"] : toolActions_[(ToolId)row[c]]);
+            b->setDefaultAction(row[c] == -3 ? acts_["zoomext"]
+                                : row[c] == -4 ? acts_["roundcorners"]
+                                               : toolActions_[(ToolId)row[c]]);
             gl->addWidget(b, r, c);
         }
         ++r;
@@ -548,7 +558,7 @@ void MainWindow::onDocChanged() {
 void MainWindow::onSelectionChanged() {
     entityInfo_->refresh();
     bool any = !doc_.selection.empty();
-    for (const char* k : {"cut", "copy", "delete", "hide"}) acts_[k]->setEnabled(any);
+    for (const char* k : {"cut", "copy", "delete", "hide", "roundcorners"}) acts_[k]->setEnabled(any);
     viewport_->update();
 }
 
@@ -995,6 +1005,68 @@ void MainWindow::modelInfo() {
     materials_->refresh();
 }
 
+void MainWindow::roundCorners() {
+    viewport_->cancelTool();
+    // Selected edges plus the outlines of selected faces.
+    std::set<Id> edges = doc_.selection.edges;
+    for (Id f : doc_.selection.faces)
+        for (Id e : doc_.mesh().faceEdges(f)) edges.insert(e);
+    if (edges.empty()) {
+        statusBar()->showMessage(QStringLiteral("Select the edges or faces to round first."), 5000);
+        return;
+    }
+
+    QSettings settings;
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Round Corners"));
+    auto* fl = new QFormLayout(&dlg);
+    auto* radius = new QDoubleSpinBox(&dlg);
+    radius->setRange(0.01, 1e6);
+    radius->setDecimals(2);
+    radius->setSuffix(QStringLiteral(" mm"));
+    radius->setValue(settings.value("roundCorners/radiusMm", 10.0).toDouble());
+    auto* segments = new QSpinBox(&dlg);
+    segments->setRange(1, 64);
+    segments->setValue(settings.value("roundCorners/segments", 6).toInt());
+    auto* msg = new QLabel(&dlg);
+    msg->setWordWrap(true);
+    fl->addRow(QStringLiteral("Radius:"), radius);
+    fl->addRow(QStringLiteral("Segments:"), segments);
+    fl->addRow(msg);
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    fl->addRow(bb);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    // Live preview: the operation stays open while the dialog is shown and is
+    // re-applied to the original geometry whenever a value changes.
+    bool ok = false;
+    doc_.beginOp("Round Corners");
+    auto apply = [&] {
+        doc_.cancelOp();
+        doc_.beginOp("Round Corners");
+        std::string err;
+        ok = gs::roundCorners(doc_.mesh(), edges, radius->value() / 1000.0, segments->value(), &err);
+        msg->setText(ok ? QString() : QString::fromStdString(err));
+        bb->button(QDialogButtonBox::Ok)->setEnabled(ok);
+        viewport_->update();
+    };
+    connect(radius, &QDoubleSpinBox::valueChanged, &dlg, apply);
+    connect(segments, &QSpinBox::valueChanged, &dlg, apply);
+    apply();
+
+    if (dlg.exec() == QDialog::Accepted && ok) {
+        settings.setValue("roundCorners/radiusMm", radius->value());
+        settings.setValue("roundCorners/segments", segments->value());
+        doc_.selection.clear();
+        doc_.commitOp();
+        doc_.notifySelection();
+    } else {
+        doc_.cancelOp();
+    }
+    viewport_->update();
+}
+
 void MainWindow::about() {
     QMessageBox::about(this, QStringLiteral("About GNUSketch"),
                        QStringLiteral("<h3>GNUSketch %1</h3><p>A native Linux 3D sketching tool.</p>"
@@ -1039,6 +1111,7 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
     if (!s.empty()) {
         menu.addAction(acts_["delete"]);
         menu.addAction(acts_["hide"]);
+        menu.addAction(acts_["roundcorners"]);
         menu.addSeparator();
         QAction* conn = menu.addAction(QStringLiteral("Select All Connected"));
         connect(conn, &QAction::triggered, this, [this] {

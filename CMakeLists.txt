@@ -16,6 +16,7 @@ add_library(gs_core STATIC
   src/core/Material.h
   src/core/Triangulate.h src/core/Triangulate.cpp
   src/core/Mesh.h src/core/Mesh.cpp
+  src/core/RoundCorners.h src/core/RoundCorners.cpp
   src/core/Units.h src/core/Units.cpp
   src/core/Document.h src/core/Document.cpp
 )

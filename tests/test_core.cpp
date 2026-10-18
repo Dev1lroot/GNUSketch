@@ -3,6 +3,7 @@
 #include "core/Document.h"
 #include "core/Mesh.h"
 #include "core/RoundCorners.h"
+#include "core/FollowMe.h"
 #include "core/Triangulate.h"
 #include "core/Units.h"
 
@@ -329,6 +330,7 @@ int main() {
             std::vector<Id> fs;
             for (Id f : m.edgeFaces(e))
                 if (m.faces[f].alive) fs.push_back(f);
+            if (fs.empty()) continue; // loose edges (e.g. a Follow Me path)
             if (fs.size() != 2) return false;
             Id a = m.edges[e].v[0], b = m.edges[e].v[1];
             if (m.faceEdgeDirection(fs[0], a, b) + m.faceEdgeDirection(fs[1], a, b) != 0) return false;
@@ -423,6 +425,91 @@ int main() {
         CHECK(!roundCorners(m, all, 0.6, 4, &err));
         CHECK(!err.empty());
         CHECK_EQ(m.aliveFaceCount(), faces);
+    });
+
+    // Face whose outer loop has exactly these corners.
+    auto faceWith = [](const Mesh& m, size_t corners, double area) {
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faces[f].outer.size() == corners && std::fabs(m.faceArea(f) - area) < 1e-9) return f;
+        return kNone;
+    };
+    auto pathEdges = [](const std::vector<Id>& es) { return std::set<Id>(es.begin(), es.end()); };
+
+    test("follow me: profile along a line makes a beam", [&] {
+        Mesh m;
+        m.drawPolyline({{0, 0, 0}, {0, 1, 0}, {0, 1, 1}, {0, 0, 1}}, true);
+        Id prof = faceWith(m, 4, 1.0);
+        CHECK(prof != kNone);
+        std::vector<Id> path = m.drawLine({0, 0, 0}, {3, 0, 0});
+        std::string err;
+        CHECK(followMe(m, prof, pathEdges(path), &err));
+        CHECK(watertight(m));
+        CHECK_EQ(m.aliveFaceCount(), 6);
+        CHECK(std::fabs(volume(m) - 3) < 1e-9);
+    });
+
+    test("follow me: mitred L-shaped path", [&] {
+        Mesh m;
+        m.drawPolyline({{0, 0, 0}, {0, 1, 0}, {0, 1, 1}, {0, 0, 1}}, true);
+        Id prof = faceWith(m, 4, 1.0);
+        std::vector<Id> path = m.drawPolyline({{0, 0, 0}, {3, 0, 0}, {3, 3, 0}}, false);
+        std::string err;
+        CHECK(followMe(m, prof, pathEdges(path), &err));
+        CHECK(watertight(m));
+        // Pappus for mitred prisms: area x length of the centroid's path.
+        CHECK(std::fabs(volume(m) - 5) < 1e-9);
+    });
+
+    test("follow me: hollow pipe around a corner", [&] {
+        Mesh m;
+        auto ring = [](double r) {
+            std::vector<Vec3> p;
+            for (int i = 0; i < 24; ++i) p.push_back({0, 2 + r * std::cos(i * 2 * kPi / 24), 2 + r * std::sin(i * 2 * kPi / 24)});
+            return p;
+        };
+        m.drawPolyline(ring(0.5), true, m.newCurveId());
+        m.drawPolyline(ring(0.3), true, m.newCurveId());
+        Id prof = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+            if (!m.faces[f].alive) continue;
+            if (m.faces[f].holes.size() == 1) prof = f;
+            else m.eraseFace(f); // the inner disk: the pipe is hollow
+        }
+        CHECK(prof != kNone);
+        double area = m.faceArea(prof);
+        std::vector<Id> path = m.drawPolyline({{0, 2, 2}, {4, 2, 2}, {4, 6, 2}}, false);
+        std::string err;
+        CHECK(followMe(m, prof, pathEdges(path), &err));
+        CHECK(watertight(m));
+        CHECK(std::fabs(volume(m) - area * 8) < 1e-9);
+        int soft = 0;
+        for (const Edge& e : m.edges)
+            if (e.alive && e.soft) ++soft;
+        CHECK_EQ(soft, 2 * 24 * 2); // along both segments, outer and inner wall
+    });
+
+    test("follow me: profile around a circle (lathe)", [&] {
+        Mesh m;
+        m.drawPolyline({{1, 0, 0}, {2, 0, 0}, {2, 0, 1}, {1, 0, 1}}, true);
+        Id prof = faceWith(m, 4, 1.0);
+        CHECK(prof != kNone);
+        std::vector<Vec3> c;
+        for (int i = 0; i < 24; ++i) c.push_back({1.5 * std::cos(i * 2 * kPi / 24), 1.5 * std::sin(i * 2 * kPi / 24), -1});
+        std::vector<Id> path = m.drawPolyline(c, true, m.newCurveId());
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (f != prof && m.faces[f].alive) m.eraseFace(f); // the circle's own disk
+        std::string err;
+        CHECK(followMe(m, prof, pathEdges(path), &err));
+        CHECK(watertight(m));
+        CHECK_EQ(m.aliveFaceCount(), 24 * 4);
+        // Each profile point keeps its corner radius: a 24-gon ring, radius 1..2, height 1.
+        CHECK(std::fabs(volume(m) - 24 * 0.5 * std::sin(2 * kPi / 24) * (4 - 1)) < 1e-9);
+    });
+
+    test("follow me: edge chain follows a polyline", [&] {
+        Mesh m;
+        std::vector<Id> path = m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {1, 1, 1}}, false);
+        CHECK_EQ((int)edgeChain(m, path[1]).size(), 3);
     });
 
     test("circle push/pull has soft sides", [] {

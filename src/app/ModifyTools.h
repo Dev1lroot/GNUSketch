@@ -222,6 +222,30 @@ private:
     double dist_ = 0, lastDist_ = 0;
 };
 
+// Sweeps a profile face along a path of edges. The path is the selection when
+// the tool starts (selected faces contribute their outlines); otherwise click
+// the profile, then a path edge (its connected chain) or Alt-click a face to
+// follow its outline.
+class FollowMeTool : public Tool {
+public:
+    using Tool::Tool;
+    ToolId id() const override { return ToolId::FollowMe; }
+    QString status() const override;
+    void activate() override;
+    void reset() override;
+    bool busy() const override { return profile_ != kNone; }
+    void mousePress(const MouseEvent& e) override;
+    void mouseMove(const MouseEvent& e) override;
+    void buildPreview(Preview& pv) override;
+
+private:
+    std::set<Id> pathUnder(const MouseEvent& e) const;
+    void commit(const std::set<Id>& path);
+    std::set<Id> selectedPath_, hoverPath_;
+    Id profile_ = kNone, hoverFace_ = kNone;
+    QString message_;
+};
+
 class TapeTool : public Tool {
 public:
     using Tool::Tool;

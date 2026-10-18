@@ -931,6 +931,9 @@ void InstructorPanel::showTool(ToolId id) {
         "Arrow keys: lock the rotation plane &nbsp; Ctrl: copy (then 6x for a polar array)"}; break;
     case ToolId::Scale: i = {"Scale", "Scales the selection about its center.", "Click to start, move to scale, click to finish. Type a factor such as 2, 0.5 or 1,1,2.", ""}; break;
     case ToolId::Offset: i = {"Offset", "Creates copies of a face's edges at a uniform distance.", "Click a face, move inward or outward, click. Type a distance.", "Double-click: repeat last distance"}; break;
+    case ToolId::FollowMe: i = {"Follow Me", "Sweeps a profile face along a path: pipes, beams, mouldings and lathed shapes.",
+        "Select the path edges (or a face for its outline), then click the profile face. Or click the profile first, then click a path edge to follow its connected line, arc or circle.",
+        "Alt: follow the outline of the clicked face &nbsp; Esc: cancel"}; break;
     case ToolId::Tape: i = {"Tape Measure", "Measures distances and creates guides.",
         "Click two points to measure. Starting on an edge creates a parallel guide line; starting on a point creates a guide point. Double-click an edge for an infinite guide. Type a value after measuring to resize the whole model.",
         "Ctrl: measure without creating guides"}; break;

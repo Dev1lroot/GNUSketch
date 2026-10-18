@@ -28,6 +28,7 @@ const char* svgFor(const QString& n) {
         {"rotate", R"svg(<path d="M19 12 A7 7 0 1 1 15.5 5.9" fill="none" stroke="#d6262e" stroke-width="2.6" stroke-linecap="round"/><path d="M13.2 2.2 L20 4.5 L15.4 9.8 Z" fill="#d6262e"/><circle cx="12" cy="12" r="1.6" fill="#222"/>)svg"},
         {"scale", R"svg(<rect x="3" y="9" width="12" height="12" fill="#dfe6ee" stroke="#222" stroke-width="1.2"/><rect x="3" y="3" width="18" height="18" fill="none" stroke="#222" stroke-width="1" stroke-dasharray="2 1.5"/><path d="M10 14 L19 5" stroke="#d6262e" stroke-width="2"/><path d="M14.5 4 L20.5 3.5 L20 9.5 Z" fill="#d6262e"/><rect x="1.8" y="19.8" width="2.6" height="2.6" fill="#2fae3a"/><rect x="19.6" y="1.6" width="2.6" height="2.6" fill="#2fae3a"/>)svg"},
         {"roundcorners", R"svg(<path d="M3 21 L3 11 A8 8 0 0 1 11 3 L21 3" fill="none" stroke="#222" stroke-width="1.6"/><path d="M3 21 L3 3 L21 3" fill="none" stroke="#d6262e" stroke-width="1" stroke-dasharray="2 1.5"/><path d="M5.3 5.3 L8.4 8.4" stroke="#2f7de1" stroke-width="1.4"/><circle cx="11" cy="11" r="1.5" fill="#2f7de1"/><circle cx="3" cy="11" r="1.6" fill="#d6262e"/><circle cx="11" cy="3" r="1.6" fill="#d6262e"/>)svg"},
+        {"followme", R"svg(<path d="M5 19 L5 9 Q5 5 9 5 L20 5" fill="none" stroke="#d6262e" stroke-width="1.4" stroke-dasharray="2 1.5"/><path d="M2 21.5 L8 21.5 L8 16.5 L2 16.5 Z" fill="#b9c4d1" stroke="#222" stroke-width="1.1"/><path d="M2.5 13 L7.5 13 M2.5 11 L7.5 11 M3 9 Q4 6 6.5 4.5 M5 8 Q6 6.2 7.8 5.4" stroke="#8ea0b5" stroke-width="1"/><path d="M18 2 L22.5 5 L18 8 Z" fill="#d6262e"/>)svg"},
         {"offset", R"svg(<rect x="2.5" y="3.5" width="19" height="17" rx="1" fill="#dfe6ee" stroke="#222" stroke-width="1.3"/><rect x="7" y="8" width="10" height="8" fill="#fff" stroke="#d6262e" stroke-width="1.6"/><path d="M4 12 L7 12" stroke="#2f7de1" stroke-width="1.2"/>)svg"},
         {"tape", R"svg(<circle cx="10" cy="12" r="7.5" fill="#f2c230" stroke="#6b5310" stroke-width="1.1"/><circle cx="10" cy="12" r="2.5" fill="#6b5310"/><path d="M10 19.5 L22 19.5 L22 16.5 L14 16.5" fill="#f7e7a6" stroke="#6b5310" stroke-width="1"/><path d="M16 16.5 L16 18 M18 16.5 L18 18.5 M20 16.5 L20 18" stroke="#6b5310" stroke-width=".8"/>)svg"},
         {"orbit", R"svg(<circle cx="12" cy="12" r="5" fill="#cfd8e3" stroke="#334" stroke-width="1"/><path d="M3 13 C3 6 21 6 21 13" fill="none" stroke="#d6262e" stroke-width="1.9"/><path d="M18.4 11 L21.6 14.6 L23 9.8 Z" fill="#d6262e"/><path d="M21 11 C21 18 3 18 3 11" fill="none" stroke="#2f7de1" stroke-width="1.9"/><path d="M5.6 13 L2.4 9.4 L1 14.2 Z" fill="#2f7de1"/>)svg"},
@@ -114,6 +115,7 @@ QString toolIconName(ToolId id) {
     case ToolId::Rotate: return "rotate";
     case ToolId::Scale: return "scale";
     case ToolId::Offset: return "offset";
+    case ToolId::FollowMe: return "followme";
     case ToolId::Tape: return "tape";
     case ToolId::Orbit: return "orbit";
     case ToolId::Pan: return "pan";

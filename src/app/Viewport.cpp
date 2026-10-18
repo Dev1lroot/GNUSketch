@@ -57,6 +57,7 @@ void Viewport::setTool(ToolId id) {
     case ToolId::Rotate: tool_ = std::make_unique<RotateTool>(this); break;
     case ToolId::Scale: tool_ = std::make_unique<ScaleTool>(this); break;
     case ToolId::Offset: tool_ = std::make_unique<OffsetTool>(this); break;
+    case ToolId::FollowMe: tool_ = std::make_unique<FollowMeTool>(this); break;
     case ToolId::Tape: tool_ = std::make_unique<TapeTool>(this); break;
     case ToolId::Orbit: tool_ = std::make_unique<OrbitTool>(this); break;
     case ToolId::Pan: tool_ = std::make_unique<PanTool>(this); break;

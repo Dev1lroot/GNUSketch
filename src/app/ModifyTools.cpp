@@ -2,6 +2,7 @@
 #include "ModifyTools.h"
 
 #include "Viewport.h"
+#include "core/FollowMe.h"
 
 #include <QApplication>
 #include <QKeyEvent>
@@ -409,6 +410,106 @@ void PaintTool::mousePress(const MouseEvent& e) {
 
 void PaintTool::buildPreview(Preview& pv) {
     if (hover_ != kNone) pv.highlightFaces.insert(hover_);
+}
+
+// ===========================================================================
+// Follow Me
+// ===========================================================================
+
+QString FollowMeTool::status() const {
+    QString s;
+    if (!selectedPath_.empty()) s = QStringLiteral("Click the profile face to sweep along the selected path.");
+    else if (profile_ == kNone) s = QStringLiteral("Click the profile face, or select the path edges first.");
+    else s = QStringLiteral("Click a path edge to follow its chain. Alt = follow a face's outline. Esc = cancel.");
+    return message_.isEmpty() ? s : message_ + QStringLiteral("  ") + s;
+}
+
+void FollowMeTool::activate() {
+    const Selection& sel = doc().selection;
+    selectedPath_ = sel.edges;
+    for (Id f : sel.faces)
+        for (Id e : mesh().faceEdges(f)) selectedPath_.insert(e);
+    refreshStatus();
+}
+
+void FollowMeTool::reset() {
+    profile_ = hoverFace_ = kNone;
+    hoverPath_.clear();
+    message_.clear();
+    refreshStatus();
+    update();
+}
+
+std::set<Id> FollowMeTool::pathUnder(const MouseEvent& e) const {
+    Mesh& m = const_cast<FollowMeTool*>(this)->mesh();
+    InferenceEngine& eng = const_cast<FollowMeTool*>(this)->engine();
+    if (e.alt()) {
+        Id f = eng.pickFace(e.x, e.y);
+        if (f == kNone || f == profile_) return {};
+        std::vector<Id> es = m.faceEdges(f);
+        return {es.begin(), es.end()};
+    }
+    Id edge = eng.pickEdge(e.x, e.y, 6.0);
+    if (edge == kNone) return {};
+    std::vector<Id> chain = edgeChain(m, edge);
+    return {chain.begin(), chain.end()};
+}
+
+void FollowMeTool::mouseMove(const MouseEvent& e) {
+    lastMouse_ = e;
+    if (profile_ == kNone) {
+        hoverFace_ = engine().pickFace(e.x, e.y);
+        hoverPath_.clear();
+    } else {
+        hoverPath_ = pathUnder(e);
+    }
+    update();
+}
+
+void FollowMeTool::mousePress(const MouseEvent& e) {
+    if (e.button != Qt::LeftButton) return;
+    if (profile_ == kNone) {
+        Id f = engine().pickFace(e.x, e.y);
+        if (f == kNone) return;
+        profile_ = f;
+        message_.clear();
+        if (!selectedPath_.empty()) {
+            commit(selectedPath_);
+            return;
+        }
+        refreshStatus();
+        update();
+        return;
+    }
+    std::set<Id> path = pathUnder(e);
+    if (!path.empty()) commit(path);
+}
+
+void FollowMeTool::commit(const std::set<Id>& path) {
+    std::string err;
+    doc().beginOp("Follow Me");
+    bool ok = followMe(mesh(), profile_, path, &err);
+    if (ok) {
+        doc().selection.clear();
+        doc().commitOp();
+        doc().notifySelection();
+        selectedPath_.clear();
+    } else {
+        doc().cancelOp();
+    }
+    profile_ = hoverFace_ = kNone;
+    hoverPath_.clear();
+    message_ = ok ? QString() : QString::fromStdString(err);
+    refreshStatus();
+    update();
+}
+
+void FollowMeTool::buildPreview(Preview& pv) {
+    const Mesh& m = mesh();
+    if (profile_ != kNone && profile_ < (Id)m.faces.size() && m.faces[profile_].alive) pv.highlightFaces.insert(profile_);
+    else if (hoverFace_ != kNone) pv.highlightFaces.insert(hoverFace_);
+    for (Id e : hoverPath_)
+        if (e >= 0 && e < (Id)m.edges.size() && m.edges[e].alive) pv.highlightEdges.insert(e);
 }
 
 // ===========================================================================

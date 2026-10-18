@@ -63,6 +63,11 @@ include its output in the bug report.
 * **Push/Pull** extrudes faces. When a face's edges all border perpendicular faces,
   it stretches the solid instead. Coplanar side faces are healed, pushing through a
   solid cuts a hole, and the sides of circles and arcs become soft and smooth-shaded.
+* **Follow Me** sweeps any profile face (with holes) along a path of lines, arcs
+  or a closed outline, with mitred joints: pipes, T/H/I beams, mouldings and
+  lathed shapes. Select the path and click the profile, or click the profile and
+  then a path edge (Alt: a face's outline). Curved paths and profiles come out
+  smooth-shaded.
 * **Round Corners** (Tools menu, tool set, right-click) rounds the selected edges
   with a radius in mm and a number of segments, with a live preview. Edges between
   two faces get a rounded strip with mitred or spherical corners; corners of
@@ -81,7 +86,8 @@ include its output in the bug report.
 | F | Offset | T | Tape Measure (guides, model resize) |
 | O / H / Z | Orbit / Pan / Zoom | Shift+Z | Zoom Extents |
 
-Also Freehand and Zoom Window. Middle mouse orbits and Shift+middle pans with any
+Also Freehand, Zoom Window, **Follow Me** and **Round Corners** (Tools menu and the
+tool set; no shortcut keys). Middle mouse orbits and Shift+middle pans with any
 tool. The wheel zooms towards the cursor; double-clicking the middle button
 re-centres the view.
 
@@ -94,6 +100,39 @@ they choose the drawing plane instead. **Shift** locks the current inference.
 `1500`, `1.5m`, `150cm`, `5'6"`, `w,h` for rectangles, `24s` for segment counts,
 `<dx,dy,dz>` relative and `[x,y,z]` absolute coordinates. Values typed right after a
 Push/Pull or Move adjust that operation.
+
+## Follow Me
+
+Follow Me sweeps a **profile** (any face, including one with holes) along a
+**path** (a chain of edges) to build pipes, beams, handrails, mouldings and lathed
+shapes.
+
+1. Draw the profile as a face, usually at the start of the path and across it:
+   a circle for a pipe, a ring for a hollow pipe, a T, H or I outline for a beam.
+2. Draw the path: lines, arcs or a closed outline such as a circle or the edge of
+   a box top.
+3. Either select the path (or a face, to use its outline) and then click the profile
+   with Follow Me, or start Follow Me, click the profile and then click a path edge.
+   Clicking an edge follows its whole connected line, arc or circle. Alt-click a face
+   to follow its outline. The path is highlighted before you click.
+
+How the sweep behaves:
+
+* The profile keeps its shape and its position relative to the path. A profile
+  centred on the path stays centred; one beside it (a moulding along a box top)
+  stays beside it.
+* Corners are mitred: the profile is cut by the plane halfway between the two path
+  directions, so beams and frames get clean corner joints.
+* **Open paths** get end caps; the profile itself becomes the start cap.
+  **Closed paths** (lathes, mouldings around an outline) start and end exactly on
+  the profile and leave a closed solid with no caps.
+* Curved paths (arcs, circles) and curved profile edges (circles, arcs) give soft,
+  smooth-shaded surfaces. The faces take the profile's materials.
+* Path edges are kept, so you can reuse or erase them afterwards.
+* The sweep only adds geometry; it does not merge with or cut into existing
+  solids. If the profile cannot follow the path (the path branches or is
+  disconnected, doubles back on itself, or the profile lies along it) nothing
+  changes and the status bar says why.
 
 ## Textures: drag and drop
 
@@ -125,7 +164,8 @@ File → Export → FBX) or with assimp (`assimp export model.gltf model.fbx`).
 ## Code layout
 
 ```
-src/core    Math, Mesh (B-rep kernel + face inference), Triangulate, Units, Document (undo)
+src/core    Math, Mesh (B-rep kernel + face inference), Triangulate, Units, Document (undo),
+            FollowMe (profile sweeps), RoundCorners (fillets)
 src/io      NativeFormat, ObjIO, GltfExport, StlExport, ImageUtil
 src/render  Camera, Renderer (GL 3.3: faces, geometry-shader wide/dashed lines, sky/ground)
 src/app     Viewport, Inference, tools (Draw/Modify/Camera), Panels (tray), MainWindow, Icons
@@ -134,7 +174,7 @@ tests       kernel and I/O tests
 
 ## Not implemented yet
 
-Groups/components, Follow Me, 3-point arc and pie, rotated rectangle, text,
+Groups/components, 3-point arc and pie, rotated rectangle, text,
 dimensions, section planes, tags/layers, scenes, shadows, intersect faces, the
 texture position editor, and folding of faces that move out of plane.
 

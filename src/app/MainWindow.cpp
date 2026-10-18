@@ -148,6 +148,7 @@ void MainWindow::buildActions() {
     toolAction(ToolId::Rotate, QStringLiteral("Rotate"), QStringLiteral("Q"));
     toolAction(ToolId::Scale, QStringLiteral("Scale"), QStringLiteral("S"));
     toolAction(ToolId::Offset, QStringLiteral("Offset"), QStringLiteral("F"));
+    toolAction(ToolId::FollowMe, QStringLiteral("Follow Me"), QString());
     toolAction(ToolId::Tape, QStringLiteral("Tape Measure"), QStringLiteral("T"));
     toolAction(ToolId::Orbit, QStringLiteral("Orbit"), QStringLiteral("O"));
     toolAction(ToolId::Pan, QStringLiteral("Pan"), QStringLiteral("H"));
@@ -370,7 +371,8 @@ void MainWindow::buildMenus() {
     QMenu* tools = menuBar()->addMenu(QStringLiteral("&Tools"));
     for (ToolId id : {ToolId::Select, ToolId::Eraser, ToolId::Paint}) tools->addAction(toolActions_[id]);
     tools->addSeparator();
-    for (ToolId id : {ToolId::Move, ToolId::Rotate, ToolId::Scale, ToolId::PushPull, ToolId::Offset}) tools->addAction(toolActions_[id]);
+    for (ToolId id : {ToolId::Move, ToolId::Rotate, ToolId::Scale, ToolId::PushPull, ToolId::FollowMe, ToolId::Offset})
+        tools->addAction(toolActions_[id]);
     tools->addSeparator();
     tools->addAction(toolActions_[ToolId::Tape]);
     tools->addSeparator();
@@ -457,7 +459,8 @@ void MainWindow::buildToolbars() {
         {-2, -2},
         {(int)ToolId::Move, (int)ToolId::PushPull},
         {(int)ToolId::Rotate, (int)ToolId::Offset},
-        {(int)ToolId::Scale, -4},
+        {(int)ToolId::Scale, (int)ToolId::FollowMe},
+        {-4, -1},
         {-2, -2},
         {(int)ToolId::Orbit, (int)ToolId::Pan},
         {(int)ToolId::Zoom, (int)ToolId::ZoomWindow},

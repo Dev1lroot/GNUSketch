@@ -20,7 +20,7 @@ class Viewport;
 
 enum class ToolId {
     Select, Eraser, Paint, Line, Freehand, Rectangle, Circle, Polygon, Arc,
-    PushPull, Move, Rotate, Scale, Offset, Tape, Orbit, Pan, Zoom, ZoomWindow
+    PushPull, Move, Rotate, Scale, Offset, FollowMe, Tape, Orbit, Pan, Zoom, ZoomWindow
 };
 
 struct MouseEvent {

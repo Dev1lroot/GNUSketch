@@ -23,6 +23,8 @@ bottom. Screenshots help.
 - [ ] Move / Ctrl copy / `5x` array; Rotate with 15° snaps; Scale; Offset
 - [ ] Eraser (drag, Shift hide, Ctrl soften); Delete key; Undo/Redo
 - [ ] Select: click, window vs crossing, double/triple click, Ctrl/Shift modifiers
+- [ ] Follow Me: circle along a line/arc (pipe), ring profile (hollow pipe), T/H beam along an L path, moulding around a box top (Alt-click the top face), profile around a circle (lathe); path selected first vs clicked after the profile
+- [ ] Round Corners: rectangle corners, one cube edge, four top edges, all cube edges; live preview and too-large radius message
 
 ## Materials and textures
 - [ ] Drag an image onto a face (fit), Ctrl+drop (tile), drop onto Materials panel

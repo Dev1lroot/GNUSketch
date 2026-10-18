@@ -1,0 +1,8 @@
+build/
+build-*/
+compile_commands.json
+.cache/
+*.user
+
+# Third-party screenshots used only as private visual reference (copyrighted, not ours to redistribute)
+references/

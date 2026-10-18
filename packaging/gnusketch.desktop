@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=GNUSketch
+Comment=Native 3D sketching and modelling
+Exec=gnusketch %f
+Icon=applications-graphics
+Terminal=false
+Categories=Graphics;3DGraphics;
+MimeType=application/x-gnusketch;model/obj;

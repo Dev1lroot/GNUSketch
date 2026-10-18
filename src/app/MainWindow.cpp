@@ -96,6 +96,8 @@ MainWindow::MainWindow() {
     if (!restoreState(s.value("window/state").toByteArray())) resize(1400, 900);
     int unit = s.value("model/units", (int)LengthUnit::Millimeters).toInt();
     doc_.units.unit = (LengthUnit)std::clamp(unit, 0, 4);
+    if (s.value("camera/orbitPivot", 0).toInt() == (int)Viewport::OrbitPivot::CameraTarget)
+        acts_["orbit_target"]->trigger();
 
     viewport_->setTool(ToolId::Select);
     instructor_->showTool(ToolId::Select);
@@ -219,6 +221,19 @@ void MainWindow::buildActions() {
     }
     perspectiveAct_->setChecked(true);
 
+    auto* pivotGroup = new QActionGroup(this);
+    auto pivotAct = [this, &act, pivotGroup](const QString& key, const QString& text, Viewport::OrbitPivot p) {
+        QAction* a = act(key, "", text, QKeySequence(), [this, p] {
+            viewport_->setOrbitPivot(p);
+            QSettings().setValue("camera/orbitPivot", (int)p);
+        });
+        a->setCheckable(true);
+        a->setChecked(p == Viewport::OrbitPivot::Geometry);
+        pivotGroup->addAction(a);
+    };
+    pivotAct("orbit_geometry", QStringLiteral("Around &Geometry"), Viewport::OrbitPivot::Geometry);
+    pivotAct("orbit_target", QStringLiteral("Around Camera &Target"), Viewport::OrbitPivot::CameraTarget);
+
     auto styleToggle = [this, &act](const QString& key, const QString& icon, const QString& text, bool RenderStyle::*field) {
         QAction* a = act(key, icon, text, QKeySequence(), [] {});
         a->setCheckable(true);
@@ -328,6 +343,9 @@ void MainWindow::buildMenus() {
     cam->addAction(perspectiveAct_);
     cam->addSeparator();
     cam->addAction(toolActions_[ToolId::Orbit]);
+    QMenu* orbitMode = cam->addMenu(QStringLiteral("Orbit &Mode"));
+    orbitMode->addAction(acts_["orbit_geometry"]);
+    orbitMode->addAction(acts_["orbit_target"]);
     cam->addAction(toolActions_[ToolId::Pan]);
     cam->addAction(toolActions_[ToolId::Zoom]);
     cam->addAction(toolActions_[ToolId::ZoomWindow]);

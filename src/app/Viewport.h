@@ -36,6 +36,13 @@ public:
     void zoomExtents();
     void setStandardView(const Vec3& dir);
     void setPerspective(bool on);
+    // What orbiting rotates around: the geometry under the cursor (falling back
+    // to the selection, the model and the world origin), or the camera's own
+    // target point.
+    enum class OrbitPivot { Geometry, CameraTarget };
+    OrbitPivot orbitPivot() const { return orbitPivot_; }
+    void setOrbitPivot(OrbitPivot p) { orbitPivot_ = p; }
+    Vec3 orbitPivotAt(double x, double y);
     void cancelTool();
     bool renderOk() const { return glOk_; }
     QString glError() const { return glError_; }
@@ -85,7 +92,8 @@ private:
     enum class Nav { None, Orbit, Pan };
     Nav nav_ = Nav::None;
     QPointF navLast_;
-    Vec3 navGrab_;
+    Vec3 navGrab_, navPivot_;
+    OrbitPivot orbitPivot_ = OrbitPivot::Geometry;
     bool navMoved_ = false;
     QPointF mousePos_;
     bool mouseInside_ = false;

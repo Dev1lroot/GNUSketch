@@ -934,7 +934,7 @@ void InstructorPanel::showTool(ToolId id) {
     case ToolId::Tape: i = {"Tape Measure", "Measures distances and creates guides.",
         "Click two points to measure. Starting on an edge creates a parallel guide line; starting on a point creates a guide point. Double-click an edge for an infinite guide. Type a value after measuring to resize the whole model.",
         "Ctrl: measure without creating guides"}; break;
-    case ToolId::Orbit: i = {"Orbit", "Rotates the camera around the model.", "Drag in the viewport. The middle mouse button orbits with any tool.", "Shift: pan"}; break;
+    case ToolId::Orbit: i = {"Orbit", "Rotates the camera around the geometry under the cursor (or the selection, or the model centre).", "Drag in the viewport. The middle mouse button orbits with any tool. Camera > Orbit Mode switches to orbiting around the camera target.", "Shift: pan"}; break;
     case ToolId::Pan: i = {"Pan", "Moves the camera sideways.", "Drag in the viewport. Shift + middle mouse pans with any tool.", ""}; break;
     case ToolId::Zoom: i = {"Zoom", "Moves the camera closer or farther.", "Drag up/down, or use the mouse wheel with any tool. Type a field of view in degrees.", "Shift + drag: change field of view"}; break;
     case ToolId::ZoomWindow: i = {"Zoom Window", "Zooms to a rectangular area.", "Drag a window around the area of interest.", ""}; break;

@@ -254,6 +254,33 @@ void Viewport::paintOverlay(QPainter& p, const Preview& pv) {
 // Input
 // ---------------------------------------------------------------------------
 
+Vec3 Viewport::orbitPivotAt(double x, double y) {
+    if (orbitPivot_ == OrbitPivot::CameraTarget) return camera_.target;
+    double t;
+    if (inference_->pickFace(x, y, &t) != kNone) return camera_.ray(x, y).at(t);
+    const Mesh& m = doc_->mesh();
+    const Selection& sel = doc_->selection;
+    Vec3 mn, mx;
+    bool any = false;
+    auto grow = [&](Id v) {
+        const Vec3& p = m.pos(v);
+        if (!any) mn = mx = p;
+        for (int i = 0; i < 3; ++i) {
+            mn[i] = std::min(mn[i], p[i]);
+            mx[i] = std::max(mx[i], p[i]);
+        }
+        any = true;
+    };
+    for (Id f : sel.faces)
+        if (f >= 0 && f < (Id)m.faces.size() && m.faces[f].alive)
+            for (Id v : m.faceVertices(f)) grow(v);
+    for (Id e : sel.edges)
+        if (e >= 0 && e < (Id)m.edges.size() && m.edges[e].alive)
+            for (Id v : m.edges[e].v) grow(v);
+    if (!any) m.bounds(mn, mx, any);
+    return any ? (mn + mx) * 0.5 : Vec3();
+}
+
 MouseEvent Viewport::toEvent(QMouseEvent* e) const {
     MouseEvent m;
     m.x = e->position().x();
@@ -271,6 +298,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
         nav_ = (e->modifiers() & Qt::ShiftModifier) ? Nav::Pan : Nav::Orbit;
         navLast_ = e->position();
         navGrab_ = focusPointAt(*inference_, camera_, e->position().x(), e->position().y());
+        navPivot_ = orbitPivotAt(e->position().x(), e->position().y());
         navMoved_ = false;
         setCursor(nav_ == Nav::Pan ? Qt::ClosedHandCursor : Qt::SizeAllCursor);
         return;
@@ -289,7 +317,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
         if (d.manhattanLength() > 0) navMoved_ = true;
         bool pan = nav_ == Nav::Pan || (e->modifiers() & Qt::ShiftModifier);
         if (pan) camera_.panTo(navGrab_, e->position().x(), e->position().y());
-        else camera_.orbit(d.x(), d.y());
+        else camera_.orbitAround(navPivot_, d.x(), d.y());
         if (tool_) tool_->mouseMove(toEvent(e));
         update();
         return;

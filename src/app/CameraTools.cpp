@@ -25,6 +25,7 @@ void OrbitTool::mousePress(const MouseEvent& e) {
     dragging_ = true;
     last_ = QPointF(e.x, e.y);
     grab_ = focusPointAt(engine(), cam(), e.x, e.y);
+    pivot_ = vp_->orbitPivotAt(e.x, e.y);
 }
 
 void OrbitTool::mouseMove(const MouseEvent& e) {
@@ -33,7 +34,7 @@ void OrbitTool::mouseMove(const MouseEvent& e) {
     QPointF p(e.x, e.y);
     QPointF d = p - last_;
     if (e.shift()) cam().panTo(grab_, e.x, e.y);
-    else cam().orbit(d.x(), d.y());
+    else cam().orbitAround(pivot_, d.x(), d.y());
     last_ = p;
     vp_->cameraChanged();
 }

@@ -7,7 +7,10 @@
 #include "io/NativeFormat.h"
 #include "render/Renderer.h"
 
+#include <QAction>
 #include <QApplication>
+#include <QClipboard>
+#include <QMimeData>
 #include <QImage>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -318,6 +321,36 @@ int runSelfTest(MainWindow& w) {
             d.check(traced, "trace image cuts out the alpha shape");
         }
         vp->zoomExtents();
+    }
+
+    // System clipboard: geometry (as GNUSketch data) and images.
+    {
+        auto action = [&](const char* name) { return w.findChild<QAction*>(QString::fromLatin1(name)); };
+        Id top = d.topFace();
+        if (top != kNone && action("copy") && action("paste")) {
+            doc.selection.clear();
+            doc.selection.faces.insert(top);
+            doc.notifySelection();
+            action("copy")->trigger();
+            const QMimeData* md = QApplication::clipboard()->mimeData();
+            ModelState clip;
+            bool decoded = md && md->hasFormat(QStringLiteral("application/x-gnusketch")) &&
+                           modelFromJson(md->data(QStringLiteral("application/x-gnusketch")), clip);
+            d.check(decoded && clip.mesh.aliveFaceCount() == 1, "copy puts geometry on the system clipboard");
+            action("paste")->trigger();
+            d.pump();
+            d.check(doc.undoName() == "Paste" && doc.selection.faces.size() == 1, "paste from the system clipboard");
+            doc.undo();
+            QImage shot(120, 80, QImage::Format_RGB32);
+            shot.fill(Qt::darkGreen);
+            QApplication::clipboard()->setImage(shot);
+            size_t mats = doc.state.materials.size();
+            action("paste")->trigger();
+            d.pump();
+            d.check(doc.state.materials.size() == mats + 1 && doc.undoName() == "Add Image", "paste an image from the clipboard as a plane");
+            doc.undo();
+            vp->setTool(ToolId::Select);
+        }
     }
 
     // Undo everything, redo everything.

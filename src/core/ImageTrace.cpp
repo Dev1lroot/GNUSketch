@@ -250,16 +250,41 @@ bool traceImageOnFace(Mesh& m, Id f, const TexMap& map, const ScalarImage& img, 
 
     const Plane P = m.facePlane(f);
     std::vector<std::pair<Vec3, Vec3>> segs;
+    std::vector<const std::vector<Vec2>*> drawn;
     for (const auto& L : loops) {
         bool onFace = true;
         for (const Vec2& p : L)
             if (!m.pointInFace(f, toWorld(p), true)) { onFace = false; break; }
         if (!onFace) continue;
         for (size_t i = 0; i < L.size(); ++i) segs.emplace_back(toWorld(L[i]), toWorld(L[(i + 1) % L.size()]));
+        drawn.push_back(&L);
     }
     if (segs.empty()) return fail("The traced outline does not lie on the face; fit the image to the face first.");
 
     m.drawSegments(segs);
+
+    // Smoothly turning runs of each outline become curves (split at sharp
+    // corners), so push/pull gives traced shapes smooth sides and crisp corners.
+    for (const auto* Lp : drawn) {
+        const auto& L = *Lp;
+        const size_t k = L.size();
+        auto corner = [&](size_t i) {
+            Vec2 a = L[i] - L[(i + k - 1) % k], b = L[(i + 1) % k] - L[i];
+            double la = a.length(), lb = b.length();
+            return la < 1e-12 || lb < 1e-12 || a.dot(b) / (la * lb) < std::cos(30.0 * kPi / 180);
+        };
+        size_t start = 0;
+        while (start < k && !corner(start)) ++start;
+        if (start == k) start = 0; // no corners: one closed curve
+        Id curve = kNone;
+        for (size_t n = 0; n < k; ++n) {
+            size_t i = (start + n) % k;
+            if (n == 0 || corner(i)) curve = m.newCurveId();
+            Id a = m.findVertex(toWorld(L[i])), b = m.findVertex(toWorld(L[(i + 1) % k]));
+            Id e = a != kNone && b != kNone ? m.findEdge(a, b) : kNone;
+            if (e != kNone) m.edges[e].curve = curve;
+        }
+    }
 
     if (opt.removeBackground) {
         std::vector<Id> loose;

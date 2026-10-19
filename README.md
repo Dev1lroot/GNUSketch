@@ -7,6 +7,8 @@ A free, native Linux 3D sketching tool with a push/pull workflow, written from
 scratch in C++20 with Qt 6 Widgets and OpenGL 3.3 (core profile). Clean-room design:
 no proprietary formats, code or artwork. All icons are original inline SVGs.
 
+![GNUSketch: rounded box, Follow Me beam, pipe and lathed vase, a wall with a pushed-through doorway, and traced 3D letters](docs/screenshot.png)
+
 > **Status: early alpha (0.1).** The core modelling tools work. Expect rough edges
 > and see "Not implemented yet" below.
 
@@ -150,6 +152,20 @@ space** and it becomes a flat rectangle showing the image, at 1 pixel = 1 mm. It
 on the axis plane that faces the camera most: the ground in a top view, a vertical
 wall (standing on the ground) in front or side views. The new plane is selected, so
 you can Scale it to size or trace it straight away.
+
+**Images from the clipboard:** Edit → Paste (Ctrl+V) places a copied image the same
+way, under the mouse pointer: a screenshot, an image copied in a web browser or image
+viewer, or image files copied in Dolphin.
+
+## Copy and paste between windows
+
+Copy (Ctrl+C) and Cut put the selected geometry on the **system clipboard**, together
+with its soft/smooth edges, curves, materials and textures. Paste it into another
+GNUSketch window, even a separate instance with a different model open. The paste
+lands at the same coordinates and the Move tool starts, so you can place it right away.
+Materials with the same name and image are reused instead of duplicated. The clipboard
+data uses the documented `.gsketch` JSON under the MIME type `application/x-gnusketch`,
+so other programs can read and write it too.
 
 ## Trace Image
 

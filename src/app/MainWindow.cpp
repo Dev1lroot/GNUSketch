@@ -17,6 +17,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QDialog>
@@ -162,6 +163,7 @@ void MainWindow::buildActions() {
         if (!sc.isEmpty()) a->setShortcut(sc);
         a->setToolTip(sc.isEmpty() ? text : QStringLiteral("%1 (%2)").arg(text, sc.toString(QKeySequence::NativeText)));
         connect(a, &QAction::triggered, this, std::move(fn));
+        a->setObjectName(key);
         acts_[key] = a;
         return a;
     };
@@ -807,9 +809,13 @@ void MainWindow::applyViewState(const QJsonObject& o) {
 // Editing commands
 // ---------------------------------------------------------------------------
 
+// Geometry goes to the system clipboard as .gsketch JSON under this type, so
+// it can be pasted into any GNUSketch window or process.
+static const QString kClipMime = QStringLiteral("application/x-gnusketch");
+
 void MainWindow::copySelection(bool cut) {
     if (doc_.selection.empty()) return;
-    Clip clip;
+    ModelState clip;
     clip.mesh = doc_.mesh();
     Mesh& m = clip.mesh;
     std::set<Id> keepEdges = doc_.selection.edges;
@@ -821,37 +827,78 @@ void MainWindow::copySelection(bool cut) {
         if (!keepEdges.count(e)) m.edges[e].alive = false;
     m.removeOrphanVertices();
     m.compact();
-    clip.materials = doc_.state.materials;
-    clipboard_ = std::move(clip);
+    // Only the materials the copied faces use.
+    std::map<Id, Id> matMap;
+    for (Face& f : m.faces)
+        for (FaceSide* s : {&f.front, &f.back}) {
+            if (s->material < 0 || s->material >= (Id)doc_.state.materials.size()) {
+                s->material = kNone;
+                continue;
+            }
+            auto it = matMap.find(s->material);
+            if (it == matMap.end()) {
+                it = matMap.emplace(s->material, (Id)clip.materials.size()).first;
+                clip.materials.push_back(doc_.state.materials[s->material]);
+            }
+            s->material = it->second;
+        }
+    const size_t count = m.faces.size() + m.edges.size();
+    auto* md = new QMimeData;
+    md->setData(kClipMime, modelToJson(clip));
+    QApplication::clipboard()->setMimeData(md);
     if (cut) deleteSelection();
-    statusLabel_->setText(cut ? QStringLiteral("Cut %1 entities").arg(clipboard_->mesh.faces.size() + clipboard_->mesh.edges.size())
-                              : QStringLiteral("Copied %1 entities").arg(clipboard_->mesh.faces.size() + clipboard_->mesh.edges.size()));
+    statusLabel_->setText(cut ? QStringLiteral("Cut %1 entities").arg(count) : QStringLiteral("Copied %1 entities").arg(count));
+}
+
+bool MainWindow::pasteImages(const QMimeData* md) {
+    QPoint local = viewport_->mapFromGlobal(QCursor::pos());
+    if (!viewport_->rect().contains(local)) local = viewport_->rect().center();
+    if (md->hasImage()) {
+        QImage img = qvariant_cast<QImage>(md->imageData());
+        if (!img.isNull()) return viewport_->addImagePlane(textureFromImage(img), QStringLiteral("Pasted image"), local.x(), local.y());
+    }
+    bool any = false;
+    if (md->hasUrls()) {
+        for (const QUrl& u : md->urls()) {
+            if (!u.isLocalFile() || !isImageFile(u.toLocalFile())) continue;
+            if (!any) any = viewport_->addImagePlane(u.toLocalFile(), local.x(), local.y());
+            else materials_->addImageMaterial(u.toLocalFile());
+        }
+    }
+    return any;
 }
 
 void MainWindow::paste() {
-    if (!clipboard_) return;
+    const QMimeData* md = QApplication::clipboard()->mimeData();
+    if (!md) return;
     viewport_->cancelTool();
-    const Clip& c = *clipboard_;
+    ModelState c;
+    if (!md->hasFormat(kClipMime) || !modelFromJson(md->data(kClipMime), c)) {
+        if (!pasteImages(md)) statusLabel_->setText(QStringLiteral("Nothing to paste: copy GNUSketch geometry or an image first."));
+        return;
+    }
     Mesh& m = doc_.mesh();
     doc_.beginOp("Paste");
     // Map clipboard materials onto document materials (by name + image).
     std::vector<Id> matMap(c.materials.size(), kNone);
     for (size_t i = 0; i < c.materials.size(); ++i) {
         const Material& cm = c.materials[i];
-        for (Id j = 0; j < (Id)doc_.state.materials.size(); ++j)
-            if (doc_.state.materials[j].name == cm.name && doc_.state.materials[j].texture.data == cm.texture.data) matMap[i] = j;
+        for (Id j = 0; j < (Id)doc_.state.materials.size(); ++j) {
+            const Material& dm = doc_.state.materials[j];
+            bool sameImage = dm.hasTexture() == cm.hasTexture() &&
+                             (!cm.hasTexture() || *dm.texture.data == *cm.texture.data);
+            if (dm.name == cm.name && sameImage) matMap[i] = j;
+        }
     }
     auto mapMat = [&](Id id) -> Id {
         if (id < 0 || id >= (Id)matMap.size()) return kNone;
         if (matMap[id] == kNone) matMap[id] = doc_.addMaterial(c.materials[id]);
         return matMap[id];
     };
+    // Pasted vertices stay separate from the model (no weld): the paste lands
+    // in place and is moved next; the move welds wherever it is dropped.
     std::vector<Id> vmap(c.mesh.vertices.size());
-    std::set<Id> newVerts;
-    for (size_t i = 0; i < c.mesh.vertices.size(); ++i) {
-        vmap[i] = m.addVertexRaw(c.mesh.vertices[i].p);
-        newVerts.insert(vmap[i]);
-    }
+    for (size_t i = 0; i < c.mesh.vertices.size(); ++i) vmap[i] = m.addVertexRaw(c.mesh.vertices[i].p);
     Selection sel;
     std::map<Id, Id> curveMap;
     for (const Edge& e : c.mesh.edges) {
@@ -884,7 +931,6 @@ void MainWindow::paste() {
         m.faces[nf].hidden = f.hidden;
         sel.faces.insert(nf);
     }
-    m.weld(newVerts);
     doc_.selection = sel;
     doc_.commitOp();
     doc_.validateSelection();

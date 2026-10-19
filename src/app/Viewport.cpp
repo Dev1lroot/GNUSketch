@@ -503,6 +503,10 @@ bool Viewport::addImagePlane(const QString& path, double x, double y) {
         emit statusText(err);
         return false;
     }
+    return addImagePlane(tex, QFileInfo(path).completeBaseName(), x, y);
+}
+
+bool Viewport::addImagePlane(Texture tex, const QString& name, double x, double y) {
     QImage img = decodeTexture(tex);
     int pw = tex.pixelWidth > 0 ? tex.pixelWidth : img.width(), ph = tex.pixelHeight > 0 ? tex.pixelHeight : img.height();
     if (pw <= 0 || ph <= 0) return false;
@@ -532,7 +536,7 @@ bool Viewport::addImagePlane(const QString& path, double x, double y) {
     if (ax != 2 && o.z < 0) o.z = 0; // stand on the ground
 
     Material mat;
-    mat.name = QFileInfo(path).completeBaseName().toStdString();
+    mat.name = name.toStdString();
     tex.worldWidth = W;
     tex.worldHeight = H;
     mat.texture = tex;

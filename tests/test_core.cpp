@@ -580,6 +580,31 @@ int main() {
         CHECK(std::fabs(totalArea(k) - 2) < 1e-6);
     });
 
+    test("trace image: traced curves push/pull with smooth sides, corners stay sharp", [&] {
+        auto traceAndPull = [&](const std::function<bool(double, double)>& shape) {
+            Mesh m;
+            rect(m, 0, 0, 1, 1);
+            Id f = onlyFace(m);
+            TexMap map = fitTextureToFace(m, f, m.faces[f].normal.z > 0);
+            std::string err;
+            traceImageOnFace(m, f, map, makeImage(100, 100, shape), TraceOptions(), &err);
+            Id g = onlyFace(m);
+            m.pushPull(g, m.faces[g].normal.z < 0 ? -0.2 : 0.2);
+            int soft = 0, vertical = 0;
+            for (const Edge& e : m.edges) {
+                if (!e.alive || std::fabs(m.pos(e.v[0]).z - m.pos(e.v[1]).z) < 0.1) continue;
+                ++vertical;
+                if (e.soft) ++soft;
+            }
+            return std::make_pair(soft, vertical);
+        };
+        auto disc = traceAndPull([](double x, double y) { return std::hypot(x - 50, y - 50) < 35; });
+        CHECK(disc.second > 8 && disc.first == disc.second);
+        auto square = traceAndPull([](double x, double y) { return x > 20 && x < 80 && y > 20 && y < 80; });
+        CHECK_EQ(square.second, 4);
+        CHECK_EQ(square.first, 0);
+    });
+
     test("circle push/pull has soft sides", [] {
         Mesh m;
         std::vector<Vec3> pts;

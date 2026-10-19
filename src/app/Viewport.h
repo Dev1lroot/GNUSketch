@@ -51,6 +51,7 @@ public:
     // Places an image file as a textured rectangle (1 px = 1 mm) on the axis
     // plane that faces the camera most, centred under (x, y).
     bool addImagePlane(const QString& path, double x, double y);
+    bool addImagePlane(Texture tex, const QString& name, double x, double y);
 
 signals:
     void statusText(const QString& text);

@@ -15,6 +15,7 @@
 class QAction;
 class QActionGroup;
 class QLabel;
+class QMimeData;
 class QLineEdit;
 class QDockWidget;
 
@@ -103,12 +104,8 @@ private:
     std::map<int, QAction*> faceStyleActs_;
     std::map<QString, QAction*> acts_;
 
-    // Internal clipboard: a self-contained copy of geometry + materials.
-    struct Clip {
-        Mesh mesh;
-        std::vector<Material> materials;
-    };
-    std::optional<Clip> clipboard_;
+    // Pastes images from the clipboard (image data or image files) as planes.
+    bool pasteImages(const QMimeData* md);
 };
 
 } // namespace gs

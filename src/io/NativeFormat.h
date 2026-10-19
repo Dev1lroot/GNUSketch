@@ -24,6 +24,11 @@ namespace gs {
 bool saveNative(const Document& doc, const QString& path, const QJsonObject& view, QString* error = nullptr);
 bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* error = nullptr);
 
+// The whole model (mesh, materials, guides) as .gsketch JSON bytes and back;
+// also used for the system clipboard.
+QByteArray modelToJson(const ModelState& state, const QJsonObject& view = {});
+bool modelFromJson(const QByteArray& json, ModelState& state, QJsonObject* view = nullptr, QString* error = nullptr);
+
 // Serialises a mesh + materials subset (used for clipboard).
 QJsonObject meshToJson(const Mesh& mesh);
 bool meshFromJson(const QJsonObject& o, Mesh& mesh);

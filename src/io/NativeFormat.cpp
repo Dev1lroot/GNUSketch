@@ -148,15 +148,15 @@ bool meshFromJson(const QJsonObject& root, Mesh& mesh) {
     return true;
 }
 
-bool saveNative(const Document& doc, const QString& path, const QJsonObject& view, QString* error) {
-    QJsonObject root = meshToJson(doc.mesh());
+QByteArray modelToJson(const ModelState& state, const QJsonObject& view) {
+    QJsonObject root = meshToJson(state.mesh);
     root["format"] = "GNUSketch";
     root["version"] = 1;
     root["units"] = "meter";
     root["up"] = "Z";
 
     QJsonArray mats;
-    for (const Material& m : doc.state.materials) {
+    for (const Material& m : state.materials) {
         QJsonObject o;
         o["name"] = QString::fromStdString(m.name);
         o["color"] = QJsonArray{m.color.r, m.color.g, m.color.b, m.color.a};
@@ -175,7 +175,7 @@ bool saveNative(const Document& doc, const QString& path, const QJsonObject& vie
     root["materials"] = mats;
 
     QJsonArray guides;
-    for (const Guide& g : doc.state.guides) {
+    for (const Guide& g : state.guides) {
         QJsonObject o;
         o["kind"] = g.kind == Guide::Line ? "line" : "point";
         o["p"] = vec(g.p);
@@ -184,13 +184,16 @@ bool saveNative(const Document& doc, const QString& path, const QJsonObject& vie
     }
     root["guides"] = guides;
     root["view"] = view;
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
 
+bool saveNative(const Document& doc, const QString& path, const QJsonObject& view, QString* error) {
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
         if (error) *error = f.errorString();
         return false;
     }
-    f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    f.write(modelToJson(doc.state, view));
     if (!f.commit()) {
         if (error) *error = f.errorString();
         return false;
@@ -198,14 +201,9 @@ bool saveNative(const Document& doc, const QString& path, const QJsonObject& vie
     return true;
 }
 
-bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* error) {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) {
-        if (error) *error = f.errorString();
-        return false;
-    }
+bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QString* error) {
     QJsonParseError pe;
-    QJsonDocument jd = QJsonDocument::fromJson(f.readAll(), &pe);
+    QJsonDocument jd = QJsonDocument::fromJson(json, &pe);
     if (jd.isNull() || !jd.isObject()) {
         if (error) *error = QStringLiteral("Invalid file: %1").arg(pe.errorString());
         return false;
@@ -215,7 +213,7 @@ bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* 
         if (error) *error = QStringLiteral("Not a GNUSketch model");
         return false;
     }
-    ModelState st;
+    st = ModelState();
     meshFromJson(root, st.mesh);
     for (const auto& mj : root["materials"].toArray()) {
         QJsonObject o = mj.toObject();
@@ -251,6 +249,18 @@ bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* 
         g.dir = vec(o["dir"]).normalized();
         st.guides.push_back(g);
     }
+    if (view) *view = root["view"].toObject();
+    return true;
+}
+
+bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* error) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        if (error) *error = f.errorString();
+        return false;
+    }
+    ModelState st;
+    if (!modelFromJson(f.readAll(), st, view, error)) return false;
     uint64_t rev = doc.state.mesh.revision;
     doc.state = std::move(st);
     doc.state.mesh.revision = rev + 1000;
@@ -260,7 +270,6 @@ bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* 
     doc.currentMaterial = kNone;
     ++doc.materialsRevision;
     doc.clearHistory();
-    if (view) *view = root["view"].toObject();
     return true;
 }
 

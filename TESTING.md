@@ -35,5 +35,6 @@ bottom. Screenshots help.
 
 ## Files
 - [ ] Save/Open `.gsketch`; Export OBJ/glTF/STL and open them in Blender; Import OBJ
+- [ ] Clipboard: copy geometry (with a textured face) in one GNUSketch window and paste it into a second instance; paste a screenshot, a browser image and image files copied in Dolphin as planes
 
 ## Notes

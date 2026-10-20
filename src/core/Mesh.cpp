@@ -4,11 +4,17 @@
 #include "Triangulate.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <map>
 #include <unordered_set>
 
 namespace gs {
+
+uint64_t nextMeshRevision() {
+    static std::atomic<uint64_t> counter{0};
+    return ++counter;
+}
 
 namespace {
 
@@ -48,15 +54,6 @@ double segDist2D(const Vec2& a, const Vec2& b, const Vec2& p) {
     double l2 = ab.dot(ab);
     double t = l2 > 0 ? std::clamp((p - a).dot(ab) / l2, 0.0, 1.0) : 0.0;
     return (a + ab * t - p).length();
-}
-
-// Inverse-transpose of the linear 3x3 part of m applied to a covector.
-Vec3 transformCovector(const Mat4& m, const Vec3& c) {
-    Mat4 inv = m.inverted();
-    // (M^-1)^T * c
-    return {inv.at(0, 0) * c.x + inv.at(1, 0) * c.y + inv.at(2, 0) * c.z,
-            inv.at(0, 1) * c.x + inv.at(1, 1) * c.y + inv.at(2, 1) * c.z,
-            inv.at(0, 2) * c.x + inv.at(1, 2) * c.y + inv.at(2, 2) * c.z};
 }
 
 } // namespace
@@ -358,7 +355,7 @@ Id Mesh::addVertexRaw(const Vec3& p) {
     gridInsert(id);
     if (inc) vEdges_.push_back({});
     else adjDirty_ = true;
-    ++revision;
+    revision = nextMeshRevision();
     return id;
 }
 
@@ -381,7 +378,7 @@ Id Mesh::addEdgeRaw(Id a, Id b, Id curve) {
     } else {
         adjDirty_ = true;
     }
-    ++revision;
+    revision = nextMeshRevision();
     return id;
 }
 
@@ -420,7 +417,7 @@ Id Mesh::addFaceRaw(const std::vector<Id>& outerIn, const std::vector<std::vecto
     } else {
         adjDirty_ = true;
     }
-    ++revision;
+    revision = nextMeshRevision();
     return id;
 }
 
@@ -483,7 +480,7 @@ void Mesh::splitEdge(Id e, Id v) {
         for (auto& h : F.holes) fix(h);
     }
     adjDirty_ = true;
-    ++revision;
+    revision = nextMeshRevision();
 }
 
 void Mesh::insertSegment(const Vec3& pa, const Vec3& pb, Id curve, std::vector<Id>& created,
@@ -848,7 +845,7 @@ void Mesh::rebuildPlane(const Plane& P, const std::set<Id>& newEdges, std::vecto
         dirty.push_back(snapshot(f));
         faces[f].alive = false;
         adjDirty_ = true;
-        ++revision;
+        revision = nextMeshRevision();
     }
 
     for (size_t i = 0; i < regions.size(); ++i) {
@@ -888,7 +885,7 @@ void Mesh::eraseFace(Id f) {
     if (f < 0 || !faces[f].alive) return;
     faces[f].alive = false;
     adjDirty_ = true;
-    ++revision;
+    revision = nextMeshRevision();
 }
 
 void Mesh::eraseEdge(Id e, bool heal) {
@@ -906,7 +903,7 @@ void Mesh::eraseEdge(Id e, bool heal) {
             edgeMapErase(e);
             edges[e].alive = false;
             adjDirty_ = true;
-            ++revision;
+            revision = nextMeshRevision();
             rebuildPlane(p1, {}, snaps);
             removeOrphanVertices();
             if (vertices[a].alive) mergeCollinearAt(a);
@@ -918,7 +915,7 @@ void Mesh::eraseEdge(Id e, bool heal) {
     edgeMapErase(e);
     edges[e].alive = false;
     adjDirty_ = true;
-    ++revision;
+    revision = nextMeshRevision();
     removeOrphanVertices();
 }
 
@@ -931,7 +928,7 @@ void Mesh::removeOrphanVertices() {
         if (vertices[v].alive && deg[v] == 0) { vertices[v].alive = false; any = true; }
     if (any) {
         adjDirty_ = true;
-        ++revision;
+        revision = nextMeshRevision();
     }
 }
 
@@ -941,7 +938,7 @@ void Mesh::reverseFace(Id f) {
     for (auto& h : F.holes) std::reverse(h.begin(), h.end());
     F.normal = -F.normal;
     std::swap(F.front, F.back);
-    ++revision;
+    revision = nextMeshRevision();
 }
 
 bool Mesh::mergeCollinearAt(Id v) {
@@ -974,7 +971,7 @@ bool Mesh::mergeCollinearAt(Id v) {
     }
     vertices[v].alive = false;
     adjDirty_ = true;
-    ++revision;
+    revision = nextMeshRevision();
     return true;
 }
 
@@ -1147,7 +1144,7 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
             edgeMapErase(e);
             edges[e].alive = false;
             adjDirty_ = true;
-            ++revision;
+            revision = nextMeshRevision();
         }
         removeOrphanVertices();
         for (Id v : ends)
@@ -1168,6 +1165,9 @@ void Mesh::recomputeNormal(Id f) {
 
 void Mesh::transformVertices(const std::set<Id>& verts, const Mat4& m, bool weldAfter) {
     if (verts.empty()) return;
+    // A mirroring transform flips loop winding; reverse the loops of fully
+    // transformed faces so their front side stays on the same physical side.
+    const bool mirror = m.det3() < 0;
     for (Id v : verts) vertices[v].p = m.transformPoint(vertices[v].p);
     for (Id f = 0; f < (Id)faces.size(); ++f) {
         Face& F = faces[f];
@@ -1184,6 +1184,10 @@ void Mesh::transformVertices(const std::set<Id>& verts, const Mat4& m, bool weld
                 s->tex.origin = m.transformPoint(s->tex.origin);
                 s->tex.u = transformCovector(m, s->tex.u);
                 s->tex.v = transformCovector(m, s->tex.v);
+            }
+            if (mirror) {
+                std::reverse(F.outer.begin(), F.outer.end());
+                for (auto& h : F.holes) std::reverse(h.begin(), h.end());
             }
         }
         recomputeNormal(f);
@@ -1332,7 +1336,7 @@ void Mesh::weld(const std::set<Id>& candidates) {
     }
     gridDirty_ = true;
     adjDirty_ = true;
-    ++revision;
+    revision = nextMeshRevision();
 }
 
 void Mesh::compact(std::vector<Id>* vmapOut, std::vector<Id>* emapOut, std::vector<Id>* fmapOut) {
@@ -1374,7 +1378,7 @@ void Mesh::compact(std::vector<Id>* vmapOut, std::vector<Id>* emapOut, std::vect
     for (Id e = 0; e < (Id)edges.size(); ++e) edgeMap_[edgeKey(edges[e].v[0], edges[e].v[1])] = e;
     adjDirty_ = true;
     gridDirty_ = true;
-    ++revision;
+    revision = nextMeshRevision();
     if (vmapOut) *vmapOut = std::move(vmap);
     if (emapOut) *emapOut = std::move(emap);
     if (fmapOut) *fmapOut = std::move(fmap);

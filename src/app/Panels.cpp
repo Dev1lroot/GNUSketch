@@ -3,6 +3,7 @@
 
 #include "Icons.h"
 #include "Viewport.h"
+#include "core/Components.h"
 #include "io/ImageUtil.h"
 
 #include <QButtonGroup>
@@ -271,7 +272,21 @@ void EntityInfoPanel::refresh() {
     measureLabel_->setVisible(!s.empty());
     measure_->setVisible(!s.empty());
     if (s.empty()) {
-        title_->setText(QStringLiteral("No Selection"));
+        title_->setText(doc_->editingComponent() ? QStringLiteral("Editing Component") : QStringLiteral("No Selection"));
+    } else if (!s.instances.empty() && s.faces.empty() && s.edges.empty()) {
+        const ModelState& st = doc_->state;
+        Id def = st.instances[*s.instances.begin()].def;
+        bool same = true;
+        for (Id i : s.instances) same = same && st.instances[i].def == def;
+        title_->setText(s.instances.size() == 1 ? QStringLiteral("Component")
+                                                : QStringLiteral("%1 Components").arg(s.instances.size()));
+        if (same) {
+            measureLabel_->setText(QString::fromStdString(st.defs[def].name));
+            measure_->setText(QStringLiteral("%1 in model").arg(instanceCount(st, def)));
+        } else {
+            measureLabel_->setText(QStringLiteral("Definitions:"));
+            measure_->setText(QStringLiteral("mixed"));
+        }
     } else if (s.count() == 1 && s.faces.size() == 1) {
         title_->setText(QStringLiteral("Face"));
     } else if (s.count() == 1) {

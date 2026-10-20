@@ -75,6 +75,10 @@ private:
     void deleteGuides();
     void modelInfo();
     void roundCorners();
+    void makeComponent();
+    void makeUnique();
+    void explode();
+    void editComponent();
     void traceImage();
     void about();
     void showShortcuts();

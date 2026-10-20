@@ -10,6 +10,9 @@
 //   "faces":    [ { "outer": [v...], "holes": [[v...]], "normal": [x,y,z], "hidden",
 //                   "front": { "material", "uv": { "origin", "u", "v" } }, "back": {...} } ],
 //   "guides":   [ { "kind": "line"|"point", "p": [..], "dir": [..] } ],
+//   "components": [ { "name", "uid", "vertices", "edges", "faces", "nextCurve" } ],
+//   "instances":  [ { "component": index, "transform": [16 numbers, column-major
+//                     4x4 component -> model], "hidden" } ],
 //   "view":     { application specific (camera, style) }
 // }
 #pragma once

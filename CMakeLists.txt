@@ -21,6 +21,7 @@ add_library(gs_core STATIC
   src/core/ImageTrace.h src/core/ImageTrace.cpp
   src/core/Units.h src/core/Units.cpp
   src/core/Document.h src/core/Document.cpp
+  src/core/Components.h src/core/Components.cpp
 )
 target_include_directories(gs_core PUBLIC src)
 target_compile_options(gs_core PRIVATE -Wall -Wextra)

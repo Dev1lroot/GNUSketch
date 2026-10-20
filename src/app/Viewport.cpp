@@ -4,6 +4,7 @@
 #include "CameraTools.h"
 #include "DrawTools.h"
 #include "ModifyTools.h"
+#include "core/Components.h"
 #include "io/ImageUtil.h"
 
 #include <QApplication>
@@ -19,6 +20,7 @@
 #include <QWheelEvent>
 
 #include <cmath>
+#include <limits>
 
 namespace gs {
 
@@ -106,7 +108,7 @@ void Viewport::cancelTool() {
 void Viewport::updateSceneBounds() {
     Vec3 mn, mx;
     bool any;
-    doc_->mesh().bounds(mn, mx, any);
+    modelBounds(doc_->state, mn, mx, any);
     if (any) camera_.setSceneRadius((mn + mx) * 0.5, (mx - mn).length() * 0.5);
     else camera_.setSceneRadius(Vec3(), 10);
 }
@@ -114,7 +116,7 @@ void Viewport::updateSceneBounds() {
 void Viewport::zoomExtents() {
     Vec3 mn, mx;
     bool any;
-    doc_->mesh().bounds(mn, mx, any);
+    modelBounds(doc_->state, mn, mx, any);
     for (const Guide& g : doc_->state.guides)
         if (g.kind == Guide::Point) {
             for (int i = 0; i < 3; ++i) {
@@ -225,6 +227,11 @@ void Viewport::paintOverlay(QPainter& p, const Preview& pv) {
             p.drawLine(QPointF(x - 5, y - 5), QPointF(x + 5, y + 5));
             p.drawLine(QPointF(x - 5, y + 5), QPointF(x + 5, y - 5));
             break;
+        case MK::Grip:
+        case MK::GripHot:
+            p.setBrush(m.kind == MK::GripHot ? QColor(230, 30, 30) : QColor(0, 170, 0));
+            p.drawRect(QRectF(x - 3.5, y - 3.5, 7, 7));
+            break;
         case MK::Center:
         case MK::Plain:
             p.setBrush(Qt::NoBrush);
@@ -257,8 +264,9 @@ void Viewport::paintOverlay(QPainter& p, const Preview& pv) {
 
 Vec3 Viewport::orbitPivotAt(double x, double y) {
     if (orbitPivot_ == OrbitPivot::CameraTarget) return camera_.target;
-    double t;
-    if (inference_->pickFace(x, y, &t) != kNone) return camera_.ray(x, y).at(t);
+    double t = std::numeric_limits<double>::infinity();
+    inference_->pickFace(x, y, &t); // also hits components
+    if (std::isfinite(t)) return camera_.ray(x, y).at(t);
     const Mesh& m = doc_->mesh();
     const Selection& sel = doc_->selection;
     Vec3 mn, mx;
@@ -278,7 +286,17 @@ Vec3 Viewport::orbitPivotAt(double x, double y) {
     for (Id e : sel.edges)
         if (e >= 0 && e < (Id)m.edges.size() && m.edges[e].alive)
             for (Id v : m.edges[e].v) grow(v);
-    if (!any) m.bounds(mn, mx, any);
+    for (Id i : sel.instances) {
+        Vec3 a, b;
+        if (!instanceBounds(doc_->state, i, a, b)) continue;
+        if (!any) mn = a, mx = b;
+        for (int k = 0; k < 3; ++k) {
+            mn[k] = std::min(mn[k], a[k]);
+            mx[k] = std::max(mx[k], b[k]);
+        }
+        any = true;
+    }
+    if (!any) modelBounds(doc_->state, mn, mx, any);
     return any ? (mn + mx) * 0.5 : Vec3();
 }
 
@@ -413,6 +431,7 @@ void Viewport::keyPressEvent(QKeyEvent* e) {
     };
     if (e->key() == Qt::Key_Escape) {
         if (typing) setTyped(QString());
+        else if (tool_ && !tool_->busy() && doc_->editingComponent()) doc_->closeComponent();
         else cancelTool();
         return;
     }

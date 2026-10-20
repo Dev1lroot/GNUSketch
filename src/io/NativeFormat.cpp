@@ -2,11 +2,14 @@
 #include "NativeFormat.h"
 
 #include "ImageUtil.h"
+#include "core/Components.h"
 
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
+
+#include <map>
 
 namespace gs {
 
@@ -148,7 +151,8 @@ bool meshFromJson(const QJsonObject& root, Mesh& mesh) {
     return true;
 }
 
-QByteArray modelToJson(const ModelState& state, const QJsonObject& view) {
+QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
+    const ModelState state = closedState(stateIn);
     QJsonObject root = meshToJson(state.mesh);
     root["format"] = "GNUSketch";
     root["version"] = 1;
@@ -183,6 +187,33 @@ QByteArray modelToJson(const ModelState& state, const QJsonObject& view) {
         guides.append(o);
     }
     root["guides"] = guides;
+
+    // Only definitions that are still placed somewhere, renumbered.
+    std::map<Id, Id> defMap;
+    QJsonArray comps, insts;
+    for (const Instance& in : state.instances) {
+        if (!in.alive || in.def < 0 || in.def >= (Id)state.defs.size()) continue;
+        auto it = defMap.find(in.def);
+        if (it == defMap.end()) {
+            const ComponentDef& d = state.defs[in.def];
+            QJsonObject c = meshToJson(d.mesh);
+            c["name"] = QString::fromStdString(d.name);
+            c["uid"] = QString::fromStdString(d.uid);
+            it = defMap.emplace(in.def, (Id)comps.size()).first;
+            comps.append(c);
+        }
+        QJsonObject o;
+        o["component"] = it->second;
+        QJsonArray xf;
+        for (double v : in.xf.m) xf.append(v);
+        o["transform"] = xf;
+        if (in.hidden) o["hidden"] = true;
+        insts.append(o);
+    }
+    if (!comps.isEmpty()) {
+        root["components"] = comps;
+        root["instances"] = insts;
+    }
     root["view"] = view;
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
@@ -241,6 +272,30 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
         if (fc.front.material >= (Id)st.materials.size()) fc.front.material = kNone;
         if (fc.back.material >= (Id)st.materials.size()) fc.back.material = kNone;
     }
+    for (const auto& cj : root["components"].toArray()) {
+        QJsonObject o = cj.toObject();
+        ComponentDef d;
+        meshFromJson(o, d.mesh);
+        d.name = o["name"].toString().toStdString();
+        d.uid = o["uid"].toString().toStdString();
+        if (d.uid.empty()) d.uid = newComponentUid();
+        for (Face& fc : d.mesh.faces) {
+            if (fc.front.material >= (Id)st.materials.size()) fc.front.material = kNone;
+            if (fc.back.material >= (Id)st.materials.size()) fc.back.material = kNone;
+        }
+        st.defs.push_back(std::move(d));
+    }
+    for (const auto& ij : root["instances"].toArray()) {
+        QJsonObject o = ij.toObject();
+        Instance in;
+        in.def = o["component"].toInt(kNone);
+        if (in.def < 0 || in.def >= (Id)st.defs.size()) continue;
+        QJsonArray xf = o["transform"].toArray();
+        if (xf.size() == 16)
+            for (int i = 0; i < 16; ++i) in.xf.m[i] = xf[i].toDouble();
+        in.hidden = o["hidden"].toBool();
+        st.instances.push_back(in);
+    }
     for (const auto& gj : root["guides"].toArray()) {
         QJsonObject o = gj.toObject();
         Guide g;
@@ -261,9 +316,7 @@ bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* 
     }
     ModelState st;
     if (!modelFromJson(f.readAll(), st, view, error)) return false;
-    uint64_t rev = doc.state.mesh.revision;
     doc.state = std::move(st);
-    doc.state.mesh.revision = rev + 1000;
     doc.selection.clear();
     doc.filePath = path.toStdString();
     doc.modified = false;

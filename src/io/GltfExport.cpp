@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "GltfExport.h"
 
+#include "core/Components.h"
 #include "core/Triangulate.h"
 
 #include <QJsonArray>
@@ -36,7 +37,8 @@ FaceTriangles triangulateFace(const Mesh& m, Id f, bool frontSide, const Materia
 }
 
 bool exportGltf(const Document& doc, const QString& path, QString* error) {
-    const Mesh& m = doc.mesh();
+    const Mesh flat = flattenModel(doc.state);
+    const Mesh& m = flat;
     QByteArray bin;
     auto align4 = [&] { while (bin.size() % 4) bin.append('\0'); };
 

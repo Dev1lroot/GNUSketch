@@ -276,6 +276,17 @@ struct Mat4 {
         return r;
     }
     Mat4 inverted() const;
+    // Determinant of the linear 3x3 part (negative for mirroring transforms).
+    double det3() const {
+        return at(0, 0) * (at(1, 1) * at(2, 2) - at(1, 2) * at(2, 1)) -
+               at(0, 1) * (at(1, 0) * at(2, 2) - at(1, 2) * at(2, 0)) +
+               at(0, 2) * (at(1, 0) * at(2, 1) - at(1, 1) * at(2, 0));
+    }
+    bool isIdentity(double tol = 1e-12) const {
+        for (int i = 0; i < 16; ++i)
+            if (std::fabs(m[i] - ((i % 5 == 0) ? 1.0 : 0.0)) > tol) return false;
+        return true;
+    }
 };
 
 inline Mat4 Mat4::inverted() const {
@@ -303,6 +314,15 @@ inline Mat4 Mat4::inverted() const {
     det = 1.0 / det;
     for (int i = 0; i < 16; ++i) r.m[i] = inv[i] * det;
     return r;
+}
+
+// Inverse-transpose of the linear 3x3 part of m applied to a covector
+// (normals, texture axes).
+inline Vec3 transformCovector(const Mat4& m, const Vec3& c) {
+    Mat4 inv = m.inverted();
+    return {inv.at(0, 0) * c.x + inv.at(1, 0) * c.y + inv.at(2, 0) * c.z,
+            inv.at(0, 1) * c.x + inv.at(1, 1) * c.y + inv.at(2, 1) * c.z,
+            inv.at(0, 2) * c.x + inv.at(1, 2) * c.y + inv.at(2, 2) * c.z};
 }
 
 } // namespace gs

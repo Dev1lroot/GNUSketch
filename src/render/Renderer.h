@@ -33,7 +33,7 @@ struct Preview {
         std::vector<Vec3> pts;
         Color color;
     };
-    enum class MarkerKind { Endpoint, Midpoint, OnEdge, OnFace, Origin, Intersection, Guide, Center, Plain };
+    enum class MarkerKind { Endpoint, Midpoint, OnEdge, OnFace, Origin, Intersection, Guide, Center, Plain, Grip, GripHot };
     struct Marker {
         Vec3 p;
         MarkerKind kind = MarkerKind::Plain;
@@ -47,6 +47,7 @@ struct Preview {
     std::vector<Marker> markers;
     std::vector<Label> labels; // drawn next to the cursor-ish world point
     std::set<Id> highlightFaces, highlightEdges;
+    std::set<Id> highlightInstances;
     // Faces/edges to hide while the tool shows a modified ghost (e.g. move).
     void clear() { *this = Preview(); }
     void line(const Vec3& a, const Vec3& b, const Color& c, float w = 1.0f, Dash d = Dash::None, bool depth = false) {
@@ -76,26 +77,44 @@ private:
         uint64_t revision = 0;
     };
 
-    void rebuildFaces(const Document& doc);
+    // GPU copy of one mesh's triangulated faces (the top level or a component
+    // definition, drawn once per instance).
+    struct MeshGpu {
+        unsigned vao = 0, vbo = 0;
+        uint64_t revision = 0, matRevision = 0;
+        std::vector<Batch> batches;
+        std::vector<std::vector<float>> faceTris; // per face: triangle positions (for overlays)
+    };
+    // Edge lines collected for one frame.
+    struct EdgeLists {
+        std::vector<float> normal, profile, selected, hidden, faded, fadedProfile;
+    };
+
+    void buildMesh(MeshGpu& g, const Mesh& m, const Document& doc);
+    void freeMesh(MeshGpu& g);
+    MeshGpu& meshGpu(const Document& doc, Id def); // kNone = top level
     void syncTextures(const Document& doc);
     void drawBackground(const Document& doc, const Camera& cam);
-    void drawFaces(const Document& doc, const Camera& cam);
+    // fade > 0 draws the mesh washed out and translucent (the rest of the model
+    // while a component is open for editing).
+    void drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera& cam, const Mat4& model, float fade);
+    void collectEdges(const Mesh& m, const Mat4& model, const Document& doc, const Camera& cam, const Preview& preview,
+                      bool active, bool faded, EdgeLists& out);
     void drawOverlayFaces(const std::vector<float>& tris, const Camera& cam, const Color& c, bool stipple);
     void drawLines(const std::vector<float>& data, const Camera& cam, float width, Dash dash, double dpr);
     void pushLine(std::vector<float>& d, const Vec3& a, const Vec3& b, const Color& c);
     unsigned textureFor(Id mat) const;
 
     std::unique_ptr<QOpenGLShaderProgram> faceProg_, lineProg_, skyProg_, flatProg_;
-    unsigned faceVao_ = 0, faceVbo_ = 0;
     unsigned dynVao_ = 0, dynVbo_ = 0;    // lines (pos3 + color4)
     unsigned flatVao_ = 0, flatVbo_ = 0;  // overlay triangles (pos3)
     unsigned skyVao_ = 0;
     bool initialized_ = false;
     int vpW_ = 1, vpH_ = 1; // framebuffer size in device pixels
 
-    uint64_t builtRevision_ = 0, builtMatRevision_ = 0;
-    std::vector<Batch> batches_;
-    std::vector<std::vector<float>> faceTris_; // per face: triangle positions (for overlays)
+    uint64_t builtMatRevision_ = 0;
+    MeshGpu top_;
+    std::map<Id, MeshGpu> defs_;
     std::map<Id, GpuTex> textures_;
 };
 

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Inference.h"
 
+#include "core/Components.h"
+
 #include <cmath>
 #include <limits>
 
@@ -38,6 +40,7 @@ Id InferenceEngine::pickFace(double px, double py, double* tOut, const std::set<
     Ray r = cam_.ray(px, py);
     Id best = kNone;
     double bestT = std::numeric_limits<double>::infinity();
+    if (tOut) *tOut = bestT;
     if (doc_.style.faceStyle == RenderStyle::Wireframe) return kNone;
     for (Id f = 0; f < (Id)m.faces.size(); ++f) {
         const Face& F = m.faces[f];
@@ -52,6 +55,54 @@ Id InferenceEngine::pickFace(double px, double py, double* tOut, const std::set<
         if (m.rayFace(f, r, t) && t < bestT) {
             bestT = t;
             best = f;
+        }
+    }
+    // Components in front hide the loose geometry behind them.
+    double tInst;
+    if (pickInstance(px, py, &tInst) != kNone && tInst < bestT - 1e-9) {
+        bestT = tInst;
+        best = kNone;
+    }
+    if (tOut) *tOut = bestT;
+    return best;
+}
+
+Id InferenceEngine::pickInstance(double px, double py, double* tOut) const {
+    const ModelState& st = doc_.state;
+    Id best = kNone;
+    double bestT = std::numeric_limits<double>::infinity();
+    if (st.editing != kNone) return kNone;
+    Ray r = cam_.ray(px, py);
+    const bool wire = doc_.style.faceStyle == RenderStyle::Wireframe;
+    for (Id i = 0; i < (Id)st.instances.size(); ++i) {
+        const Instance& I = st.instances[i];
+        if (!I.alive || I.hidden || ignoredInstances.count(i)) continue;
+        const Mesh& m = st.defs[I.def].mesh;
+        Mat4 xf = instanceWorldXf(st, i), inv = xf.inverted();
+        // Ray in definition coordinates; same parameter t as in world space.
+        Ray lr{inv.transformPoint(r.origin), inv.transformDir(r.dir)};
+        if (!wire)
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+                if (!m.faces[f].alive || m.faces[f].hidden) continue;
+                double t;
+                if (m.rayFace(f, lr, t) && t < bestT) {
+                    bestT = t;
+                    best = i;
+                }
+            }
+        // Edges near the cursor (lines and wireframe have no faces to hit).
+        for (const Edge& E : m.edges) {
+            if (!E.alive || E.hidden || E.soft) continue;
+            Vec3 a = xf.transformPoint(m.pos(E.v[0])), b = xf.transformPoint(m.pos(E.v[1]));
+            double s, t;
+            Vec3 q = closestLineLine(a, b - a, r.origin, r.dir, s, t) ? lerp(a, b, std::clamp(s, 0.0, 1.0)) : a;
+            if (pixelDistance(q, px, py) > 5.0) continue;
+            double depth = (q - r.origin).dot(r.dir);
+            if (cam_.perspective && depth < 0) continue;
+            if (depth < bestT) {
+                bestT = depth;
+                best = i;
+            }
         }
     }
     if (tOut) *tOut = bestT;
@@ -113,7 +164,19 @@ int InferenceEngine::pickGuide(double px, double py, double tolPx) const {
 PickResult InferenceEngine::pick(double px, double py, double edgeTolPx, const std::set<Id>* ex) const {
     PickResult pr;
     Ray r = cam_.ray(px, py);
+    double tInst;
+    Id inst = pickInstance(px, py, &tInst);
     pr.edge = pickEdge(px, py, edgeTolPx, ex);
+    if (inst != kNone && pr.edge == kNone) {
+        // pickFace already treats components as occluders.
+        double t;
+        if (pickFace(px, py, &t, ex) == kNone) {
+            pr.instance = inst;
+            pr.t = tInst;
+            pr.p = r.at(tInst);
+            return pr;
+        }
+    }
     if (pr.edge != kNone) {
         const Mesh& m = doc_.mesh();
         Vec3 a = m.pos(m.edges[pr.edge].v[0]), b = m.pos(m.edges[pr.edge].v[1]);
@@ -184,9 +247,31 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
             bestV = v;
         }
     }
+    // Corners of components.
+    bool instPoint = false;
+    Vec3 instP;
+    if (bestV == kNone && doc_.state.editing == kNone) {
+        const ModelState& st = doc_.state;
+        double bd = snap;
+        for (Id i = 0; i < (Id)st.instances.size(); ++i) {
+            const Instance& I = st.instances[i];
+            if (!I.alive || I.hidden || ignoredInstances.count(i)) continue;
+            Mat4 xf = instanceWorldXf(st, i);
+            for (const Vertex& v : st.defs[I.def].mesh.vertices) {
+                if (!v.alive) continue;
+                Vec3 p = xf.transformPoint(v.p);
+                double d = pixelDistance(p, px, py);
+                if (d < bd && visible(p)) {
+                    bd = d;
+                    instP = p;
+                    instPoint = true;
+                }
+            }
+        }
+    }
     Id bestMid = kNone;
     double bestMD = snap;
-    if (bestV == kNone) {
+    if (bestV == kNone && !instPoint) {
         for (Id e = 0; e < (Id)m.edges.size(); ++e) {
             const Edge& E = m.edges[e];
             if (!E.alive || E.soft || E.hidden) continue;
@@ -199,10 +284,10 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
             }
         }
     }
-    bool origin = bestV == kNone && bestMid == kNone && doc_.style.showAxes && pixelDistance(Vec3(), px, py) < snap &&
+    bool origin = bestV == kNone && !instPoint && bestMid == kNone && doc_.style.showAxes && pixelDistance(Vec3(), px, py) < snap &&
                   visible(Vec3());
     int guidePt = -1;
-    if (bestV == kNone && bestMid == kNone && !origin && doc_.style.showGuides) {
+    if (bestV == kNone && !instPoint && bestMid == kNone && !origin && doc_.style.showGuides) {
         double bd = snap;
         for (int i = 0; i < (int)doc_.state.guides.size(); ++i) {
             const Guide& g = doc_.state.guides[i];
@@ -216,6 +301,10 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         res.type = InferenceResult::Endpoint;
         res.p = m.pos(bestV);
         res.vertex = bestV;
+        remembered_ = res.p;
+    } else if (instPoint) {
+        res.type = InferenceResult::Endpoint;
+        res.p = instP;
         remembered_ = res.p;
     } else if (bestMid != kNone) {
         res.type = InferenceResult::Midpoint;
@@ -370,7 +459,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
             }
         }
     }
-    if (face != kNone) {
+    if (face != kNone || std::isfinite(tFace)) { // a loose face or a component's face
         res.type = InferenceResult::OnFace;
         res.face = face;
         res.p = r.at(tFace);

@@ -5,12 +5,16 @@
 
 #include <QPainter>
 
+#include <cmath>
+#include <limits>
+
 namespace gs {
 
 Vec3 focusPointAt(InferenceEngine& eng, const Camera& cam, double x, double y) {
-    double t;
+    double t = std::numeric_limits<double>::infinity();
     Ray r = cam.ray(x, y);
-    if (eng.pickFace(x, y, &t) != kNone) return r.at(t);
+    eng.pickFace(x, y, &t); // also hits components
+    if (std::isfinite(t)) return r.at(t);
     Plane ground(Vec3(0, 0, 1), Vec3());
     if (intersectRayPlane(r, ground, t) && t < cam.distance() * 50) return r.at(t);
     Plane pv(cam.forward(), cam.target);

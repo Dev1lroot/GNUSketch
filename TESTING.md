@@ -20,11 +20,13 @@ bottom. Screenshots help.
 
 ## Modifying
 - [ ] Push/Pull: box from rectangle, taller/shorter box, pocket, push through (hole), Ctrl = new start face, double-click repeat
-- [ ] Move / Ctrl copy / `5x` array; Rotate with 15° snaps; Scale; Offset
+- [ ] Move / Ctrl copy / `5x` array; Rotate with 15° snaps; Offset
+- [ ] Scale grips: corner (uniform), Shift+corner (free), edge midpoint (2 axes), face centre (1 axis), Ctrl about centre, typed `2` / `1.5,2` / `1,2,1` during and right after; a rotated component scales along its own sides; a flat rectangle shows only its 8 in-plane grips
 - [ ] Eraser (drag, Shift hide, Ctrl soften); Delete key; Undo/Redo
 - [ ] Select: click, window vs crossing, double/triple click, Ctrl/Shift modifiers
 - [ ] Follow Me: circle along a line/arc (pipe), ring profile (hollow pipe), T/H beam along an L path, moulding around a box top (Alt-click the top face), profile around a circle (lathe); path selected first vs clicked after the profile
 - [ ] Round Corners: rectangle corners, one cube edge, four top edges, all cube edges; live preview and too-large radius message
+- [ ] Components: select a box, right-click Make Component; Ctrl+Move copies; double-click a copy, push/pull and draw on it (rest fades, other copies change live); Esc / click outside closes; rotate and scale one copy (others unchanged); Make Unique then edit; Explode; undo/redo through all of it; save, reopen, copy/paste between windows
 
 ## Materials and textures
 - [ ] Drag an image onto a face (fit), Ctrl+drop (tile), drop onto Materials panel

@@ -5,6 +5,7 @@
 #include "ModifyTools.h"
 #include "Panels.h"
 #include "Viewport.h"
+#include "core/Components.h"
 #include "core/RoundCorners.h"
 #include "io/GltfExport.h"
 #include "io/ImageUtil.h"
@@ -27,6 +28,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
@@ -208,6 +210,19 @@ void MainWindow::buildActions() {
     act("unsoften", "", QStringLiteral("U&nsoften Edges"), QKeySequence(), [this] { softenSelection(false); });
     act("texfit", "", QStringLiteral("Texture: &Fit to Face"), QKeySequence(), [this] { textureFitSelection(true); });
     act("texreset", "", QStringLiteral("Texture: &Reset Position"), QKeySequence(), [this] { textureFitSelection(false); });
+    act("makecomponent", "", QStringLiteral("Make &Component…"), QKeySequence(), [this] { makeComponent(); })
+        ->setStatusTip(QStringLiteral("Turn the selected geometry into a component; copies of it share their geometry."));
+    act("editcomponent", "", QStringLiteral("&Edit Component"), QKeySequence(), [this] { editComponent(); })
+        ->setStatusTip(QStringLiteral("Edit the selected component in place (or double-click it); every copy changes too."));
+    act("closecomponent", "", QStringLiteral("C&lose Component"), QKeySequence(), [this] {
+        viewport_->cancelTool();
+        doc_.closeComponent();
+        viewport_->refreshToolStatus();
+    })->setStatusTip(QStringLiteral("Stop editing the component (Esc, or click outside it)."));
+    act("makeunique", "", QStringLiteral("Make &Unique"), QKeySequence(), [this] { makeUnique(); })
+        ->setStatusTip(QStringLiteral("Give the selected copies their own geometry, separate from the other copies."));
+    act("explode", "", QStringLiteral("E&xplode"), QKeySequence(), [this] { explode(); })
+        ->setStatusTip(QStringLiteral("Turn the selected components back into loose geometry."));
     act("modelinfo", "info", QStringLiteral("&Model Info…"), QKeySequence(), [this] { modelInfo(); });
 
     act("zoomext", "zoomextents", QStringLiteral("Zoom E&xtents"), QKeySequence(QStringLiteral("Shift+Z")), [this] { viewport_->zoomExtents(); });
@@ -323,6 +338,12 @@ void MainWindow::buildMenus() {
     edit->addSeparator();
     edit->addAction(acts_["hide"]);
     edit->addAction(acts_["unhide"]);
+    edit->addSeparator();
+    edit->addAction(acts_["makecomponent"]);
+    edit->addAction(acts_["editcomponent"]);
+    edit->addAction(acts_["closecomponent"]);
+    edit->addAction(acts_["makeunique"]);
+    edit->addAction(acts_["explode"]);
     edit->addSeparator();
     edit->addAction(acts_["reverse"]);
     edit->addAction(acts_["soften"]);
@@ -570,6 +591,15 @@ void MainWindow::onSelectionChanged() {
     bool any = !doc_.selection.empty();
     for (const char* k : {"cut", "copy", "delete", "hide", "roundcorners"}) acts_[k]->setEnabled(any);
     acts_["traceimage"]->setEnabled(!doc_.selection.faces.empty());
+    const bool geometry = !doc_.selection.faces.empty() || !doc_.selection.edges.empty();
+    const bool instances = !doc_.selection.instances.empty();
+    acts_["makecomponent"]->setEnabled(geometry && !doc_.editingComponent());
+    acts_["editcomponent"]->setEnabled(doc_.selection.instances.size() == 1);
+    acts_["closecomponent"]->setEnabled(doc_.editingComponent());
+    acts_["explode"]->setEnabled(instances);
+    bool shared = false;
+    for (Id i : doc_.selection.instances) shared = shared || instanceCount(doc_.state, doc_.state.instances[i].def) > 1;
+    acts_["makeunique"]->setEnabled(shared);
     viewport_->update();
 }
 
@@ -816,6 +846,13 @@ static const QString kClipMime = QStringLiteral("application/x-gnusketch");
 void MainWindow::copySelection(bool cut) {
     if (doc_.selection.empty()) return;
     ModelState clip;
+    for (Id i : doc_.selection.instances) {
+        const Instance& in = doc_.state.instances[i];
+        clip.defs.push_back(doc_.state.defs[in.def]);
+        Instance c = in;
+        c.def = (Id)clip.defs.size() - 1;
+        clip.instances.push_back(c);
+    }
     clip.mesh = doc_.mesh();
     Mesh& m = clip.mesh;
     std::set<Id> keepEdges = doc_.selection.edges;
@@ -829,8 +866,12 @@ void MainWindow::copySelection(bool cut) {
     m.compact();
     // Only the materials the copied faces use.
     std::map<Id, Id> matMap;
-    for (Face& f : m.faces)
-        for (FaceSide* s : {&f.front, &f.back}) {
+    std::vector<Face*> clipFaces;
+    for (Face& f : m.faces) clipFaces.push_back(&f);
+    for (ComponentDef& d : clip.defs)
+        for (Face& f : d.mesh.faces) clipFaces.push_back(&f);
+    for (Face* fp : clipFaces)
+        for (FaceSide* s : {&fp->front, &fp->back}) {
             if (s->material < 0 || s->material >= (Id)doc_.state.materials.size()) {
                 s->material = kNone;
                 continue;
@@ -842,7 +883,7 @@ void MainWindow::copySelection(bool cut) {
             }
             s->material = it->second;
         }
-    const size_t count = m.faces.size() + m.edges.size();
+    const size_t count = m.faces.size() + m.edges.size() + clip.instances.size();
     auto* md = new QMimeData;
     md->setData(kClipMime, modelToJson(clip));
     QApplication::clipboard()->setMimeData(md);
@@ -931,6 +972,37 @@ void MainWindow::paste() {
         m.faces[nf].hidden = f.hidden;
         sel.faces.insert(nf);
     }
+    // Components: reuse a definition with the same identity so pasted copies
+    // stay linked to the originals.
+    for (ComponentDef& cd : c.defs)
+        for (Face& f : cd.mesh.faces) {
+            f.front.material = mapMat(f.front.material);
+            f.back.material = mapMat(f.back.material);
+        }
+    std::vector<Id> defMap(c.defs.size(), kNone);
+    for (const Instance& in : c.instances) {
+        if (in.def < 0 || in.def >= (Id)c.defs.size()) continue;
+        const ComponentDef& cd = c.defs[in.def];
+        if (doc_.editingComponent()) {
+            // No components inside components: paste the geometry itself.
+            appendMesh(m, cd.mesh, in.xf, nullptr, nullptr, false, &sel);
+            continue;
+        }
+        Id& d = defMap[in.def];
+        for (Id j = 0; j < (Id)doc_.state.defs.size() && d == kNone; ++j)
+            if (!cd.uid.empty() && doc_.state.defs[j].uid == cd.uid) d = j;
+        if (d == kNone) {
+            ComponentDef nd = cd;
+            nd.name = uniqueComponentName(doc_.state, cd.name);
+            doc_.state.defs.push_back(std::move(nd));
+            d = (Id)doc_.state.defs.size() - 1;
+        }
+        Instance ni = in;
+        ni.def = d;
+        ni.alive = true;
+        doc_.state.instances.push_back(ni);
+        sel.instances.insert((Id)doc_.state.instances.size() - 1);
+    }
     doc_.selection = sel;
     doc_.commitOp();
     doc_.validateSelection();
@@ -946,7 +1018,9 @@ void MainWindow::deleteSelection() {
     doc_.beginOp("Erase");
     for (Id f : doc_.selection.faces) m.eraseFace(f);
     for (Id e : doc_.selection.edges) m.eraseEdge(e, false);
+    for (Id i : doc_.selection.instances) doc_.state.instances[i].alive = false;
     m.removeOrphanVertices();
+    m.touch();
     doc_.selection.clear();
     doc_.commitOp();
     doc_.notifySelection();
@@ -959,6 +1033,9 @@ void MainWindow::selectAll() {
         if (m.faces[f].alive && !m.faces[f].hidden) doc_.selection.faces.insert(f);
     for (Id e = 0; e < (Id)m.edges.size(); ++e)
         if (m.edges[e].alive && !m.edges[e].hidden) doc_.selection.edges.insert(e);
+    const auto& insts = doc_.state.instances;
+    for (Id i = 0; i < (Id)insts.size() && !doc_.editingComponent(); ++i)
+        if (insts[i].alive && !insts[i].hidden) doc_.selection.instances.insert(i);
     doc_.notifySelection();
 }
 
@@ -967,6 +1044,7 @@ void MainWindow::hideSelection() {
     doc_.beginOp("Hide");
     for (Id f : doc_.selection.faces) doc_.mesh().faces[f].hidden = true;
     for (Id e : doc_.selection.edges) doc_.mesh().edges[e].hidden = true;
+    for (Id i : doc_.selection.instances) doc_.state.instances[i].hidden = true;
     doc_.mesh().touch();
     doc_.selection.clear();
     doc_.commitOp();
@@ -977,6 +1055,7 @@ void MainWindow::unhideAll() {
     doc_.beginOp("Unhide All");
     for (Face& f : doc_.mesh().faces) f.hidden = false;
     for (Edge& e : doc_.mesh().edges) e.hidden = false;
+    for (Instance& i : doc_.state.instances) i.hidden = false;
     doc_.mesh().touch();
     doc_.commitOp();
 }
@@ -1120,6 +1199,56 @@ void MainWindow::roundCorners() {
         doc_.cancelOp();
     }
     viewport_->update();
+}
+
+void MainWindow::makeComponent() {
+    const Selection& s = doc_.selection;
+    if ((s.faces.empty() && s.edges.empty()) || doc_.editingComponent()) return;
+    viewport_->cancelTool();
+    bool ok = false;
+    QString name = QInputDialog::getText(this, QStringLiteral("Make Component"), QStringLiteral("Name:"), QLineEdit::Normal,
+                                         QString::fromStdString(uniqueComponentName(doc_.state, "Component")), &ok);
+    if (!ok) return;
+    doc_.beginOp("Make Component");
+    Id inst = gs::makeComponent(doc_.state, s, name.trimmed().toStdString());
+    if (inst == kNone) {
+        doc_.cancelOp();
+        return;
+    }
+    doc_.selection.clear();
+    doc_.selection.instances.insert(inst);
+    doc_.commitOp();
+    doc_.notifySelection();
+    statusLabel_->setText(QStringLiteral("Made component \"%1\". Ctrl+Move copies it; double-click to edit every copy at once.")
+                              .arg(QString::fromStdString(doc_.state.defs[doc_.state.instances[inst].def].name)));
+}
+
+void MainWindow::makeUnique() {
+    if (doc_.selection.instances.empty()) return;
+    viewport_->cancelTool();
+    doc_.beginOp("Make Unique");
+    gs::makeUnique(doc_.state, doc_.selection.instances);
+    doc_.commitOp();
+    doc_.notifySelection();
+}
+
+void MainWindow::explode() {
+    if (doc_.selection.instances.empty()) return;
+    viewport_->cancelTool();
+    doc_.beginOp("Explode");
+    Selection out;
+    for (Id i : doc_.selection.instances) explodeInstance(doc_.state, i, &out);
+    doc_.selection = out;
+    doc_.commitOp();
+    doc_.validateSelection();
+    doc_.notifySelection();
+}
+
+void MainWindow::editComponent() {
+    if (doc_.selection.instances.size() != 1) return;
+    viewport_->cancelTool();
+    doc_.openComponent(*doc_.selection.instances.begin());
+    viewport_->refreshToolStatus();
 }
 
 void MainWindow::traceImage() {
@@ -1271,11 +1400,14 @@ void MainWindow::showShortcuts() {
 
 void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
     Selection& s = doc_.selection;
-    bool picked = pick.face != kNone || pick.edge != kNone;
-    bool inSel = (pick.face != kNone && s.faces.count(pick.face)) || (pick.edge != kNone && s.edges.count(pick.edge));
+    bool picked = pick.face != kNone || pick.edge != kNone || pick.instance != kNone;
+    bool inSel = (pick.face != kNone && s.faces.count(pick.face)) || (pick.edge != kNone && s.edges.count(pick.edge)) ||
+                 (pick.instance != kNone && s.instances.count(pick.instance));
     if (picked && !inSel) {
         s.clear();
-        if (pick.edge != kNone) {
+        if (pick.instance != kNone) {
+            s.instances.insert(pick.instance);
+        } else if (pick.edge != kNone) {
             s.edges.insert(pick.edge);
             expandCurves(doc_.mesh(), s.edges);
         } else {
@@ -1284,12 +1416,33 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
         doc_.notifySelection();
     }
     QMenu menu(this);
+    const bool geometry = !s.faces.empty() || !s.edges.empty();
+    if (!s.instances.empty()) {
+        if (s.instances.size() == 1) {
+            const ComponentDef& d = doc_.state.defs[doc_.state.instances[*s.instances.begin()].def];
+            menu.addSection(QStringLiteral("Component: %1").arg(QString::fromStdString(d.name)));
+            menu.addAction(acts_["editcomponent"]);
+        }
+        menu.addAction(acts_["makeunique"]);
+        menu.addAction(acts_["explode"]);
+        menu.addSeparator();
+    }
+    if (doc_.editingComponent()) {
+        menu.addAction(acts_["closecomponent"]);
+        menu.addSeparator();
+    }
     if (!s.empty()) {
+        if (geometry && !doc_.editingComponent()) {
+            menu.addAction(acts_["makecomponent"]);
+            menu.addSeparator();
+        }
         menu.addAction(acts_["delete"]);
         menu.addAction(acts_["hide"]);
-        menu.addAction(acts_["roundcorners"]);
+        if (geometry) menu.addAction(acts_["roundcorners"]);
         if (!s.faces.empty()) menu.addAction(acts_["traceimage"]);
         menu.addSeparator();
+    }
+    if (geometry) {
         QAction* conn = menu.addAction(QStringLiteral("Select All Connected"));
         connect(conn, &QAction::triggered, this, [this] {
             selectConnected(doc_.mesh(), doc_.selection);
@@ -1311,16 +1464,28 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
         menu.addAction(acts_["soften"]);
         menu.addAction(acts_["unsoften"]);
         menu.addSeparator();
+    }
+    if (!s.empty()) {
         QAction* zs = menu.addAction(QStringLiteral("Zoom Selection"));
         connect(zs, &QAction::triggered, this, [this] {
             std::set<Id> vs = selectionVertices(doc_.mesh(), doc_.selection);
-            if (vs.empty()) return;
             Vec3 mn(1e300, 1e300, 1e300), mx(-1e300, -1e300, -1e300);
-            for (Id v : vs)
+            bool any = false;
+            auto grow = [&](const Vec3& p) {
                 for (int i = 0; i < 3; ++i) {
-                    mn[i] = std::min(mn[i], doc_.mesh().pos(v)[i]);
-                    mx[i] = std::max(mx[i], doc_.mesh().pos(v)[i]);
+                    mn[i] = std::min(mn[i], p[i]);
+                    mx[i] = std::max(mx[i], p[i]);
                 }
+                any = true;
+            };
+            for (Id v : vs) grow(doc_.mesh().pos(v));
+            for (Id i : doc_.selection.instances) {
+                Vec3 a, b;
+                if (!instanceBounds(doc_.state, i, a, b)) continue;
+                grow(a);
+                grow(b);
+            }
+            if (!any) return;
             viewport_->camera().zoomExtents(mn, mx);
             viewport_->update();
         });

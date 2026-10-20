@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Headless tests for the geometry kernel.
+#include "core/Components.h"
 #include "core/Document.h"
 #include "core/Mesh.h"
 #include "core/RoundCorners.h"
@@ -690,6 +691,156 @@ int main() {
         d.mesh().eraseFace(onlyFace(d.mesh()));
         d.cancelOp();
         CHECK_EQ(d.mesh().aliveFaceCount(), 1);
+    });
+
+    // A 1x1x1 box at (x, y, 0) in the top-level mesh.
+    auto box = [](Document& d, double x, double y) {
+        Mesh& m = d.mesh();
+        rect(m, x, y, x + 1, y + 1);
+        Id f = kNone;
+        for (Id i = 0; i < (Id)m.faces.size(); ++i)
+            if (m.faces[i].alive && m.pointInFace(i, Vec3(x + 0.5, y + 0.5, 0))) f = i;
+        if (m.faces[f].normal.z < 0) m.reverseFace(f);
+        m.pushPull(f, 1.0);
+    };
+    auto selectAllGeometry = [](Document& d) {
+        Selection s;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) s.faces.insert(f);
+        for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e)
+            if (d.mesh().edges[e].alive) s.edges.insert(e);
+        return s;
+    };
+
+    test("make component moves geometry into a definition", [&] {
+        Document d;
+        box(d, 2, 3);
+        CHECK_EQ(d.mesh().aliveFaceCount(), 6);
+        Id inst = makeComponent(d.state, selectAllGeometry(d), "Box");
+        CHECK(inst != kNone);
+        CHECK_EQ(d.state.mesh.aliveFaceCount(), 0);
+        CHECK_EQ(d.state.mesh.aliveEdgeCount(), 0);
+        CHECK_EQ((int)d.state.defs.size(), 1);
+        CHECK_EQ(d.state.defs[0].mesh.aliveFaceCount(), 6);
+        CHECK(d.state.defs[0].name == "Box");
+        // Axes at the bounding box minimum; world bounds unchanged.
+        Vec3 mn, mx;
+        CHECK(instanceBounds(d.state, inst, mn, mx));
+        CHECK(mn.nearlyEquals(Vec3(2, 3, 0)) && mx.nearlyEquals(Vec3(3, 4, 1)));
+        Vec3 lmn, lmx;
+        bool any;
+        d.state.defs[0].mesh.bounds(lmn, lmx, any);
+        CHECK(lmn.nearlyEquals(Vec3(0, 0, 0)));
+    });
+
+    test("make component of part keeps the rest intact", [&] {
+        Document d;
+        box(d, 0, 0);
+        Selection s;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive && d.mesh().faces[f].normal.z > 0.9) s.faces.insert(f);
+        CHECK_EQ((int)s.faces.size(), 1);
+        makeComponent(d.state, s, "Lid");
+        CHECK_EQ(d.state.mesh.aliveFaceCount(), 5);
+        CHECK_EQ(d.state.mesh.aliveEdgeCount(), 12); // the top rim still bounds the sides
+        CHECK_EQ(d.state.defs[0].mesh.aliveFaceCount(), 1);
+    });
+
+    test("editing a component changes every instance", [&] {
+        Document d;
+        box(d, 0, 0);
+        Id a = makeComponent(d.state, selectAllGeometry(d), "Box");
+        Id b = cloneInstance(d.state, a);
+        d.state.instances[b].xf = Mat4::translation(Vec3(5, 0, 0)) * Mat4::rotation(Vec3(0, 0, 1), kPi / 2) *
+                                  d.state.instances[b].xf;
+        CHECK_EQ(instanceCount(d.state, 0), 2);
+        Vec3 bmn, bmx;
+        instanceBounds(d.state, b, bmn, bmx);
+
+        d.openComponent(b);
+        CHECK(d.editingComponent());
+        // The open definition is in b's world coordinates.
+        Vec3 mn, mx;
+        bool any;
+        d.mesh().bounds(mn, mx, any);
+        CHECK(mn.nearlyEquals(bmn) && mx.nearlyEquals(bmx));
+        // Other instance drawn relative to the open one stays where it was.
+        Vec3 amn, amx;
+        instanceBounds(d.state, a, amn, amx);
+        CHECK(amn.nearlyEquals(Vec3(0, 0, 0), 1e-9) && amx.nearlyEquals(Vec3(1, 1, 1), 1e-9));
+
+        // Push the top face of the open copy up by 1.
+        d.beginOp("Push/Pull");
+        Mesh& m = d.mesh();
+        Id top = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faces[f].normal.z > 0.9) top = f;
+        m.pushPull(top, 1.0);
+        d.commitOp();
+        instanceBounds(d.state, a, amn, amx);
+        CHECK(std::fabs(amx.z - 2) < 1e-9); // the other copy grew too
+
+        d.closeComponent();
+        CHECK(!d.editingComponent());
+        CHECK(d.selection.instances.count(b));
+        instanceBounds(d.state, b, bmn, bmx);
+        CHECK(std::fabs(bmx.z - 2) < 1e-9 && std::fabs(bmn.x - 4) < 1e-9);
+        d.state.defs[0].mesh.bounds(mn, mx, any);
+        CHECK(mn.nearlyEquals(Vec3(0, 0, 0), 1e-9) && mx.nearlyEquals(Vec3(1, 1, 2), 1e-9));
+
+        // Undo the push/pull: back inside the component, then out again.
+        CHECK(d.undo());
+        CHECK(d.editingComponent());
+        d.closeComponent();
+        instanceBounds(d.state, a, amn, amx);
+        CHECK(std::fabs(amx.z - 1) < 1e-9);
+    });
+
+    test("make unique and explode", [&] {
+        Document d;
+        box(d, 0, 0);
+        Id a = makeComponent(d.state, selectAllGeometry(d), "Box");
+        Id b = cloneInstance(d.state, a);
+        Id c = cloneInstance(d.state, a);
+        makeUnique(d.state, {b});
+        CHECK_EQ((int)d.state.defs.size(), 2);
+        CHECK(d.state.instances[b].def == 1 && d.state.instances[a].def == 0 && d.state.instances[c].def == 0);
+        CHECK(d.state.defs[1].name != d.state.defs[0].name);
+        CHECK(d.state.defs[1].uid != d.state.defs[0].uid);
+        makeUnique(d.state, {b}); // already unique
+        CHECK_EQ((int)d.state.defs.size(), 2);
+
+        d.state.instances[c].xf = Mat4::translation(Vec3(3, 0, 0)) * d.state.instances[c].xf;
+        Selection out;
+        explodeInstance(d.state, c, &out);
+        CHECK(!d.state.instances[c].alive);
+        CHECK_EQ(d.state.mesh.aliveFaceCount(), 6);
+        CHECK_EQ((int)out.faces.size(), 6);
+        Vec3 mn, mx;
+        bool any;
+        d.state.mesh.bounds(mn, mx, any);
+        CHECK(mn.nearlyEquals(Vec3(3, 0, 0), 1e-9) && mx.nearlyEquals(Vec3(4, 1, 1), 1e-9));
+        CHECK_EQ(instanceCount(d.state, 0), 1);
+    });
+
+    test("mirrored instance keeps faces outward", [&] {
+        Document d;
+        box(d, 0, 0);
+        Id a = makeComponent(d.state, selectAllGeometry(d), "Box");
+        d.state.instances[a].xf = Mat4::scale(Vec3(-1, 1, 1)) * d.state.instances[a].xf;
+        d.openComponent(a);
+        const Mesh& m = d.mesh();
+        for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+            if (!m.faces[f].alive) continue;
+            Vec3 c = m.faceInteriorPoint(f);
+            CHECK(m.faces[f].normal.dot(c - Vec3(-0.5, 0.5, 0.5)) > 0);
+        }
+        d.closeComponent();
+        Mesh flat = flattenModel(d.state);
+        for (Id f = 0; f < (Id)flat.faces.size(); ++f) {
+            if (!flat.faces[f].alive) continue;
+            CHECK(flat.faces[f].normal.dot(flat.faceInteriorPoint(f) - Vec3(-0.5, 0.5, 0.5)) > 0);
+        }
     });
 
     test("units", [] {

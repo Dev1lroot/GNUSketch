@@ -2,7 +2,9 @@
 #include "SelfTest.h"
 
 #include "MainWindow.h"
+#include "ModifyTools.h"
 #include "Viewport.h"
+#include "core/Components.h"
 #include "io/ImageUtil.h"
 #include "io/NativeFormat.h"
 #include "render/Renderer.h"
@@ -52,6 +54,14 @@ struct Driver {
         send(QEvent::MouseButtonPress, a, Qt::LeftButton, Qt::LeftButton, m);
         for (int i = 1; i <= 8; ++i) move(a + (b - a) * (i / 8.0), Qt::LeftButton, m);
         send(QEvent::MouseButtonRelease, b, Qt::LeftButton, Qt::NoButton, m);
+        pump();
+    }
+    void dblclick(QPointF p) {
+        move(p);
+        send(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+        send(QEvent::MouseButtonDblClick, p, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
         pump();
     }
     void key(int k, const QString& text = QString(), Qt::KeyboardModifiers m = Qt::NoModifier) {
@@ -219,7 +229,10 @@ int runSelfTest(MainWindow& w) {
 
     // Scale.
     vp->setTool(ToolId::Scale);
-    QPointF sp = d.screen(Vec3(-3, 0, 0.8));
+    Vec3 smx(-1e300, -1e300, -1e300);
+    for (Id v : selectionVertices(d.mesh(), doc.selection))
+        for (int k = 0; k < 3; ++k) smx[k] = std::max(smx[k], d.mesh().pos(v)[k]);
+    QPointF sp = d.screen(smx); // the max corner grip
     d.click(sp);
     d.move(sp + QPointF(30, -30));
     d.type("2");
@@ -351,6 +364,136 @@ int runSelfTest(MainWindow& w) {
             doc.undo();
             vp->setTool(ToolId::Select);
         }
+    }
+
+    // Components: make, Ctrl+Move copy, scale one copy, edit in place, make unique, explode.
+    {
+        auto action = [&](const char* name) { return w.findChild<QAction*>(QString::fromLatin1(name)); };
+        doc.selection.clear();
+        doc.beginOp("Box");
+        Mesh& m = d.mesh();
+        m.drawPolyline({{20, 0, 0}, {21, 0, 0}, {21, 1, 0}, {20, 1, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.facePlane(f).contains(Vec3(20.5, 0.5, 0)) && m.pointInFace(f, Vec3(20.5, 0.5, 0))) {
+                if (m.faces[f].normal.z < 0) m.reverseFace(f);
+                m.pushPull(f, 1.0);
+                break;
+            }
+        doc.commitOp();
+        Selection s;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faceInteriorPoint(f).x > 19.9) s.faces.insert(f);
+        for (Id e = 0; e < (Id)m.edges.size(); ++e)
+            if (m.edges[e].alive && m.pos(m.edges[e].v[0]).x > 19.9 && m.pos(m.edges[e].v[1]).x > 19.9) s.edges.insert(e);
+        doc.beginOp("Make Component");
+        Id a = makeComponent(doc.state, s, "Crate");
+        doc.selection.clear();
+        if (a != kNone) doc.selection.instances.insert(a);
+        doc.commitOp();
+        doc.notifySelection();
+        d.check(a != kNone && doc.state.defs.back().mesh.aliveFaceCount() == 6, "make component from the selection");
+        const Id def = a != kNone ? doc.state.instances[a].def : kNone;
+        vp->setStandardView(Vec3(1, 1, -0.8));
+        vp->camera().zoomExtents(Vec3(19.5, -0.5, 0), Vec3(25, 1.5, 2.5));
+        d.pump();
+
+        vp->setTool(ToolId::Move);
+        d.key(Qt::Key_Control);
+        d.click(d.screen(Vec3(20.5, 0.5, 1.0)));
+        d.move(d.screen(Vec3(22.5, 0.5, 1.0)));
+        d.type("<3000;0;0>");
+        Id b = (Id)doc.state.instances.size() - 1;
+        Vec3 mn, mx;
+        bool copied = b != a && doc.state.instances[b].alive && doc.state.instances[b].def == def &&
+                      instanceBounds(doc.state, b, mn, mx) && mn.nearlyEquals(Vec3(23, 0, 0), 1e-6);
+        d.check(copied, "Ctrl+Move copies a component instance sharing its definition");
+
+        vp->setTool(ToolId::Scale);
+        doc.selection.clear();
+        doc.selection.instances.insert(b);
+        doc.notifySelection();
+        d.click(d.screen(Vec3(24, 1, 1)));
+        d.type("2");
+        Vec3 dmn, dmx, amn, amx;
+        bool any = false;
+        doc.state.defs[def].mesh.bounds(dmn, dmx, any);
+        instanceBounds(doc.state, b, mn, mx);
+        instanceBounds(doc.state, a, amn, amx);
+        d.check(std::fabs((mx - mn).z - 2) < 1e-6 && std::fabs((amx - amn).z - 1) < 1e-6 && dmx.nearlyEquals(Vec3(1, 1, 1), 1e-6),
+                "scaling one instance leaves the others and the definition alone");
+
+        // Face grip: one axis only.
+        doc.selection.clear();
+        doc.selection.instances.insert(a);
+        doc.notifySelection();
+        d.click(d.screen(Vec3(21, 0.5, 0.5)));
+        d.type("2");
+        instanceBounds(doc.state, a, amn, amx);
+        d.check((amx - amn).nearlyEquals(Vec3(2, 1, 1), 1e-6) && amn.nearlyEquals(Vec3(20, 0, 0), 1e-6),
+                "face grip scales a component along one axis about the opposite face");
+        d.click(d.screen(Vec3(22, 0.5, 0.5)));
+        d.type("0.5");
+        instanceBounds(doc.state, a, amn, amx);
+        d.check((amx - amn).nearlyEquals(Vec3(1, 1, 1), 1e-6), "scale back with the moved grip");
+
+        vp->setTool(ToolId::Select);
+        d.dblclick(d.screen((mn + mx) * 0.5 + Vec3(0, 0, (mx - mn).z * 0.5)));
+        d.check(doc.state.editing == b, "double-click opens the component for editing");
+        if (doc.state.editing == b) {
+            vp->setTool(ToolId::PushPull);
+            Id tf = d.topFace();
+            QPointF tc = tf != kNone ? d.screen(d.mesh().faceInteriorPoint(tf)) : QPointF();
+            d.click(tc);
+            d.move(tc - QPointF(0, 40));
+            d.type("500");
+            instanceBounds(doc.state, a, amn, amx);
+            d.check(std::fabs(amx.z - 1.25) < 1e-6, "editing one copy updates the other copies live");
+            QImage fb = vp->grabFramebuffer();
+            d.check(!fb.isNull(), "renders while a component is open");
+            vp->setTool(ToolId::Select);
+            d.key(Qt::Key_Escape);
+            d.check(!doc.editingComponent() && doc.selection.instances.count(b), "Esc closes the component");
+        }
+
+        doc.selection.clear();
+        doc.selection.instances.insert(b);
+        doc.notifySelection();
+        action("makeunique")->trigger();
+        d.check(doc.state.instances[b].def != doc.state.instances[a].def && instanceCount(doc.state, def) == 1,
+                "Make Unique gives the copy its own definition");
+
+        int before = doc.state.mesh.aliveFaceCount();
+        doc.selection.clear();
+        doc.selection.instances.insert(a);
+        doc.notifySelection();
+        action("explode")->trigger();
+        d.check(!doc.state.instances[a].alive && doc.state.mesh.aliveFaceCount() == before + 6 && doc.selection.faces.size() == 6,
+                "Explode turns the component into loose geometry");
+        // Edge grip on loose geometry: two axes, then adjust by typing again.
+        vp->setTool(ToolId::Scale);
+        Vec3 emn, emx;
+        auto looseBounds = [&] {
+            emn = Vec3(1e300, 1e300, 1e300);
+            emx = -emn;
+            for (Id v : selectionVertices(d.mesh(), doc.selection))
+                for (int k = 0; k < 3; ++k) {
+                    emn[k] = std::min(emn[k], d.mesh().pos(v)[k]);
+                    emx[k] = std::max(emx[k], d.mesh().pos(v)[k]);
+                }
+        };
+        looseBounds();
+        d.click(d.screen(Vec3(emx.x, emx.y, (emn.z + emx.z) * 0.5)));
+        d.type("2,3");
+        Vec3 size0 = emx - emn;
+        looseBounds();
+        d.check((emx - emn).nearlyEquals(Vec3(size0.x * 2, size0.y * 3, size0.z), 1e-6), "edge grip scales two axes");
+        d.type("3,3");
+        looseBounds();
+        d.check((emx - emn).nearlyEquals(Vec3(size0.x * 3, size0.y * 3, size0.z), 1e-6) && doc.undoName() == "Scale",
+                "typing after a scale adjusts it");
+        doc.selection.clear();
+        doc.notifySelection();
+        vp->zoomExtents();
     }
 
     // Undo everything, redo everything.

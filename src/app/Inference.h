@@ -32,6 +32,7 @@ struct InferenceResult {
 
 struct PickResult {
     Id face = kNone, edge = kNone, vertex = kNone;
+    Id instance = kNone; // component instance (top level only)
     Vec3 p;
     double t = 1e300;
 };
@@ -55,6 +56,10 @@ public:
     Id pickFace(double px, double py, double* tOut = nullptr, const std::set<Id>* excludeVerts = nullptr) const;
     Id pickEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts = nullptr) const;
     int pickGuide(double px, double py, double tolPx) const;
+    // Closest component instance under the cursor (none while one is open).
+    Id pickInstance(double px, double py, double* tOut = nullptr) const;
+    // Instances being moved by a tool: not picked, snapped to or occluding.
+    std::set<Id> ignoredInstances;
     void addPreview(const InferenceResult& r, Preview& pv) const;
     void resetMemory() { remembered_.reset(); }
     double pixelDistance(const Vec3& p, double px, double py) const;

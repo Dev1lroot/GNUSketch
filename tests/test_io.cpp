@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Headless tests for file formats (needs QtGui for image codecs only).
+#include "core/Components.h"
 #include "core/Document.h"
 #include "io/GltfExport.h"
 #include "io/ImageUtil.h"
@@ -112,6 +113,36 @@ int main(int argc, char** argv) {
         CHECK(exportStl(d, dir.filePath("d.stl")));
         CHECK(QFile(dir.filePath("d.stl")).size() == 84 + 50 * (2 + 8));
         std::printf("[ ok ] gltf/stl export\n");
+    }
+    {
+        // Components survive save/load (also when saved while one is open) and
+        // are exported as real geometry.
+        Document d;
+        d.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        Selection s;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) s.faces.insert(f);
+        Id a = makeComponent(d.state, s, "Tile");
+        Id b = cloneInstance(d.state, a);
+        d.state.instances[b].xf = Mat4::translation(Vec3(3, 0, 0)) * d.state.instances[b].xf;
+        Id dead = cloneInstance(d.state, a);
+        d.state.instances[dead].alive = false;
+        d.openComponent(b);
+        QString p = dir.filePath("comp.gsketch");
+        CHECK(saveNative(d, p, {}));
+        CHECK(d.editingComponent()); // saving does not close the open component
+        Document e;
+        CHECK(loadNative(e, p, nullptr));
+        CHECK(e.state.defs.size() == 1 && e.state.instances.size() == 2 && e.state.editing == kNone);
+        CHECK(e.state.defs[0].name == "Tile" && e.state.defs[0].uid == d.state.defs[0].uid);
+        Vec3 mn, mx;
+        CHECK(instanceBounds(e.state, 1, mn, mx));
+        CHECK(mn.nearlyEquals(Vec3(3, 0, 0), 1e-9) && mx.nearlyEquals(Vec3(4, 1, 0), 1e-9));
+        Mesh flat = flattenModel(e.state);
+        CHECK(flat.aliveFaceCount() == 2);
+        CHECK(exportStl(e, dir.filePath("comp.stl")));
+        CHECK(QFile(dir.filePath("comp.stl")).size() == 84 + 50 * 4);
+        std::printf("[ ok ] components save/load/export\n");
     }
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
     return g_failed ? 1 : 0;

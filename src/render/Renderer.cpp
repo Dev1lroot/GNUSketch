@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Renderer.h"
 
+#include "core/Components.h"
 #include "core/Triangulate.h"
 #include "io/ImageUtil.h"
 
@@ -24,9 +25,10 @@ layout(location=3) in vec2 aUvB;
 layout(location=4) in vec4 aColF;
 layout(location=5) in vec4 aColB;
 uniform mat4 uMVP;
+uniform mat3 uNrm; // normal matrix of the model transform
 out vec3 vN; out vec2 vUvF; out vec2 vUvB; out vec4 vColF; out vec4 vColB;
 void main() {
-    vN = aNormal; vUvF = aUvF; vUvB = aUvB; vColF = aColF; vColB = aColB;
+    vN = uNrm * aNormal; vUvF = aUvF; vUvB = aUvB; vColF = aColF; vColB = aColB;
     gl_Position = uMVP * vec4(aPos, 1.0);
 }
 )";
@@ -37,13 +39,13 @@ uniform bool uTexF; uniform bool uTexB;
 uniform sampler2D uSamF; uniform sampler2D uSamB;
 uniform int uMode;          // 0 shaded, 1 textured, 2 hidden line, 3 monochrome
 uniform vec4 uBg; uniform vec4 uMonoF; uniform vec4 uMonoB;
-uniform vec3 uLight; uniform float uAlpha;
+uniform vec3 uLight; uniform float uAlpha; uniform float uFade;
 out vec4 fragColor;
 void main() {
     bool front = gl_FrontFacing;
     vec3 n = normalize(vN);
     if (!front) n = -n;
-    if (uMode == 2) { fragColor = vec4(uBg.rgb, uAlpha); return; }
+    if (uMode == 2) { fragColor = vec4(mix(uBg.rgb, vec3(1.0), uFade), uAlpha); return; }
     vec4 base = front ? vColF : vColB;
     if (uMode == 1) {
         if (front && uTexF) base = vec4(texture(uSamF, vUvF).rgb, base.a);
@@ -52,7 +54,7 @@ void main() {
     if (uMode == 3) base = front ? uMonoF : uMonoB;
     float diff = max(dot(n, uLight), 0.0);
     float light = 0.60 + 0.40 * diff;
-    fragColor = vec4(base.rgb * light, base.a * uAlpha);
+    fragColor = vec4(mix(base.rgb * light, vec3(1.0), uFade), base.a * uAlpha);
 }
 )";
 
@@ -209,18 +211,6 @@ bool Renderer::initialize(QString* log) {
     ok = make(flatProg_, kFlatVS, nullptr, kFlatFS) && ok;
     if (!ok) return false;
 
-    glGenVertexArrays(1, &faceVao_);
-    glGenBuffers(1, &faceVbo_);
-    glBindVertexArray(faceVao_);
-    glBindBuffer(GL_ARRAY_BUFFER, faceVbo_);
-    const int st = kFaceStride * sizeof(float);
-    glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, st, (void*)0);
-    glEnableVertexAttribArray(1); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, st, (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, st, (void*)(6 * sizeof(float)));
-    glEnableVertexAttribArray(3); glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, st, (void*)(8 * sizeof(float)));
-    glEnableVertexAttribArray(4); glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, st, (void*)(10 * sizeof(float)));
-    glEnableVertexAttribArray(5); glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, st, (void*)(14 * sizeof(float)));
-
     glGenVertexArrays(1, &dynVao_);
     glGenBuffers(1, &dynVbo_);
     glBindVertexArray(dynVao_);
@@ -244,10 +234,11 @@ void Renderer::cleanup() {
     if (!initialized_) return;
     for (auto& [id, t] : textures_) glDeleteTextures(1, &t.id);
     textures_.clear();
-    glDeleteBuffers(1, &faceVbo_);
+    freeMesh(top_);
+    for (auto& [d, g] : defs_) freeMesh(g);
+    defs_.clear();
     glDeleteBuffers(1, &dynVbo_);
     glDeleteBuffers(1, &flatVbo_);
-    glDeleteVertexArrays(1, &faceVao_);
     glDeleteVertexArrays(1, &dynVao_);
     glDeleteVertexArrays(1, &flatVao_);
     glDeleteVertexArrays(1, &skyVao_);
@@ -305,10 +296,40 @@ void Renderer::syncTextures(const Document& doc) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void Renderer::rebuildFaces(const Document& doc) {
-    const Mesh& m = doc.mesh();
+void Renderer::freeMesh(MeshGpu& g) {
+    if (g.vbo) glDeleteBuffers(1, &g.vbo);
+    if (g.vao) glDeleteVertexArrays(1, &g.vao);
+    g = MeshGpu();
+}
+
+Renderer::MeshGpu& Renderer::meshGpu(const Document& doc, Id def) {
+    MeshGpu& g = def == kNone ? top_ : defs_[def];
+    const Mesh& m = def == kNone ? doc.state.mesh : doc.state.defs[def].mesh;
+    if (g.revision != m.revision || g.matRevision != doc.materialsRevision) {
+        buildMesh(g, m, doc);
+        g.revision = m.revision;
+        g.matRevision = doc.materialsRevision;
+    }
+    return g;
+}
+
+void Renderer::buildMesh(MeshGpu& g, const Mesh& m, const Document& doc) {
     const RenderStyle& st = doc.style;
-    faceTris_.assign(m.faces.size(), {});
+    if (!g.vao) {
+        glGenVertexArrays(1, &g.vao);
+        glGenBuffers(1, &g.vbo);
+        glBindVertexArray(g.vao);
+        glBindBuffer(GL_ARRAY_BUFFER, g.vbo);
+        const int stride = kFaceStride * sizeof(float);
+        glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
+        glEnableVertexAttribArray(1); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+        glEnableVertexAttribArray(3); glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (void*)(8 * sizeof(float)));
+        glEnableVertexAttribArray(4); glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, (void*)(10 * sizeof(float)));
+        glEnableVertexAttribArray(5); glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, stride, (void*)(14 * sizeof(float)));
+        glBindVertexArray(0);
+    }
+    g.faceTris.assign(m.faces.size(), {});
 
     // Smooth normals: group faces around each vertex connected through
     // soft/smooth edges and average their normals.
@@ -391,7 +412,7 @@ void Renderer::rebuildFaces(const Document& doc) {
         en.b.texBack = texB;
         en.b.transparent = transparent;
 
-        auto& ft = faceTris_[f];
+        auto& ft = g.faceTris[f];
         for (const auto& t : tris) {
             for (int k : t) {
                 Id vid = flat[k];
@@ -412,7 +433,7 @@ void Renderer::rebuildFaces(const Document& doc) {
     }
 
     std::vector<float> all;
-    batches_.clear();
+    g.batches.clear();
     // Opaque first, transparent last.
     for (int pass = 0; pass < 2; ++pass)
         for (auto& [k, en] : groups) {
@@ -420,9 +441,9 @@ void Renderer::rebuildFaces(const Document& doc) {
             en.b.first = (int)(all.size() / kFaceStride);
             en.b.count = (int)(en.data.size() / kFaceStride);
             all.insert(all.end(), en.data.begin(), en.data.end());
-            batches_.push_back(en.b);
+            g.batches.push_back(en.b);
         }
-    glBindBuffer(GL_ARRAY_BUFFER, faceVbo_);
+    glBindBuffer(GL_ARRAY_BUFFER, g.vbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(all.size() * sizeof(float)), all.empty() ? nullptr : all.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
@@ -480,9 +501,9 @@ void Renderer::drawBackground(const Document& doc, const Camera& cam) {
     glEnable(GL_DEPTH_TEST);
 }
 
-void Renderer::drawFaces(const Document& doc, const Camera& cam) {
+void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera& cam, const Mat4& model, float fade) {
     const RenderStyle& st = doc.style;
-    if (st.faceStyle == RenderStyle::Wireframe) return;
+    if (st.faceStyle == RenderStyle::Wireframe || g.batches.empty()) return;
     int mode = 0;
     switch (st.faceStyle) {
     case RenderStyle::Shaded: mode = 0; break;
@@ -492,7 +513,16 @@ void Renderer::drawFaces(const Document& doc, const Camera& cam) {
     default: break;
     }
     faceProg_->bind();
-    setMat(faceProg_.get(), "uMVP", cam.viewProjection());
+    setMat(faceProg_.get(), "uMVP", cam.viewProjection() * model);
+    {
+        // Normal matrix: inverse-transpose of the linear part.
+        Mat4 inv = model.inverted();
+        float n[9];
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) n[r * 3 + c] = (float)inv.at(c, r); // row-major
+        faceProg_->setUniformValue("uNrm", QMatrix3x3(n));
+    }
+    faceProg_->setUniformValue("uFade", fade > 0 ? 0.55f : 0.0f);
     faceProg_->setUniformValue("uMode", mode);
     setColor(faceProg_.get(), "uBg", st.background);
     setColor(faceProg_.get(), "uMonoF", Color::rgb8(255, 255, 255));
@@ -503,16 +533,19 @@ void Renderer::drawFaces(const Document& doc, const Camera& cam) {
     faceProg_->setUniformValue("uSamB", 1);
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(1.0f, 1.0f);
-    glBindVertexArray(faceVao_);
+    // A mirroring transform flips the triangle winding.
+    const bool mirrored = model.det3() < 0;
+    if (mirrored) glFrontFace(GL_CW);
+    glBindVertexArray(g.vao);
     const bool xray = st.xray;
-    for (const Batch& b : batches_) {
-        bool transparent = b.transparent || xray;
+    for (const Batch& b : g.batches) {
+        bool transparent = b.transparent || xray || fade > 0;
         if (transparent) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDepthMask(GL_FALSE);
         }
-        faceProg_->setUniformValue("uAlpha", xray ? 0.5f : 1.0f);
+        faceProg_->setUniformValue("uAlpha", (xray ? 0.5f : 1.0f) * (fade > 0 ? fade : 1.0f));
         faceProg_->setUniformValue("uTexF", b.texFront && mode == 1);
         faceProg_->setUniformValue("uTexB", b.texBack && mode == 1);
         glActiveTexture(GL_TEXTURE0);
@@ -531,61 +564,30 @@ void Renderer::drawFaces(const Document& doc, const Camera& cam) {
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindVertexArray(0);
     glDisable(GL_POLYGON_OFFSET_FILL);
+    if (mirrored) glFrontFace(GL_CCW);
 }
 
-void Renderer::render(const Document& doc, const Camera& cam, const Preview& preview, double dpr) {
-    if (!initialized_) return;
-    const Mesh& m = doc.mesh();
+void Renderer::collectEdges(const Mesh& m, const Mat4& model, const Document& doc, const Camera& cam,
+                            const Preview& preview, bool active, bool faded, EdgeLists& out) {
     const RenderStyle& st = doc.style;
-    vpW_ = (int)std::lround(cam.width * dpr);
-    vpH_ = (int)std::lround(cam.height * dpr);
-    glViewport(0, 0, vpW_, vpH_);
-    glClearColor(st.background.r, st.background.g, st.background.b, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-    glDisable(GL_CULL_FACE);
-
-    if (builtMatRevision_ != doc.materialsRevision) syncTextures(doc);
-    if (builtRevision_ != m.revision || builtMatRevision_ != doc.materialsRevision) {
-        rebuildFaces(doc);
-        builtRevision_ = m.revision;
-        builtMatRevision_ = doc.materialsRevision;
-    }
-
-    drawBackground(doc, cam);
-    drawFaces(doc, cam);
-
-    // Selection / highlight stipple over faces.
-    {
-        std::vector<float> sel;
-        auto addFace = [&](Id f) {
-            if (f >= 0 && f < (Id)faceTris_.size()) sel.insert(sel.end(), faceTris_[f].begin(), faceTris_[f].end());
-        };
-        for (Id f : doc.selection.faces) addFace(f);
-        for (Id f : preview.highlightFaces)
-            if (!doc.selection.faces.count(f)) addFace(f);
-        glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(-1.0f, -1.0f);
-        drawOverlayFaces(sel, cam, Color::rgb8(0, 0, 220), true);
-        glDisable(GL_POLYGON_OFFSET_FILL);
-    }
-
-    // Edges.
-    std::vector<float> normal, profile, selected, hidden;
+    const bool identity = model.isIdentity();
     const bool persp = cam.perspective;
     const Vec3 eye = cam.eye, fwd = cam.forward();
     auto facing = [&](Id f, const Vec3& p) {
         Vec3 viewDir = persp ? (eye - p) : -fwd;
-        return m.faces[f].normal.dot(viewDir) > 0;
+        Vec3 n = identity ? m.faces[f].normal : transformCovector(model, m.faces[f].normal);
+        return n.dot(viewDir) > 0;
     };
     const bool drawEdges = st.edges || st.faceStyle == RenderStyle::Wireframe;
+    Color edgeColor = st.edgeColor;
+    // Faded geometry keeps its edges, just dimmer than the open component's.
+    if (faded) edgeColor = Color(edgeColor.r * 0.5f + 0.42f, edgeColor.g * 0.5f + 0.42f, edgeColor.b * 0.5f + 0.42f, 0.9f);
     for (Id e = 0; e < (Id)m.edges.size(); ++e) {
         const Edge& E = m.edges[e];
         if (!E.alive) continue;
-        const Vec3& a = m.pos(E.v[0]);
-        const Vec3& b = m.pos(E.v[1]);
-        bool isSel = doc.selection.edges.count(e) || preview.highlightEdges.count(e);
+        const Vec3 a = identity ? m.pos(E.v[0]) : model.transformPoint(m.pos(E.v[0]));
+        const Vec3 b = identity ? m.pos(E.v[1]) : model.transformPoint(m.pos(E.v[1]));
+        bool isSel = active && (doc.selection.edges.count(e) || preview.highlightEdges.count(e));
         // Silhouette test.
         bool isProfile = false;
         int nf = 0;
@@ -600,36 +602,140 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
         else if (nf == 2) isProfile = facing(f0, mid) != facing(f1, mid);
         if (st.faceStyle == RenderStyle::Wireframe) isProfile = false;
 
+        std::vector<float>& normal = faded ? out.faded : out.normal;
+        std::vector<float>& profile = faded ? out.fadedProfile : out.profile;
         if (E.hidden || E.soft) {
-            if (isSel) pushLine(selected, a, b, Color::rgb8(0, 0, 255));
-            else if (st.profiles && isProfile && E.soft && !E.hidden && drawEdges) pushLine(profile, a, b, st.edgeColor);
-            else if (st.showHidden) pushLine(hidden, a, b, Color::rgb8(110, 110, 110));
+            if (isSel) pushLine(out.selected, a, b, Color::rgb8(0, 0, 255));
+            else if (st.profiles && isProfile && E.soft && !E.hidden && drawEdges) pushLine(profile, a, b, edgeColor);
+            else if (st.showHidden && !faded) pushLine(out.hidden, a, b, Color::rgb8(110, 110, 110));
             continue;
         }
         if (isSel) {
-            pushLine(selected, a, b, Color::rgb8(0, 0, 255));
+            pushLine(out.selected, a, b, Color::rgb8(0, 0, 255));
             continue;
         }
         if (!drawEdges) continue;
-        if (st.profiles && isProfile) pushLine(profile, a, b, st.edgeColor);
-        else pushLine(normal, a, b, st.edgeColor);
+        if (st.profiles && isProfile) pushLine(profile, a, b, edgeColor);
+        else pushLine(normal, a, b, edgeColor);
+    }
+}
+
+void Renderer::render(const Document& doc, const Camera& cam, const Preview& preview, double dpr) {
+    if (!initialized_) return;
+    const ModelState& ms = doc.state;
+    const RenderStyle& st = doc.style;
+    vpW_ = (int)std::lround(cam.width * dpr);
+    vpH_ = (int)std::lround(cam.height * dpr);
+    glViewport(0, 0, vpW_, vpH_);
+    glClearColor(st.background.r, st.background.g, st.background.b, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_CULL_FACE);
+
+    if (builtMatRevision_ != doc.materialsRevision) {
+        syncTextures(doc);
+        builtMatRevision_ = doc.materialsRevision;
+    }
+    // Forget definitions that no longer exist.
+    for (auto it = defs_.begin(); it != defs_.end();) {
+        if (it->first >= (Id)ms.defs.size()) {
+            freeMesh(it->second);
+            it = defs_.erase(it);
+        } else {
+            ++it;
+        }
     }
 
+    // While a component is open, it is drawn normally and everything else
+    // (loose geometry and other instances) faded.
+    const bool editing = ms.editing != kNone;
+    const Id editDef = editing ? ms.instances[ms.editing].def : kNone;
+    struct Placed {
+        Id inst, def;
+        Mat4 xf;
+    };
+    std::vector<Placed> placed;
+    for (Id i = 0; i < (Id)ms.instances.size(); ++i) {
+        const Instance& I = ms.instances[i];
+        if (!I.alive || I.hidden || i == ms.editing || I.def < 0 || I.def >= (Id)ms.defs.size()) continue;
+        placed.push_back({i, I.def, instanceWorldXf(ms, i)});
+    }
+    const MeshGpu& activeGpu = meshGpu(doc, editDef);
+    const Mesh& active = ms.activeMesh();
+
+    drawBackground(doc, cam);
+    drawMeshFaces(activeGpu, doc, cam, Mat4(), 0.0f);
+    if (!editing)
+        for (const Placed& p : placed) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.0f);
+
+    // Selection / highlight stipple over faces.
+    {
+        std::vector<float> sel;
+        auto addFace = [&](Id f) {
+            if (f >= 0 && f < (Id)activeGpu.faceTris.size())
+                sel.insert(sel.end(), activeGpu.faceTris[f].begin(), activeGpu.faceTris[f].end());
+        };
+        for (Id f : doc.selection.faces) addFace(f);
+        for (Id f : preview.highlightFaces)
+            if (!doc.selection.faces.count(f)) addFace(f);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-1.0f, -1.0f);
+        drawOverlayFaces(sel, cam, Color::rgb8(0, 0, 220), true);
+        glDisable(GL_POLYGON_OFFSET_FILL);
+    }
+
+    // Edges.
+    EdgeLists el;
+    collectEdges(active, Mat4(), doc, cam, preview, true, false, el);
+    if (editing) collectEdges(ms.mesh, Mat4(), doc, cam, preview, false, true, el);
+    for (const Placed& p : placed) collectEdges(ms.defs[p.def].mesh, p.xf, doc, cam, preview, false, editing, el);
+
+    // Component boxes: selected / hovered instances, and the open one.
+    std::vector<float> boxes, openBox;
+    auto addBox = [&](Id inst, std::vector<float>& out, const Color& c) {
+        Vec3 k[8];
+        if (!instanceBoxCorners(ms, inst, k)) return;
+        static const int E[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+        for (const auto& ed : E) pushLine(out, k[ed[0]], k[ed[1]], c);
+    };
+    if (editing) addBox(ms.editing, openBox, Color::rgb8(90, 90, 90));
+    for (Id i : doc.selection.instances) addBox(i, boxes, Color::rgb8(0, 0, 255));
+    for (Id i : preview.highlightInstances)
+        if (!doc.selection.instances.count(i)) addBox(i, boxes, Color::rgb8(80, 80, 255));
+
     if (st.xray) glDisable(GL_DEPTH_TEST);
-    drawLines(normal, cam, 1.0f, Dash::None, dpr);
-    drawLines(profile, cam, st.profileWidth, Dash::None, dpr);
-    drawLines(hidden, cam, 1.0f, Dash::Dashed, dpr);
+    drawLines(el.normal, cam, 1.0f, Dash::None, dpr);
+    drawLines(el.profile, cam, st.profileWidth, Dash::None, dpr);
+    drawLines(el.hidden, cam, 1.0f, Dash::Dashed, dpr);
     if (st.backEdges && !st.xray && st.faceStyle != RenderStyle::Wireframe) {
         glDepthFunc(GL_GREATER);
         glDepthMask(GL_FALSE);
-        std::vector<float> back = normal;
-        back.insert(back.end(), profile.begin(), profile.end());
+        std::vector<float> back = el.normal;
+        back.insert(back.end(), el.profile.begin(), el.profile.end());
         drawLines(back, cam, 1.0f, Dash::Dashed, dpr);
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LEQUAL);
     }
     glEnable(GL_DEPTH_TEST);
-    drawLines(selected, cam, 1.8f, Dash::None, dpr);
+
+    if (editing) {
+        // Faded rest of the model, translucent over the open component.
+        drawMeshFaces(meshGpu(doc, kNone), doc, cam, Mat4(), 0.35f);
+        for (const Placed& p : placed) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.35f);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        drawLines(el.faded, cam, 1.0f, Dash::None, dpr);
+        drawLines(el.fadedProfile, cam, std::max(1.0f, st.profileWidth * 0.7f), Dash::None, dpr);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        drawLines(openBox, cam, 1.0f, Dash::Dashed, dpr);
+        glEnable(GL_DEPTH_TEST);
+    }
+    drawLines(el.selected, cam, 1.8f, Dash::None, dpr);
+    drawLines(boxes, cam, 1.5f, Dash::None, dpr);
 
     // Guides.
     if (st.showGuides && !doc.state.guides.empty()) {

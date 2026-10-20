@@ -74,6 +74,14 @@ include its output in the bug report.
   with a radius in mm and a number of segments, with a live preview. Edges between
   two faces get a rounded strip with mitred or spherical corners; corners of
   rectangles and polylines get a tangent arc.
+* **Components**: select geometry and right-click **Make Component**. Copies made
+  with Ctrl+Move (or copy/paste) share one definition. **Double-click** a component
+  to edit it in place: the rest of the model fades, and every copy follows your
+  edits live. Click outside it or press Esc to close it. Move, Rotate and Scale on
+  a closed component only change that one copy's placement. Right-click
+  **Make Unique** gives the selected copies their own definition, and **Explode**
+  turns a component back into loose geometry. Exporters write components as
+  ordinary geometry.
 
 ## Tools (SketchUp-compatible shortcuts)
 
@@ -84,7 +92,7 @@ include its output in the bug report.
 | R | Rectangle | C | Circle |
 | G | Polygon | A | 2 Point Arc |
 | P | Push/Pull | M | Move / Copy (Ctrl) / Array (`5x`, `/5`) |
-| Q | Rotate (Ctrl = copy) | S | Scale (uniform or `x,y,z`) |
+| Q | Rotate (Ctrl = copy) | S | Scale with grips (corner / edge / face, Shift, Ctrl) |
 | F | Offset | T | Tape Measure (guides, model resize) |
 | O / H / Z | Orbit / Pan / Zoom | Shift+Z | Zoom Extents |
 
@@ -92,6 +100,12 @@ Also Freehand, Zoom Window, **Follow Me** and **Round Corners** (Tools menu and 
 tool set; no shortcut keys). Middle mouse orbits and Shift+middle pans with any
 tool. The wheel zooms towards the cursor; double-clicking the middle button
 re-centres the view.
+
+**Scale** shows a box with grips around the selection (along a single component's
+own axes). Corner grips scale uniformly, edge-midpoint grips scale two axes and
+face-centre grips one axis, keeping the opposite grip fixed. Shift toggles
+uniform scaling, Ctrl scales about the centre. Type `2`, `1.5,2` or `1,2,1`
+while scaling, or right after to adjust it.
 
 **Inference:** endpoint (green), midpoint (cyan), on edge (red), on face (blue),
 origin, red/green/blue axis lines, "from point" alignment, guides.
@@ -220,7 +234,7 @@ tests       kernel and I/O tests
 
 ## Not implemented yet
 
-Groups/components, 3-point arc and pie, rotated rectangle, text,
+Groups, nested components, component axes editing, 3-point arc and pie, rotated rectangle, text,
 dimensions, section planes, tags/layers, scenes, shadows, intersect faces, the
 texture position editor, and folding of faces that move out of plane.
 

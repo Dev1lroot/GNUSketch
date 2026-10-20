@@ -2,6 +2,7 @@
 #include "StlExport.h"
 
 #include "GltfExport.h"
+#include "core/Components.h"
 
 #include <QSaveFile>
 
@@ -10,7 +11,8 @@
 namespace gs {
 
 bool exportStl(const Document& doc, const QString& path, double scale, QString* error) {
-    const Mesh& m = doc.mesh();
+    const Mesh flat = flattenModel(doc.state);
+    const Mesh& m = flat;
     QByteArray out(80, '\0');
     std::memcpy(out.data(), "GNUSketch binary STL", 20);
     QByteArray body;

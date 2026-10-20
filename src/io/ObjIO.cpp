@@ -2,6 +2,7 @@
 #include "ObjIO.h"
 
 #include "ImageUtil.h"
+#include "core/Components.h"
 #include "core/Triangulate.h"
 
 #include <QDir>
@@ -32,7 +33,8 @@ Vec3 fromFile(const Vec3& p, bool yUp, double s) { return (yUp ? Vec3(p.x, -p.z,
 } // namespace
 
 bool exportObj(const Document& doc, const QString& path, const ObjExportOptions& opt, QString* error) {
-    const Mesh& m = doc.mesh();
+    const Mesh flat = flattenModel(doc.state);
+    const Mesh& m = flat;
     QFileInfo fi(path);
     const QString base = fi.completeBaseName();
     const QString dir = fi.absolutePath();

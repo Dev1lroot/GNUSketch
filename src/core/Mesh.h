@@ -19,6 +19,10 @@ namespace gs {
 using Id = int32_t;
 constexpr Id kNone = -1;
 
+// Process-wide revision counter: a revision number identifies one mesh state,
+// so caches keyed by it stay valid across copies, undo and other meshes.
+uint64_t nextMeshRevision();
+
 // Planar texture mapping: uv = ((p - origin) . u, (p - origin) . v).
 // u and v lie in the face plane and are pre-scaled (1 / tile size).
 struct TexMap {
@@ -73,7 +77,7 @@ public:
     std::vector<Face> faces;
 
     // Incremented on every change; renderers use it to invalidate caches.
-    uint64_t revision = 1;
+    uint64_t revision = nextMeshRevision();
     // Camera position; new faces without other orientation cues face the camera.
     Vec3 viewHint = Vec3(10, -10, 10);
 
@@ -150,8 +154,8 @@ public:
     void compact(std::vector<Id>* vmap = nullptr, std::vector<Id>* emap = nullptr,
                  std::vector<Id>* fmap = nullptr);
 
-    void touch() { ++revision; adjDirty_ = true; }
-    void markGeometryMoved() { ++revision; gridDirty_ = true; }
+    void touch() { revision = nextMeshRevision(); adjDirty_ = true; }
+    void markGeometryMoved() { revision = nextMeshRevision(); gridDirty_ = true; }
 
     struct Region {
         std::vector<Id> outer;

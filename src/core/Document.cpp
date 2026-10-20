@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Document.h"
 
+#include "Components.h"
+
 namespace gs {
 
 Document::Document() = default;
@@ -26,9 +28,7 @@ void Document::cancelOp() {
     if (!undo_.empty()) {
         state = std::move(undo_.back().second);
         undo_.pop_back();
-        state.mesh.touch();
-        state.mesh.markGeometryMoved();
-        ++materialsRevision;
+        restored();
     }
     validateSelection();
     notifyChanged();
@@ -39,10 +39,7 @@ bool Document::undo() {
     redo_.emplace_back(undo_.back().first, std::move(state));
     state = std::move(undo_.back().second);
     undo_.pop_back();
-    state.mesh.touch();
-    state.mesh.markGeometryMoved();
-    state.mesh.revision += 1000; // never reuse an older revision number
-    ++materialsRevision;
+    restored();
     modified = true;
     selection.clear();
     notifySelection();
@@ -55,15 +52,40 @@ bool Document::redo() {
     undo_.emplace_back(redo_.back().first, std::move(state));
     state = std::move(redo_.back().second);
     redo_.pop_back();
-    state.mesh.touch();
-    state.mesh.markGeometryMoved();
-    state.mesh.revision += 1000;
-    ++materialsRevision;
+    restored();
     modified = true;
     selection.clear();
     notifySelection();
     notifyChanged();
     return true;
+}
+
+void Document::restored() {
+    auto refresh = [](Mesh& m) {
+        m.touch();
+        m.markGeometryMoved();
+    };
+    refresh(state.mesh);
+    for (ComponentDef& d : state.defs) refresh(d.mesh);
+    ++materialsRevision;
+}
+
+void Document::openComponent(Id instance) {
+    if (opDepth_ > 0 || instance < 0 || instance >= (Id)state.instances.size() || !state.instances[instance].alive) return;
+    gs::openComponent(state, instance);
+    selection.clear();
+    notifySelection();
+    notifyChanged();
+}
+
+void Document::closeComponent() {
+    if (opDepth_ > 0 || state.editing == kNone) return;
+    Id inst = state.editing;
+    gs::closeComponent(state);
+    selection.clear();
+    selection.instances.insert(inst);
+    notifySelection();
+    notifyChanged();
 }
 
 void Document::clearHistory() {
@@ -73,9 +95,7 @@ void Document::clearHistory() {
 }
 
 void Document::reset() {
-    uint64_t rev = state.mesh.revision;
     state = ModelState();
-    state.mesh.revision = rev + 1000;
     selection.clear();
     filePath.clear();
     modified = false;
@@ -109,11 +129,14 @@ Id Document::addMaterial(const Material& m) {
 
 void Document::validateSelection() {
     Selection before = selection;
-    const Mesh& m = state.mesh;
+    const Mesh& m = state.activeMesh();
     for (auto it = selection.faces.begin(); it != selection.faces.end();)
         it = (*it < 0 || *it >= (Id)m.faces.size() || !m.faces[*it].alive) ? selection.faces.erase(it) : ++it;
     for (auto it = selection.edges.begin(); it != selection.edges.end();)
         it = (*it < 0 || *it >= (Id)m.edges.size() || !m.edges[*it].alive) ? selection.edges.erase(it) : ++it;
+    const auto& insts = state.instances;
+    for (auto it = selection.instances.begin(); it != selection.instances.end();)
+        it = (state.editing != kNone || *it < 0 || *it >= (Id)insts.size() || !insts[*it].alive) ? selection.instances.erase(it) : ++it;
     if (!(before == selection)) notifySelection();
 }
 

@@ -25,6 +25,8 @@ std::string InferenceResult::label() const {
     case OnGuide: return "On Guide";
     case GuidePoint: return "Guide Point";
     case Intersection: return "Intersection";
+    case AlongEdge: return "Along Edge";
+    case Parallel: return "Parallel to Edge";
     default: return "";
     }
 }
@@ -234,6 +236,19 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         return depth <= tFace + std::max(cam_.pixelSize(p) * 3.0, 1e-4);
     };
 
+    // Where the line ref + s*d pierces the hovered face, if that is near the
+    // cursor (lines lying in the face plane never pierce it).
+    auto pierceFace = [&](const Vec3& ref, const Vec3& d, Vec3& out) {
+        if (face == kNone) return false;
+        Plane P = m.facePlane(face);
+        double den = P.n.dot(d);
+        if (std::fabs(den) < 1e-6) return false;
+        Vec3 p = ref + d * ((P.d - P.n.dot(ref)) / den);
+        if (!m.pointInFace(face, p) || pixelDistance(p, px, py) > snap) return false;
+        out = p;
+        return true;
+    };
+
     // --- point snaps --------------------------------------------------------
     Id bestV = kNone;
     double bestVD = snap;
@@ -311,6 +326,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         res.edge = bestMid;
         res.p = (m.pos(m.edges[bestMid].v[0]) + m.pos(m.edges[bestMid].v[1])) * 0.5;
         remembered_ = res.p;
+        rememberedEdge_ = Segment{m.pos(m.edges[bestMid].v[0]), m.pos(m.edges[bestMid].v[1])};
     } else if (origin) {
         res.type = InferenceResult::Origin;
         res.p = Vec3();
@@ -343,6 +359,8 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
                 Vec3 ep = closestLineLine(a, b - a, r.origin, r.dir, s, t) ? lerp(a, b, std::clamp(s, 0.0, 1.0)) : a;
                 if (closestLineLine(*o.ref, d, a, b - a, s, t) && t >= -1e-9 && t <= 1 + 1e-9) q = *o.ref + d * s;
                 else q = *o.ref + d * (ep - *o.ref).dot(d);
+            } else if (Vec3 fp; pierceFace(*o.ref, d, fp)) {
+                q = fp; // stop exactly on the hovered surface
             } else if (closestLineLine(*o.ref, d, r.origin, r.dir, s, t)) {
                 q = *o.ref + d * s;
             } else {
@@ -402,7 +420,104 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
             }
         }
     }
-    if (bestAxis >= 0) {
+    // Directions of existing geometry (magenta): along the edges meeting at the
+    // reference point, both ways, and parallel to the last hovered edge.
+    bool edgeDir = false, parallel = false;
+    Vec3 edgeDirV, edgePt;
+    if (o.ref && o.axes) {
+        struct Cand {
+            Vec3 dir;
+            bool parallel;
+        };
+        std::vector<Cand> cands;
+        Id rv = m.findVertex(*o.ref);
+        if (rv != kNone)
+            for (Id e : m.vertexEdges(rv)) {
+                const Edge& E = m.edges[e];
+                if (!E.alive || E.hidden) continue;
+                Vec3 d = m.pos(E.other(rv)) - *o.ref;
+                if (d.length() > kTol) cands.push_back({d.normalized(), false});
+            }
+        if (rememberedEdge_) {
+            Vec3 d = rememberedEdge_->b - rememberedEdge_->a;
+            if (d.length() > kTol) cands.push_back({d.normalized(), true});
+        }
+        for (const Cand& c : cands) {
+            bool axisAligned = false;
+            for (int i = 0; i < 3; ++i) axisAligned = axisAligned || std::fabs(c.dir.dot(kAxes[i])) > 1 - 1e-6;
+            if (axisAligned) continue; // the axis inference already covers it
+            if (o.plane && std::fabs(o.plane->n.dot(c.dir)) > 1e-6) continue;
+            double s, t;
+            if (!closestLineLine(*o.ref, c.dir, r.origin, r.dir, s, t)) continue;
+            Vec3 q = *o.ref + c.dir * s;
+            double sx0, sy0, sx1, sy1;
+            if (!cam_.project(*o.ref, sx0, sy0) || !cam_.project(*o.ref + c.dir * cam_.pixelSize(*o.ref) * 50, sx1, sy1))
+                continue;
+            if (std::hypot(sx1 - sx0, sy1 - sy0) < 10) continue; // pointing at the camera
+            double d = pixelDistance(q, px, py);
+            if (d < bestAD) {
+                bestAD = d;
+                bestAxis = -1;
+                edgeDir = true;
+                parallel = c.parallel;
+                edgeDirV = c.dir;
+                edgePt = q;
+            }
+        }
+    }
+    // A direction inference must not keep the line from ending on geometry:
+    // stop where the direction line crosses the hovered edge or pierces the
+    // hovered face. An edge the line never meets wins over the direction.
+    bool edgeWins = false;
+    if (bestAxis >= 0 || edgeDir) {
+        Vec3 d = edgeDir ? edgeDirV : kAxes[bestAxis];
+        Id he = pickEdgeT(px, py, 6.0, o.excludeVerts, tFace);
+        Vec3 stop;
+        bool stopped = false;
+        if (he != kNone) {
+            Vec3 a = m.pos(m.edges[he].v[0]), b = m.pos(m.edges[he].v[1]);
+            double s, t;
+            bool atRef = false;
+            if (closestLineLine(*o.ref, d, a, b - a, s, t) && t >= -1e-9 && t <= 1 + 1e-9) {
+                Vec3 p1 = *o.ref + d * s, p2 = lerp(a, b, t);
+                // An edge through the start point crosses the line there: ignore it.
+                atRef = (p1 - *o.ref).length() < kTol * 10;
+                if (!atRef && (p1 - p2).length() < std::max(cam_.pixelSize(p1) * 2, kTol * 10) && pixelDistance(p1, px, py) < snap) {
+                    res.type = InferenceResult::OnEdge;
+                    res.edge = he;
+                    stop = p1;
+                    stopped = true;
+                }
+            }
+            edgeWins = !stopped && !atRef;
+        } else if (pierceFace(*o.ref, d, stop)) {
+            res.type = InferenceResult::OnFace;
+            res.face = face;
+            stopped = true;
+        }
+        if (stopped && (!o.plane || o.plane->contains(stop, kTol * 10))) {
+            res.p = stop;
+            res.dir = d;
+            res.hasDir = true;
+            return res;
+        }
+        if (stopped) res = InferenceResult();
+    }
+    if (edgeDir && !edgeWins) {
+        res.type = parallel ? InferenceResult::Parallel : InferenceResult::AlongEdge;
+        res.p = o.plane ? o.plane->project(edgePt) : edgePt;
+        res.dir = edgeDirV;
+        res.hasDir = true;
+        if (parallel) {
+            // Highlight the edge the line runs parallel to.
+            res.hasLine = true;
+            res.lineA = rememberedEdge_->a;
+            res.lineB = rememberedEdge_->b;
+            res.lineColor = Color::rgb8(220, 0, 220);
+        }
+        return res;
+    }
+    if (bestAxis >= 0 && !edgeWins) {
         res.type = bestAxis == 0 ? InferenceResult::AxisX : bestAxis == 1 ? InferenceResult::AxisY : InferenceResult::AxisZ;
         res.p = axisPt;
         res.dir = kAxes[bestAxis];
@@ -435,6 +550,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         double s, t;
         res.type = InferenceResult::OnEdge;
         res.edge = e;
+        rememberedEdge_ = Segment{a, b};
         res.p = closestLineLine(a, b - a, r.origin, r.dir, s, t) ? lerp(a, b, std::clamp(s, 0.0, 1.0)) : a;
         res.dir = (b - a).normalized();
         res.hasDir = true;

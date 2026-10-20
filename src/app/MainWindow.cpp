@@ -184,8 +184,10 @@ void MainWindow::buildActions() {
     act("quit", "", QStringLiteral("E&xit"), QKeySequence::Quit, [this] { close(); });
 
     undoAct_ = act("undo", "undo", QStringLiteral("&Undo"), QKeySequence::Undo, [this] {
+        // Undo during a live move/paste just cancels it.
+        bool live = doc_.inOp();
         viewport_->cancelTool();
-        doc_.undo();
+        if (!live) doc_.undo();
     });
     redoAct_ = act("redo", "redo", QStringLiteral("&Redo"), QKeySequence(QStringLiteral("Ctrl+Y")), [this] {
         viewport_->cancelTool();
@@ -918,6 +920,7 @@ void MainWindow::paste() {
         if (!pasteImages(md)) statusLabel_->setText(QStringLiteral("Nothing to paste: copy GNUSketch geometry or an image first."));
         return;
     }
+    viewport_->setTool(ToolId::Move);
     Mesh& m = doc_.mesh();
     doc_.beginOp("Paste");
     // Map clipboard materials onto document materials (by name + image).
@@ -1004,11 +1007,31 @@ void MainWindow::paste() {
         sel.instances.insert((Id)doc_.state.instances.size() - 1);
     }
     doc_.selection = sel;
-    doc_.commitOp();
     doc_.validateSelection();
     doc_.notifySelection();
-    viewport_->setTool(ToolId::Move);
-    statusLabel_->setText(QStringLiteral("Pasted in place. Pick a base point to move the pasted geometry."));
+    // Grab the paste by the bottom corner of its bounding box and let it follow
+    // the cursor; the click that places it finishes the "Paste" operation.
+    Vec3 mn(1e300, 1e300, 1e300);
+    bool any = false;
+    auto grow = [&](const Vec3& p) {
+        for (int k = 0; k < 3; ++k) mn[k] = std::min(mn[k], p[k]);
+        any = true;
+    };
+    for (Id v : selectionVertices(doc_.mesh(), sel)) grow(doc_.mesh().pos(v));
+    for (Id i : sel.instances) {
+        Vec3 a, b;
+        if (instanceBounds(doc_.state, i, a, b)) grow(a);
+    }
+    QPoint local = viewport_->mapFromGlobal(QCursor::pos());
+    if (!viewport_->rect().contains(local)) local = viewport_->rect().center();
+    auto* move = dynamic_cast<MoveTool*>(viewport_->tool());
+    if (!any || !move || !move->startPlacement(mn, local.x(), local.y())) {
+        doc_.commitOp();
+        statusLabel_->setText(QStringLiteral("Pasted in place."));
+        return;
+    }
+    viewport_->setFocus();
+    viewport_->update();
 }
 
 void MainWindow::deleteSelection() {

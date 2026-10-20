@@ -121,6 +121,9 @@ protected:
     void makeArray(const Mat4& step, int n);
 
     bool active_ = false, copy_ = false;
+    // Moving freshly pasted geometry: the move finishes (or cancels) the
+    // caller's open "Paste" operation too, so it is one undo step.
+    bool placing_ = false;
     std::string opName_;
     std::set<Id> verts_;
     std::map<Id, Vec3> orig_;
@@ -145,6 +148,9 @@ public:
     void mouseRelease(const MouseEvent& e) override;
     bool vcbEnter(const QString& text) override;
     void buildPreview(Preview& pv) override;
+    // Attaches the current selection (just pasted inside an open operation) to
+    // the cursor, grabbed at `base`; a click places it.
+    bool startPlacement(const Vec3& base, double x, double y);
 
 protected:
     Mat4 currentTransform() const override { return Mat4::translation(delta_); }

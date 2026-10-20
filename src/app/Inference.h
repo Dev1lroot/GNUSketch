@@ -16,7 +16,9 @@ namespace gs {
 struct InferenceResult {
     enum Type {
         None, Free, Ground, Endpoint, Midpoint, OnEdge, OnFace, Origin, AxisX, AxisY, AxisZ,
-        Locked, FromPoint, OnGuide, GuidePoint, Intersection, OnPlane
+        Locked, FromPoint, OnGuide, GuidePoint, Intersection, OnPlane,
+        AlongEdge, // from the reference point along an edge there (or its extension)
+        Parallel   // parallel to the last hovered edge
     };
     Type type = None;
     Vec3 p;
@@ -61,7 +63,10 @@ public:
     // Instances being moved by a tool: not picked, snapped to or occluding.
     std::set<Id> ignoredInstances;
     void addPreview(const InferenceResult& r, Preview& pv) const;
-    void resetMemory() { remembered_.reset(); }
+    void resetMemory() {
+        remembered_.reset();
+        rememberedEdge_.reset();
+    }
     double pixelDistance(const Vec3& p, double px, double py) const;
 
 private:
@@ -73,6 +78,10 @@ private:
     const Document& doc_;
     const Camera& cam_;
     std::optional<Vec3> remembered_; // last hovered endpoint for "from point" inference
+    struct Segment {
+        Vec3 a, b;
+    };
+    std::optional<Segment> rememberedEdge_; // last hovered edge for "parallel" inference
 };
 
 } // namespace gs

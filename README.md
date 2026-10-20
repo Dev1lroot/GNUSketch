@@ -108,7 +108,10 @@ uniform scaling, Ctrl scales about the centre. Type `2`, `1.5,2` or `1,2,1`
 while scaling, or right after to adjust it.
 
 **Inference:** endpoint (green), midpoint (cyan), on edge (red), on face (blue),
-origin, red/green/blue axis lines, "from point" alignment, guides.
+origin, red/green/blue axis lines, "from point" alignment, guides, and magenta
+directions of existing geometry: **Along Edge** (from a corner along the edges
+that meet there, or their extension behind it) and **Parallel to Edge** (hover an
+edge, then move away). Shift or Down arrow locks a magenta direction too.
 The **arrow keys** lock the red, green or blue axis. In Rectangle, Circle and Rotate
 they choose the drawing plane instead. **Shift** locks the current inference.
 

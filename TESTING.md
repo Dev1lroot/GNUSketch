@@ -13,6 +13,8 @@ bottom. Screenshots help.
 
 ## Drawing
 - [ ] Line: chains, closes faces, splits faces, typed length, arrow-key axis locks
+- [ ] Axis + target: draw along the red/green/blue axis and finish on an edge it crosses (exact crossing), on an edge it misses (edge wins), and into a wall face (stops on the surface); same with Shift/arrow lock
+- [ ] Magenta inference: from a hexagon corner along each of its edges and their extensions; hover a slanted edge then draw parallel to it; Shift locks it; typed length along it
 - [ ] Rectangle: on ground, on faces, arrow keys for vertical planes, `w,h` entry, square/golden hints
 - [ ] Circle / Polygon: radius entry, `Ns` segments
 - [ ] 2 Point Arc, Freehand
@@ -37,6 +39,7 @@ bottom. Screenshots help.
 
 ## Files
 - [ ] Save/Open `.gsketch`; Export OBJ/glTF/STL and open them in Blender; Import OBJ
+- [ ] Ctrl+V of geometry/components: it follows the cursor at once (grabbed by its bottom corner, snaps to points/axes), click places it, typed distance works, Esc or Ctrl+Z cancels the whole paste, one Undo removes a placed paste
 - [ ] Clipboard: copy geometry (with a textured face) in one GNUSketch window and paste it into a second instance; paste a screenshot, a browser image and image files copied in Dolphin as planes
 
 ## Notes

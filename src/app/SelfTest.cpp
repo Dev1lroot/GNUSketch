@@ -24,6 +24,7 @@
 #include <QSet>
 #include <QTemporaryDir>
 
+#include <cmath>
 #include <cstdio>
 
 namespace gs {
@@ -350,10 +351,34 @@ int runSelfTest(MainWindow& w) {
             bool decoded = md && md->hasFormat(QStringLiteral("application/x-gnusketch")) &&
                            modelFromJson(md->data(QStringLiteral("application/x-gnusketch")), clip);
             d.check(decoded && clip.mesh.aliveFaceCount() == 1, "copy puts geometry on the system clipboard");
+            int facesBefore = d.mesh().aliveFaceCount();
+            Vec3 origin = d.mesh().faceInteriorPoint(top);
             action("paste")->trigger();
             d.pump();
-            d.check(doc.undoName() == "Paste" && doc.selection.faces.size() == 1, "paste from the system clipboard");
+            bool following = doc.inOp() && vp->tool() && vp->tool()->busy() && doc.selection.faces.size() == 1;
+            Vec3 target(8, 6, 0);
+            d.move(d.screen(target));
+            Id pf = doc.selection.faces.empty() ? kNone : *doc.selection.faces.begin();
+            bool moved = pf != kNone && (d.mesh().faceInteriorPoint(pf) - origin).length() > 1.0;
+            d.check(following && moved, "pasted geometry follows the cursor right away");
+            d.click(d.screen(target));
+            d.check(!doc.inOp() && doc.undoName() == "Paste" && doc.selection.faces.size() == 1 &&
+                        d.mesh().aliveFaceCount() == facesBefore + 1,
+                    "a click places the paste as one undo step");
             doc.undo();
+            action("paste")->trigger();
+            d.pump();
+            d.move(d.screen(target));
+            d.key(Qt::Key_Escape);
+            d.check(!doc.inOp() && d.mesh().aliveFaceCount() == facesBefore && doc.undoName() != "Paste",
+                    "Esc cancels a paste that follows the cursor");
+            std::string lastOp = doc.undoName();
+            action("paste")->trigger();
+            d.pump();
+            action("undo")->trigger();
+            d.pump();
+            d.check(!doc.inOp() && d.mesh().aliveFaceCount() == facesBefore && doc.undoName() == lastOp,
+                    "Ctrl+Z while placing cancels only the paste");
             QImage shot(120, 80, QImage::Format_RGB32);
             shot.fill(Qt::darkGreen);
             QApplication::clipboard()->setImage(shot);
@@ -493,6 +518,69 @@ int runSelfTest(MainWindow& w) {
                 "typing after a scale adjusts it");
         doc.selection.clear();
         doc.notifySelection();
+        vp->zoomExtents();
+    }
+
+    // Magenta inference: along the edges at the start point (both ways) and
+    // parallel to a hovered edge.
+    {
+        std::vector<Vec3> hex;
+        for (int i = 0; i < 6; ++i) hex.push_back(Vec3(40 + std::cos(i * kPi / 3), std::sin(i * kPi / 3), 0));
+        doc.beginOp("Hexagon");
+        d.mesh().drawPolyline(hex, true);
+        doc.commitOp();
+        vp->setStandardView(Vec3(0, 0, -1));
+        vp->camera().zoomExtents(Vec3(38, -2, 0), Vec3(43, 3, 0));
+        InferenceEngine& eng = vp->inference();
+        eng.resetMemory();
+        Vec3 c0 = hex[0], dir = (hex[1] - hex[0]).normalized();
+        InferenceEngine::Options o;
+        o.ref = c0;
+        auto at = [&](const Vec3& p) { return d.screen(p) + QPointF(2, 1); };
+        QPointF q = at(c0 + dir * 1.6); // beyond the far corner, on the edge's line
+        InferenceResult along = eng.infer(q.x(), q.y(), o);
+        q = at(c0 - dir * 0.7); // the extension behind the corner
+        InferenceResult ext = eng.infer(q.x(), q.y(), o);
+        d.check(along.type == InferenceResult::AlongEdge && ext.type == InferenceResult::AlongEdge &&
+                    std::fabs(std::fabs(ext.dir.dot(dir)) - 1) < 1e-9 && std::fabs((ext.p - c0).cross(dir).length()) < 1e-9,
+                "line from a corner snaps along its edges and their extensions");
+        // Hover the slanted edge hex[2]-hex[3], then draw from a free point parallel to it.
+        Vec3 pd = (hex[3] - hex[2]).normalized();
+        QPointF he = d.screen((hex[2] + hex[3]) * 0.5 + pd * 0.2);
+        InferenceEngine::Options none;
+        eng.infer(he.x(), he.y(), none);
+        Vec3 start(42.5, 1.5, 0);
+        o.ref = start;
+        q = at(start + pd * 0.8);
+        InferenceResult par = eng.infer(q.x(), q.y(), o);
+        d.check(par.type == InferenceResult::Parallel && std::fabs(std::fabs(par.dir.dot(pd)) - 1) < 1e-9,
+                "line snaps parallel to the last hovered edge");
+        eng.resetMemory();
+        vp->zoomExtents();
+    }
+
+    // An axis line can still end exactly on an edge it crosses or a face it hits.
+    {
+        doc.beginOp("Targets");
+        d.mesh().drawLine(Vec3(50, -1, 0), Vec3(50, 2, 0)); // midpoint away from the crossing
+        d.mesh().drawPolyline({{53, -1, 0}, {53, 1, 0}, {53, 1, 2}, {53, -1, 2}}, true);
+        doc.commitOp();
+        vp->setStandardView(Vec3(1, 1, -0.8));
+        vp->camera().zoomExtents(Vec3(47, -2, 0), Vec3(54, 2, 2));
+        InferenceEngine& eng = vp->inference();
+        eng.resetMemory();
+        InferenceEngine::Options o;
+        o.ref = Vec3(48, 0, 0);
+        QPointF q = d.screen(Vec3(50, 0.03, 0));
+        InferenceResult r1 = eng.infer(q.x(), q.y(), o);
+        d.check(r1.type == InferenceResult::OnEdge && r1.p.nearlyEquals(Vec3(50, 0, 0), 1e-9),
+                "red axis line ends exactly on the edge it crosses");
+        o.ref = Vec3(51, 0, 1);
+        q = d.screen(Vec3(53, 0.02, 1.01));
+        InferenceResult r2 = eng.infer(q.x(), q.y(), o);
+        d.check(r2.type == InferenceResult::OnFace && r2.p.nearlyEquals(Vec3(53, 0, 1), 1e-9),
+                "red axis line ends exactly on the face it hits");
+        eng.resetMemory();
         vp->zoomExtents();
     }
 

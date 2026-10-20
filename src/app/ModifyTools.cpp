@@ -798,6 +798,8 @@ void TransformTool::finish(const Mat4& mt) {
     for (auto& [i, xf] : instOrig_) doc().state.instances[i].xf = mt * xf;
     engine().ignoredInstances.clear();
     doc().commitOp();
+    if (placing_) doc().commitOp(); // the paste itself
+    placing_ = false;
     active_ = false;
     lastWasCopy_ = copy_;
     lastSourceSel_ = origSelection_;
@@ -811,6 +813,8 @@ void TransformTool::finish(const Mat4& mt) {
 void TransformTool::cancelLive() {
     engine().ignoredInstances.clear();
     doc().cancelOp();
+    if (placing_) doc().cancelOp(); // drop the pasted geometry too
+    placing_ = false;
     doc().selection = origSelection_;
     doc().validateSelection();
     doc().notifySelection();
@@ -818,7 +822,7 @@ void TransformTool::cancelLive() {
 }
 
 void TransformTool::toggleCopy() {
-    if (!active_) return;
+    if (!active_ || placing_) return;
     Mat4 mt = currentTransform();
     std::string name = opName_;
     bool newCopy = !copy_;
@@ -860,9 +864,27 @@ void TransformTool::makeArray(const Mat4& step, int n) {
 // ---- Move ------------------------------------------------------------------
 
 QString MoveTool::status() const {
+    if (active_ && placing_) return QStringLiteral("Click to place the pasted geometry, or type a distance. Esc cancels the paste.");
     if (!active_) return copy_ ? QStringLiteral("Copy: pick the base point. Ctrl toggles copy.")
                                : QStringLiteral("Pick the base point to move. Ctrl = copy. After copying, type e.g. 5x or /5 to make an array.");
     return QStringLiteral("Pick the destination or type a distance. Arrow keys lock axes, Shift locks the inference.");
+}
+
+bool MoveTool::startPlacement(const Vec3& base, double x, double y) {
+    base_ = base;
+    delta_ = Vec3();
+    if (!begin("Paste", false)) return false;
+    placing_ = true;
+    dragged_ = false;
+    pressX_ = x;
+    pressY_ = y;
+    MouseEvent e;
+    e.x = x;
+    e.y = y;
+    lastMouse_ = e;
+    mouseMove(e); // jump to the cursor right away
+    refreshStatus();
+    return true;
 }
 
 void MoveTool::mousePress(const MouseEvent& e) {

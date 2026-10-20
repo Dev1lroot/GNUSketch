@@ -64,6 +64,9 @@ Color Tool::lineColor(const Vec3& a, const Vec3& b) const {
     for (int i = 0; i < 3; ++i)
         if (std::fabs(d[i]) > 1 - 1e-9) return Renderer::axisColor(i);
     if (lockDir_ && lockAxis_ < 0) return Color::rgb8(220, 0, 220);
+    // Following the direction of existing geometry.
+    if ((inf_.type == InferenceResult::AlongEdge || inf_.type == InferenceResult::Parallel) && inf_.p.nearlyEquals(b))
+        return Color::rgb8(220, 0, 220);
     return Color::rgb8(0, 0, 0);
 }
 

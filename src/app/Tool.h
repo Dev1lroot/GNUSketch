@@ -63,6 +63,9 @@ protected:
     Mesh& mesh();
     Camera& cam();
     InferenceEngine& engine();
+    // Default free-space plane normal: ground, or the vertical axis plane facing
+    // the camera when the view is close to horizontal.
+    Vec3 viewPlaneNormal();
     void update();
     void refreshStatus();
     void setVcb(const QString& value);

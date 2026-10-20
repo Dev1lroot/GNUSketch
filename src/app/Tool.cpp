@@ -11,6 +11,12 @@ namespace gs {
 Document& Tool::doc() { return vp_->doc(); }
 Mesh& Tool::mesh() { return vp_->doc().mesh(); }
 Camera& Tool::cam() { return vp_->camera(); }
+
+Vec3 Tool::viewPlaneNormal() {
+    Vec3 f = cam().forward();
+    if (std::fabs(f.z) >= 0.25) return Vec3(0, 0, 1);
+    return std::fabs(f.x) > std::fabs(f.y) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+}
 InferenceEngine& Tool::engine() { return vp_->inference(); }
 void Tool::update() { vp_->update(); }
 void Tool::refreshStatus() { vp_->refreshToolStatus(); }

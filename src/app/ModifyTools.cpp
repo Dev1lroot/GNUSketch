@@ -1045,7 +1045,7 @@ Vec3 RotateTool::planeNormalAt(const MouseEvent& e, const InferenceResult& r) {
     if (forcedAxis_ >= 0) return kAxes[forcedAxis_];
     Id f = r.face != kNone ? r.face : engine().pickFace(e.x, e.y);
     if (f != kNone) return mesh().faces[f].normal;
-    return Vec3(0, 0, 1);
+    return viewPlaneNormal();
 }
 
 Mat4 RotateTool::currentTransform() const {

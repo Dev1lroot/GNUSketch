@@ -612,6 +612,24 @@ int runSelfTest(MainWindow& w) {
         d.click(d.screen(Vec3(62, 0, 2)));
         Id fv = faceNear(Vec3(61, 0, 1.25));
         d.check(fv != kNone && d.mesh().faces[fv].normal.y < -0.99, "front view rectangle is vertical and faces the camera");
+        // Rotate in the same view about a point in empty space: the protractor
+        // lies in the plane facing the camera, so the face stays in that plane.
+        if (fv != kNone) {
+            vp->setTool(ToolId::Select);
+            d.click(d.screen(Vec3(61, 0, 1.25)));
+            vp->setTool(ToolId::Rotate);
+            d.move(d.screen(Vec3(63.5, 0, 1)));
+            d.click(d.screen(Vec3(63.5, 0, 1)));
+            d.click(d.screen(Vec3(64, 0, 1)));
+            d.move(d.screen(Vec3(63.5, 0, 1.5)));
+            d.type("90");
+            bool inPlane = true;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && d.mesh().faceInteriorPoint(f).x > 59 && d.mesh().faceInteriorPoint(f).x < 66)
+                    inPlane = inPlane && std::fabs(d.mesh().faces[f].normal.y) > 0.99;
+            d.check(doc.undoName() == "Rotate" && inPlane, "rotate in front view turns about the axis facing the camera");
+            vp->setTool(ToolId::Rectangle);
+        }
         // Iso view: drag up the blue axis, then sideways.
         vp->setStandardView(Vec3(1, 1, -0.8));
         vp->camera().zoomExtents(Vec3(70, 0, 0), Vec3(73, 0, 3));

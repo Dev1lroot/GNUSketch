@@ -265,12 +265,6 @@ Plane PlanarShapeTool::resolvePlane(const MouseEvent& e, const Vec3& p0, Id star
     return Plane(viewPlaneNormal(), p0);
 }
 
-Vec3 PlanarShapeTool::viewPlaneNormal() {
-    Vec3 f = cam().forward();
-    if (std::fabs(f.z) >= 0.25) return Vec3(0, 0, 1);
-    return std::fabs(f.x) > std::fabs(f.y) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
-}
-
 void PlanarShapeTool::shapeBasis(const Vec3& n, Vec3& u, Vec3& v) const {
     if (std::fabs(n.z) > 0.999) {
         u = Vec3(1, 0, 0);

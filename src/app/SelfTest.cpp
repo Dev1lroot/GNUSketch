@@ -118,6 +118,8 @@ int runSelfTest(MainWindow& w) {
     d.click(d.screen(Vec3(0, 0, 0)));
     d.click(d.screen(Vec3(3, 2, 0)));
     d.check(d.mesh().aliveFaceCount() == 1, "rectangle tool creates a face");
+    for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+        if (d.mesh().faces[f].alive) d.check(d.mesh().faces[f].normal.z > 0.99, "ground rectangle faces the camera");
 
     // Push/pull it up 1.5 m by typing the distance.
     vp->setTool(ToolId::PushPull);
@@ -305,6 +307,40 @@ int runSelfTest(MainWindow& w) {
     }
     doc.style = RenderStyle();
     d.check(colors.size() > 20, "rendered frames are not blank");
+
+    // View > Render toggles: shadows darken part of the frame, antialiasing softens edges.
+    {
+        auto action = [&](const char* name) { return w.findChild<QAction*>(QString::fromLatin1(name)); };
+        auto diffCount = [](const QImage& a, const QImage& b, int* darker) {
+            int n = 0;
+            if (darker) *darker = 0;
+            for (int y = 0; y < a.height(); ++y)
+                for (int x = 0; x < a.width(); ++x) {
+                    QRgb p = a.pixel(x, y), q = b.pixel(x, y);
+                    if (p == q) continue;
+                    ++n;
+                    if (darker && qGray(q) + 8 < qGray(p)) ++*darker;
+                }
+            return n;
+        };
+        QAction* shadows = action("shadows");
+        QAction* aa = action("antialiasing");
+        d.check(shadows && aa && !shadows->isChecked() && aa->isChecked(), "View > Render has Shadows and Antialiasing toggles");
+        if (shadows && aa) {
+            QImage base = vp->grabFramebuffer();
+            shadows->trigger();
+            QImage shadowed = vp->grabFramebuffer();
+            int darker = 0;
+            diffCount(base, shadowed, &darker);
+            d.check(doc.style.shadows && darker > base.width() * base.height() / 200, "shadows darken part of the scene");
+            shadows->trigger();
+            aa->trigger();
+            QImage aliased = vp->grabFramebuffer();
+            d.check(!doc.style.antialiasing && diffCount(base, aliased, nullptr) > 100, "antialiasing can be switched off");
+            aa->trigger();
+            d.check(diffCount(base, vp->grabFramebuffer(), nullptr) == 0, "toggling both back restores the frame");
+        }
+    }
 
     // Image dropped into empty space becomes a textured plane; trace its alpha.
     {
@@ -556,6 +592,35 @@ int runSelfTest(MainWindow& w) {
         d.check(par.type == InferenceResult::Parallel && std::fabs(std::fabs(par.dir.dot(pd)) - 1) < 1e-9,
                 "line snaps parallel to the last hovered edge");
         eng.resetMemory();
+        vp->zoomExtents();
+    }
+
+    // Rectangles on vertical planes, front side toward the camera.
+    {
+        auto faceNear = [&](const Vec3& p) {
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && d.mesh().facePlane(f).contains(p, 1e-6) &&
+                    (d.mesh().faceInteriorPoint(f) - p).length() < 1.5)
+                    return f;
+            return kNone;
+        };
+        vp->setTool(ToolId::Rectangle);
+        // Front view: free-space rectangle lands on the vertical plane facing the viewer.
+        vp->setStandardView(Vec3(0, 1, 0));
+        vp->camera().zoomExtents(Vec3(60, 0, 0), Vec3(64, 0, 3));
+        d.click(d.screen(Vec3(60, 0, 0.5)));
+        d.click(d.screen(Vec3(62, 0, 2)));
+        Id fv = faceNear(Vec3(61, 0, 1.25));
+        d.check(fv != kNone && d.mesh().faces[fv].normal.y < -0.99, "front view rectangle is vertical and faces the camera");
+        // Iso view: drag up the blue axis, then sideways.
+        vp->setStandardView(Vec3(1, 1, -0.8));
+        vp->camera().zoomExtents(Vec3(70, 0, 0), Vec3(73, 0, 3));
+        d.click(d.screen(Vec3(70, 0, 0)));
+        d.move(d.screen(Vec3(70, 0, 1.5)));
+        d.move(d.screen(Vec3(71, 0, 1.5)));
+        d.click(d.screen(Vec3(72, 0, 1.5)));
+        Id fb = faceNear(Vec3(71, 0, 0.75));
+        d.check(fb != kNone && d.mesh().faces[fb].normal.y < -0.99, "rectangle dragged up blue is vertical and faces the camera");
         vp->zoomExtents();
     }
 

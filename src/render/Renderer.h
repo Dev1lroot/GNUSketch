@@ -104,8 +104,15 @@ private:
     void drawLines(const std::vector<float>& data, const Camera& cam, float width, Dash dash, double dpr);
     void pushLine(std::vector<float>& d, const Vec3& a, const Vec3& b, const Color& c);
     unsigned textureFor(Id mat) const;
+    // Sun shadow map from the given meshes (with their world transforms).
+    void renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Vec3& mn, const Vec3& mx);
+    void setShadowUniforms(QOpenGLShaderProgram* p);
 
-    std::unique_ptr<QOpenGLShaderProgram> faceProg_, lineProg_, skyProg_, flatProg_;
+    std::unique_ptr<QOpenGLShaderProgram> faceProg_, lineProg_, skyProg_, flatProg_, depthProg_;
+    unsigned shadowFbo_ = 0, shadowTex_ = 0;
+    bool shadowsOn_ = false; // shadow map valid for this frame
+    Mat4 lightVP_;
+    double shadowBias_ = 0;
     unsigned dynVao_ = 0, dynVbo_ = 0;    // lines (pos3 + color4)
     unsigned flatVao_ = 0, flatVbo_ = 0;  // overlay triangles (pos3)
     unsigned skyVao_ = 0;

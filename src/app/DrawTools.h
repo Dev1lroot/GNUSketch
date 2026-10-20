@@ -60,6 +60,9 @@ protected:
     // Resolves the drawing plane through p0 (forced axis, start face, hovered face, ground).
     Plane resolvePlane(const MouseEvent& e, const Vec3& p0, Id startFace);
     void shapeBasis(const Vec3& n, Vec3& u, Vec3& v) const;
+    // Default free-space plane normal: ground, or the vertical plane facing the
+    // camera when the view is close to horizontal.
+    Vec3 viewPlaneNormal();
     int forcedAxis_ = -1;
 };
 
@@ -80,7 +83,10 @@ public:
 private:
     void commit();
     std::vector<Vec3> corners() const;
+    // Axis plane implied by the cursor (snap off the ground, drag up blue), or -1.
+    int cursorAxis(const MouseEvent& e);
     bool hasStart_ = false, dragging_ = false;
+    int autoAxis_ = -1; // sticky vertical plane chosen by dragging along blue
     Vec3 p0_;
     Id startFace_ = kNone;
     Plane plane_;

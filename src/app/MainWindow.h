@@ -104,7 +104,8 @@ private:
     QAction *undoAct_ = nullptr, *redoAct_ = nullptr;
     QAction *perspectiveAct_ = nullptr, *parallelAct_ = nullptr;
     QAction *xrayAct_ = nullptr, *backEdgesAct_ = nullptr, *axesAct_ = nullptr, *guidesAct_ = nullptr,
-            *hiddenAct_ = nullptr, *edgesAct_ = nullptr, *profilesAct_ = nullptr;
+            *hiddenAct_ = nullptr, *edgesAct_ = nullptr, *profilesAct_ = nullptr, *shadowsAct_ = nullptr,
+            *antialiasAct_ = nullptr;
     std::map<int, QAction*> faceStyleActs_;
     std::map<QString, QAction*> acts_;
 

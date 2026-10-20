@@ -25,16 +25,37 @@ layout(location=3) in vec2 aUvB;
 layout(location=4) in vec4 aColF;
 layout(location=5) in vec4 aColB;
 uniform mat4 uMVP;
+uniform mat4 uModel;
 uniform mat3 uNrm; // normal matrix of the model transform
-out vec3 vN; out vec2 vUvF; out vec2 vUvB; out vec4 vColF; out vec4 vColB;
+out vec3 vN; out vec3 vWorld; out vec2 vUvF; out vec2 vUvB; out vec4 vColF; out vec4 vColB;
 void main() {
     vN = uNrm * aNormal; vUvF = aUvF; vUvB = aUvB; vColF = aColF; vColB = aColB;
+    vWorld = (uModel * vec4(aPos, 1.0)).xyz;
     gl_Position = uMVP * vec4(aPos, 1.0);
 }
 )";
 
-const char* kFaceFS = R"(#version 330 core
-in vec3 vN; in vec2 vUvF; in vec2 vUvB; in vec4 vColF; in vec4 vColB;
+// Shadow map lookup with a 3x3 PCF kernel (1 = lit, 0 = in shadow). The point
+// is pushed along its normal by uShadowBias to avoid self-shadowing acne.
+#define GS_SHADOW_GLSL R"(
+uniform bool uShadows;
+uniform mat4 uLightVP;
+uniform float uShadowBias;
+uniform sampler2DShadow uShadowMap;
+float shadowAt(vec3 p, vec3 n) {
+    vec4 c = uLightVP * vec4(p + n * uShadowBias, 1.0);
+    vec3 s = c.xyz / c.w * 0.5 + 0.5;
+    if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || s.z >= 1.0) return 1.0;
+    vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+    float sum = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) sum += texture(uShadowMap, vec3(s.xy + vec2(x, y) * texel, s.z));
+    return sum / 9.0;
+}
+)"
+
+const char* kFaceFS = "#version 330 core\n" GS_SHADOW_GLSL R"(
+in vec3 vN; in vec3 vWorld; in vec2 vUvF; in vec2 vUvB; in vec4 vColF; in vec4 vColB;
 uniform bool uTexF; uniform bool uTexB;
 uniform sampler2D uSamF; uniform sampler2D uSamB;
 uniform int uMode;          // 0 shaded, 1 textured, 2 hidden line, 3 monochrome
@@ -54,6 +75,7 @@ void main() {
     if (uMode == 3) base = front ? uMonoF : uMonoB;
     float diff = max(dot(n, uLight), 0.0);
     float light = 0.60 + 0.40 * diff;
+    if (uShadows) light = 0.50 + 0.50 * diff * (diff > 0.0 ? shadowAt(vWorld, n) : 1.0);
     fragColor = vec4(mix(base.rgb * light, vec3(1.0), uFade), base.a * uAlpha);
 }
 )";
@@ -125,7 +147,7 @@ void main() {
 }
 )";
 
-const char* kSkyFS = R"(#version 330 core
+const char* kSkyFS = "#version 330 core\n" GS_SHADOW_GLSL R"(
 in vec2 vNdc;
 uniform mat4 uInvVP;
 uniform vec4 uSky; uniform vec4 uHorizon; uniform vec4 uGround; uniform vec4 uBg;
@@ -143,6 +165,12 @@ void main() {
         if (!uUseGround) { fragColor = uUseSky ? uHorizon : uBg; return; }
         float t = clamp(-dir.z * 6.0, 0.0, 1.0);
         fragColor = mix(mix(uGround, uHorizon, 0.35), uGround, t);
+    }
+    // Shadows cast onto the ground plane (z = 0).
+    vec3 o = a.xyz / a.w;
+    if (uShadows && dir.z < 0.0 && o.z > 0.0) {
+        vec3 g = o + dir * (-o.z / dir.z);
+        fragColor.rgb *= 1.0 - 0.35 * (1.0 - shadowAt(g, vec3(0.0, 0.0, 1.0)));
     }
 }
 )";
@@ -167,6 +195,19 @@ void main() {
     fragColor = uColor;
 }
 )";
+
+const char* kDepthVS = R"(#version 330 core
+layout(location=0) in vec3 aPos;
+uniform mat4 uMVP;
+void main() { gl_Position = uMVP * vec4(aPos, 1.0); }
+)";
+
+const char* kDepthFS = R"(#version 330 core
+void main() {}
+)";
+
+constexpr int kShadowSize = 4096;
+const Vec3 kLightDir = Vec3(-0.3, -0.6, 0.75).normalized(); // towards the sun
 
 void setColor(QOpenGLShaderProgram* p, const char* name, const Color& c) { p->setUniformValue(name, c.r, c.g, c.b, c.a); }
 
@@ -209,7 +250,30 @@ bool Renderer::initialize(QString* log) {
     ok = make(lineProg_, kLineVS, kLineGS, kLineFS) && ok;
     ok = make(skyProg_, kSkyVS, nullptr, kSkyFS) && ok;
     ok = make(flatProg_, kFlatVS, nullptr, kFlatFS) && ok;
+    ok = make(depthProg_, kDepthVS, nullptr, kDepthFS) && ok;
     if (!ok) return false;
+
+    glGenTextures(1, &shadowTex_);
+    glBindTexture(GL_TEXTURE_2D, shadowTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, kShadowSize, kShadowSize, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glGenFramebuffers(1, &shadowFbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTex_, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    bool fboOk = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!fboOk) {
+        if (log) *log += "shadow framebuffer incomplete\n";
+        return false;
+    }
 
     glGenVertexArrays(1, &dynVao_);
     glGenBuffers(1, &dynVbo_);
@@ -242,6 +306,10 @@ void Renderer::cleanup() {
     glDeleteVertexArrays(1, &dynVao_);
     glDeleteVertexArrays(1, &flatVao_);
     glDeleteVertexArrays(1, &skyVao_);
+    glDeleteFramebuffers(1, &shadowFbo_);
+    glDeleteTextures(1, &shadowTex_);
+    shadowFbo_ = shadowTex_ = 0;
+    depthProg_.reset();
     faceProg_.reset();
     lineProg_.reset();
     skyProg_.reset();
@@ -494,6 +562,7 @@ void Renderer::drawBackground(const Document& doc, const Camera& cam) {
     setColor(skyProg_.get(), "uBg", st.background);
     skyProg_->setUniformValue("uUseSky", st.sky);
     skyProg_->setUniformValue("uUseGround", st.ground);
+    setShadowUniforms(skyProg_.get());
     glBindVertexArray(skyVao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
@@ -514,6 +583,8 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
     }
     faceProg_->bind();
     setMat(faceProg_.get(), "uMVP", cam.viewProjection() * model);
+    setMat(faceProg_.get(), "uModel", model);
+    setShadowUniforms(faceProg_.get());
     {
         // Normal matrix: inverse-transpose of the linear part.
         Mat4 inv = model.inverted();
@@ -527,7 +598,7 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
     setColor(faceProg_.get(), "uBg", st.background);
     setColor(faceProg_.get(), "uMonoF", Color::rgb8(255, 255, 255));
     setColor(faceProg_.get(), "uMonoB", st.backColor);
-    Vec3 L = Vec3(-0.3, -0.6, 0.75).normalized();
+    const Vec3& L = kLightDir;
     faceProg_->setUniformValue("uLight", QVector3D((float)L.x, (float)L.y, (float)L.z));
     faceProg_->setUniformValue("uSamF", 0);
     faceProg_->setUniformValue("uSamB", 1);
@@ -565,6 +636,48 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
     glBindVertexArray(0);
     glDisable(GL_POLYGON_OFFSET_FILL);
     if (mirrored) glFrontFace(GL_CCW);
+}
+
+void Renderer::setShadowUniforms(QOpenGLShaderProgram* p) {
+    p->setUniformValue("uShadows", shadowsOn_);
+    setMat(p, "uLightVP", lightVP_);
+    p->setUniformValue("uShadowBias", (float)shadowBias_);
+    p->setUniformValue("uShadowMap", 2);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, shadowTex_);
+    glActiveTexture(GL_TEXTURE0);
+}
+
+void Renderer::renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Vec3& mn, const Vec3& mx) {
+    // Orthographic sun view fitted around the model's bounding sphere; the depth
+    // range reaches down to the ground plane so ground shadows are covered.
+    Vec3 c = (mn + mx) * 0.5;
+    double r = std::max((mx - mn).length() * 0.5, 0.5);
+    double below = std::max(0.0, c.z + r) / kLightDir.z; // centre to ground along the light
+    Mat4 view = Mat4::lookAt(c + kLightDir * (r * 2), c, Vec3(0, 0, 1));
+    lightVP_ = Mat4::ortho(-r, r, -r, r, r * 0.5, r * 3 + below) * view;
+    shadowBias_ = 2 * r / kShadowSize * 1.5;
+
+    GLint prevFbo = 0, prevVp[4];
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+    glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+    glViewport(0, 0, kShadowSize, kShadowSize);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(2.0f, 4.0f);
+    depthProg_->bind();
+    for (const auto& [g, xf] : casters) {
+        setMat(depthProg_.get(), "uMVP", lightVP_ * xf);
+        glBindVertexArray(g->vao);
+        for (const Batch& b : g->batches)
+            if (!b.transparent) glDrawArrays(GL_TRIANGLES, b.first, b.count);
+    }
+    glBindVertexArray(0);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
 }
 
 void Renderer::collectEdges(const Mesh& m, const Mat4& model, const Document& doc, const Camera& cam,
@@ -632,6 +745,8 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glDisable(GL_CULL_FACE);
+    if (st.antialiasing) glEnable(GL_MULTISAMPLE);
+    else glDisable(GL_MULTISAMPLE);
 
     if (builtMatRevision_ != doc.materialsRevision) {
         syncTextures(doc);
@@ -663,6 +778,26 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     }
     const MeshGpu& activeGpu = meshGpu(doc, editDef);
     const Mesh& active = ms.activeMesh();
+
+    shadowsOn_ = false;
+    if (st.shadows && st.faceStyle != RenderStyle::Wireframe && st.faceStyle != RenderStyle::HiddenLine) {
+        Vec3 mn, mx, amn, amx;
+        bool any = false, anyActive = false;
+        modelBounds(ms, mn, mx, any);
+        active.bounds(amn, amx, anyActive);
+        if (anyActive) {
+            if (!any) mn = amn, mx = amx;
+            for (int k = 0; k < 3; ++k) mn[k] = std::min(mn[k], amn[k]), mx[k] = std::max(mx[k], amx[k]);
+            any = true;
+        }
+        if (any) {
+            std::vector<std::pair<const MeshGpu*, Mat4>> casters{{&activeGpu, Mat4()}};
+            if (editing) casters.push_back({&meshGpu(doc, kNone), Mat4()});
+            for (const Placed& p : placed) casters.push_back({&meshGpu(doc, p.def), p.xf});
+            renderShadowMap(casters, mn, mx);
+            shadowsOn_ = true;
+        }
+    }
 
     drawBackground(doc, cam);
     drawMeshFaces(activeGpu, doc, cam, Mat4(), 0.0f);

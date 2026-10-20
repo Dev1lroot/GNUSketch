@@ -74,6 +74,8 @@ struct RenderStyle {
     bool showHidden = false;
     bool sky = true;
     bool ground = true;
+    bool shadows = false;      // sun shadows on faces and the ground
+    bool antialiasing = true;  // multisampling
     Color background = Color::rgb8(255, 255, 255);
     Color skyColor = Color::rgb8(166, 205, 236);
     Color horizonColor = Color::rgb8(222, 234, 244);

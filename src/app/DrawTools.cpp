@@ -262,7 +262,13 @@ Plane PlanarShapeTool::resolvePlane(const MouseEvent& e, const Vec3& p0, Id star
         Plane fp = mesh().facePlane(f);
         if (fp.contains(p0, kTol * 10)) return fp;
     }
-    return Plane(Vec3(0, 0, 1), p0);
+    return Plane(viewPlaneNormal(), p0);
+}
+
+Vec3 PlanarShapeTool::viewPlaneNormal() {
+    Vec3 f = cam().forward();
+    if (std::fabs(f.z) >= 0.25) return Vec3(0, 0, 1);
+    return std::fabs(f.x) > std::fabs(f.y) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
 }
 
 void PlanarShapeTool::shapeBasis(const Vec3& n, Vec3& u, Vec3& v) const {
@@ -289,7 +295,7 @@ void PlanarShapeTool::shapeBasis(const Vec3& n, Vec3& u, Vec3& v) const {
 // ===========================================================================
 
 QString RectangleTool::status() const {
-    if (!hasStart_) return QStringLiteral("Select first corner. Arrow keys choose the drawing plane (Right=red, Left=green, Up=blue).");
+    if (!hasStart_) return QStringLiteral("Select first corner. Drag up along blue for a vertical plane; arrow keys force a plane (Right=red, Left=green, Up=blue).");
     return QStringLiteral("Select opposite corner or enter dimensions (width,height).");
 }
 
@@ -318,7 +324,8 @@ void RectangleTool::mousePress(const MouseEvent& e) {
         dragging_ = true;
         pressX_ = e.x;
         pressY_ = e.y;
-        plane_ = Plane(Vec3(0, 0, 1), p0_);
+        plane_ = Plane(viewPlaneNormal(), p0_);
+        autoAxis_ = -1;
         refreshStatus();
         update();
         return;
@@ -334,7 +341,8 @@ void RectangleTool::mouseMove(const MouseEvent& e) {
         update();
         return;
     }
-    plane_ = resolvePlane(e, p0_, startFace_);
+    int axis = forcedAxis_ < 0 ? cursorAxis(e) : -1;
+    plane_ = axis >= 0 ? Plane(kAxes[axis], p0_) : resolvePlane(e, p0_, startFace_);
     shapeBasis(plane_.n, u_, v_);
     InferenceResult r = inferPoint(e, p0_, plane_);
     Vec3 d = r.p - p0_;
@@ -356,6 +364,29 @@ void RectangleTool::mouseMove(const MouseEvent& e) {
     }
     setVcb(fmtLen(std::fabs(w_)) + ", " + fmtLen(std::fabs(h_)));
     update();
+}
+
+int RectangleTool::cursorAxis(const MouseEvent& e) {
+    double sx, sy;
+    if (cam().project(p0_, sx, sy) && std::hypot(sx - e.x, sy - e.y) < 8) autoAxis_ = -1;
+    InferenceResult r = inferPoint(e, p0_);
+    Vec3 d = r.p - p0_;
+    double eps = kTol * 10;
+    // Moving straight up from the start: switch to the vertical plane facing the camera.
+    if (r.type == InferenceResult::AxisZ && std::fabs(d.z) > eps) {
+        Vec3 f = cam().forward();
+        autoAxis_ = std::fabs(f.x) > std::fabs(f.y) ? 0 : 1;
+    }
+    // Snapped to geometry: use the axis plane through both points, if there is exactly one.
+    bool onGeometry = r.isSnap() || r.type == InferenceResult::OnEdge || r.type == InferenceResult::OnFace ||
+                      r.type == InferenceResult::OnGuide;
+    if (onGeometry) {
+        int zero = -1, n = 0;
+        for (int i = 0; i < 3; ++i)
+            if (std::fabs(d[i]) < eps) { zero = i; ++n; }
+        if (n == 1) return zero;
+    }
+    return autoAxis_;
 }
 
 void RectangleTool::mouseRelease(const MouseEvent& e) {
@@ -463,7 +494,7 @@ void CircleTool::mouseMove(const MouseEvent& e) {
     if (!hasCenter_) {
         InferenceResult r = inferPoint(e, std::nullopt);
         plane_ = forcedAxis_ >= 0 ? Plane(kAxes[forcedAxis_], r.p)
-               : r.face != kNone ? mesh().facePlane(r.face) : Plane(Vec3(0, 0, 1), r.p);
+               : r.face != kNone ? mesh().facePlane(r.face) : Plane(viewPlaneNormal(), r.p);
         update();
         return;
     }

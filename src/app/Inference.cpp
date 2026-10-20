@@ -215,6 +215,12 @@ Vec3 InferenceEngine::freePoint(const Ray& r, const Options& o) const {
         if (intersectRayPlane(r, pv, t)) return r.at(t);
         return r.at(cam_.distance());
     }
+    Vec3 f = cam_.forward();
+    if (std::fabs(f.z) < 0.25) {
+        // Near-horizontal view (front/side): the vertical axis plane through the target.
+        Plane pv(std::fabs(f.x) > std::fabs(f.y) ? Vec3(1, 0, 0) : Vec3(0, 1, 0), cam_.target);
+        if (intersectRayPlane(r, pv, t)) return r.at(t);
+    }
     Plane ground(Vec3(0, 0, 1), Vec3());
     if (intersectRayPlane(r, ground, t) && t < cam_.distance() * 200) return r.at(t);
     Plane pv(cam_.forward(), cam_.target);

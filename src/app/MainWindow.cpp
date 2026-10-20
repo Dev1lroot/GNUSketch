@@ -279,6 +279,8 @@ void MainWindow::buildActions() {
     axesAct_ = styleToggle("axes", "", QStringLiteral("&Axes"), &RenderStyle::showAxes);
     guidesAct_ = styleToggle("guides", "", QStringLiteral("&Guides"), &RenderStyle::showGuides);
     hiddenAct_ = styleToggle("hiddengeom", "", QStringLiteral("&Hidden Geometry"), &RenderStyle::showHidden);
+    shadowsAct_ = styleToggle("shadows", "", QStringLiteral("&Shadows"), &RenderStyle::shadows);
+    antialiasAct_ = styleToggle("antialiasing", "", QStringLiteral("&Antialiasing"), &RenderStyle::antialiasing);
 
     auto* faceGroup = new QActionGroup(this);
     struct FS { RenderStyle::FaceStyle s; const char* icon; const char* text; };
@@ -366,6 +368,9 @@ void MainWindow::buildMenus() {
     faceStyle->addAction(xrayAct_);
     faceStyle->addSeparator();
     for (auto& [k, a] : faceStyleActs_) faceStyle->addAction(a);
+    QMenu* render = view->addMenu(QStringLiteral("&Render"));
+    render->addAction(shadowsAct_);
+    render->addAction(antialiasAct_);
     view->addSeparator();
     view->addAction(acts_["instructor"]);
 
@@ -619,7 +624,7 @@ void MainWindow::updateUndoActions() {
 
 void MainWindow::syncStyleActions() {
     const RenderStyle& s = doc_.style;
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_}) a->blockSignals(true);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, antialiasAct_}) a->blockSignals(true);
     xrayAct_->setChecked(s.xray);
     backEdgesAct_->setChecked(s.backEdges);
     edgesAct_->setChecked(s.edges);
@@ -627,7 +632,9 @@ void MainWindow::syncStyleActions() {
     axesAct_->setChecked(s.showAxes);
     guidesAct_->setChecked(s.showGuides);
     hiddenAct_->setChecked(s.showHidden);
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_}) a->blockSignals(false);
+    shadowsAct_->setChecked(s.shadows);
+    antialiasAct_->setChecked(s.antialiasing);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, antialiasAct_}) a->blockSignals(false);
     auto it = faceStyleActs_.find((int)s.faceStyle);
     if (it != faceStyleActs_.end()) it->second->setChecked(true);
     perspectiveAct_->setChecked(viewport_->camera().perspective);

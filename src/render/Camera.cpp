@@ -5,7 +5,7 @@ namespace gs {
 
 Vec3 Camera::right() const {
     Vec3 r = forward().cross(up);
-    if (r.length2() < 1e-12) r = anyPerpendicular(forward());
+    if (r.length2() < 1e-20) r = anyPerpendicular(forward());
     return r.normalized();
 }
 

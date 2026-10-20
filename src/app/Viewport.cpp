@@ -91,6 +91,7 @@ void Viewport::setVcbValue(const QString& v) { emit vcbChanged(tool_ ? tool_->vc
 void Viewport::vcbEnter(const QString& text) {
     if (!tool_ || text.trimmed().isEmpty()) return;
     doc_->mesh().viewHint = camera_.eye;
+    doc_->mesh().groundFacesDown = false;
     if (!tool_->vcbEnter(text.trimmed())) {
         QApplication::beep();
         emit statusText(QStringLiteral("Invalid value: %1").arg(text));
@@ -162,6 +163,7 @@ void Viewport::resizeGL(int, int) { camera_.setViewport(width(), height()); }
 void Viewport::paintGL() {
     camera_.setViewport(width(), height());
     doc_->mesh().viewHint = camera_.eye;
+    doc_->mesh().groundFacesDown = false;
     updateSceneBounds();
     Preview pv;
     if (tool_ && mouseInside_) tool_->buildPreview(pv);
@@ -313,6 +315,7 @@ MouseEvent Viewport::toEvent(QMouseEvent* e) const {
 void Viewport::mousePressEvent(QMouseEvent* e) {
     setFocus();
     doc_->mesh().viewHint = camera_.eye;
+    doc_->mesh().groundFacesDown = false;
     if (e->button() == Qt::MiddleButton) {
         nav_ = (e->modifiers() & Qt::ShiftModifier) ? Nav::Pan : Nav::Orbit;
         navLast_ = e->position();
@@ -377,6 +380,7 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
     }
     if (e->button() != Qt::LeftButton) return;
     doc_->mesh().viewHint = camera_.eye;
+    doc_->mesh().groundFacesDown = false;
     if (tool_) tool_->mouseDoubleClick(toEvent(e));
     update();
 }
@@ -452,6 +456,7 @@ void Viewport::keyPressEvent(QKeyEvent* e) {
         return;
     }
     doc_->mesh().viewHint = camera_.eye;
+    doc_->mesh().groundFacesDown = false;
     if (tool_ && tool_->keyPress(e)) {
         update();
         return;

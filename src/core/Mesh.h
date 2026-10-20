@@ -80,6 +80,8 @@ public:
     uint64_t revision = nextMeshRevision();
     // Camera position; new faces without other orientation cues face the camera.
     Vec3 viewHint = Vec3(10, -10, 10);
+    // New faces on the ground plane face down (SketchUp convention) instead of the camera.
+    bool groundFacesDown = true;
 
     // ---- queries -------------------------------------------------------------
     const Vec3& pos(Id v) const { return vertices[v].p; }

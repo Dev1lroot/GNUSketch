@@ -801,7 +801,7 @@ Vec3 Mesh::chooseNormal(const std::vector<Id>& outer, const Plane& P) const {
         }
     }
     // 2. Faces on the ground plane face down (so push/pull up makes outward normals).
-    if (std::fabs(n.z) > 0.999 && std::fabs(P.d) <= kTol) return Vec3(0, 0, -1);
+    if (groundFacesDown && std::fabs(n.z) > 0.999 && std::fabs(P.d) <= kTol) return Vec3(0, 0, -1);
     // 3. Face the camera.
     Vec3 c = pos(outer[0]);
     return (viewHint - c).dot(n) >= 0 ? n : -n;

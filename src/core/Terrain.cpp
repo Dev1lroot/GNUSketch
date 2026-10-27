@@ -20,6 +20,11 @@ constexpr double kAxialRadii = 3.0;
 constexpr int kMaxSplitsPerStep = 20000;
 // Flatten snaps its plane to a world axis closer than ~25 degrees.
 constexpr double kSnapCos = 0.9;
+// Paint mode: opacity laid down per second at the brush centre.
+constexpr double kPaintRate = 3.0;
+// Painted weights below this are dropped; a vertex keeps at most this many.
+constexpr float kMinWeight = 1.0f / 512;
+constexpr size_t kMaxLayers = 4;
 
 Vec3 loopNormal(const Mesh& m, const std::vector<Id>& loop) {
     return newellNormal((int)loop.size(), [&](int i) { return m.pos(loop[i]); });
@@ -157,6 +162,25 @@ std::vector<Id> triangulateFace(Mesh& m, Id f) {
     return out;
 }
 
+void paintVertex(Vertex& v, Id mat, double amount) {
+    const float a = (float)std::clamp(amount, 0.0, 1.0);
+    if (a <= 0) return;
+    bool found = false;
+    for (PaintWeight& w : v.paint) {
+        w.weight *= 1 - a;
+        if (w.material == mat) {
+            w.weight += a;
+            found = true;
+        }
+    }
+    if (!found && mat != kNone) v.paint.push_back({mat, a});
+    std::erase_if(v.paint, [](const PaintWeight& w) { return w.weight < kMinWeight; });
+    if (v.paint.size() > kMaxLayers) {
+        std::sort(v.paint.begin(), v.paint.end(), [](const auto& x, const auto& y) { return x.weight > y.weight; });
+        v.paint.resize(kMaxLayers);
+    }
+}
+
 Vec3 terrainNormal(const Mesh& m, const Vec3& center, Id face, const Vec3& toViewer, double radius) {
     if (face < 0 || face >= (Id)m.faces.size() || !m.faces[face].alive) return Vec3(0, 0, 1);
     Vec3 nh = m.faces[face].normal;
@@ -276,6 +300,14 @@ void TerrainStroke::bisect(Mesh& m, Id e) {
     const Id a = m.edges[e].v[0], b = m.edges[e].v[1];
     const std::vector<Id> faces = edgeFaces_[e];
     const Id v = m.addVertexRaw((m.pos(a) + m.pos(b)) * 0.5);
+    // Painted textures blend linearly along the edge, like the GPU shows them.
+    for (Id end : {a, b})
+        for (const PaintWeight& w : m.vertices[end].paint) {
+            auto& P = m.vertices[v].paint;
+            auto it = std::find_if(P.begin(), P.end(), [&](const PaintWeight& x) { return x.material == w.material; });
+            if (it == P.end()) P.push_back({w.material, w.weight * 0.5f});
+            else it->weight += w.weight * 0.5f;
+        }
     m.splitEdge(e, v, &faces);
     // e now runs a-v; the second half v-b was appended.
     const Id ev = m.findEdge(v, b);
@@ -337,7 +369,7 @@ void TerrainStroke::refine(Mesh& m, const Vec3& c, Id forceFace) {
     for (Id f = 0; f < nf; ++f) {
         if (!m.faces[f].alive || isTri(m, f)) continue;
         if (f != forceFace) {
-            if (std::fabs(m.faces[f].normal.dot(dir_)) < kFacingCos) continue;
+            if (mode_ != TerrainMode::Paint && std::fabs(m.faces[f].normal.dot(dir_)) < kFacingCos) continue;
             if (faceDistance(m, f, c) >= R) continue;
         }
         triangulateFace(m, f);
@@ -373,7 +405,7 @@ void TerrainStroke::apply(Mesh& m, const Vec3& c, double dt) {
     refine(m, c);
     const double R = brush_.radius;
     const double rate = brush_.force * dt;
-    if (rate <= 0) return;
+    if (rate <= 0 && mode_ != TerrainMode::Paint) return;
 
     // Only vertices surrounded by triangles move: anything shared with an
     // n-gon face stays put so that face stays planar.
@@ -388,6 +420,11 @@ void TerrainStroke::apply(Mesh& m, const Vec3& c, double dt) {
         };
         mark(F.outer);
         for (const auto& h : F.holes) mark(h);
+    }
+
+    if (mode_ == TerrainMode::Paint) {
+        paint(m, c, dt, movable);
+        return;
     }
 
     std::vector<char> moved(m.vertices.size(), 0);
@@ -410,6 +447,7 @@ void TerrainStroke::apply(Mesh& m, const Vec3& c, double dt) {
             p -= dir_ * std::clamp(off, -step, step);
             break;
         }
+        case TerrainMode::Paint: break; // handled by paint()
         }
         moved[v] = 1;
         any = true;
@@ -423,6 +461,21 @@ void TerrainStroke::apply(Mesh& m, const Vec3& c, double dt) {
     }
     m.markGeometryMoved();
     m.touch();
+}
+
+void TerrainStroke::paint(Mesh& m, const Vec3& c, double dt, const std::vector<char>& paintable) {
+    // A sphere around the brush centre, so painting wraps over ridges and corners.
+    // Vertices of n-gon faces are skipped: their paint would smear over the whole face.
+    const double R = brush_.radius;
+    bool any = false;
+    for (Id v = 0; v < (Id)m.vertices.size(); ++v) {
+        if (paintable[v] != 1 || !m.vertices[v].alive) continue;
+        const double w = terrainFalloff((m.pos(v) - c).length(), R, brush_.hardness);
+        if (w <= 0) continue;
+        paintVertex(m.vertices[v], paintMat_, kPaintRate * dt * w);
+        any = true;
+    }
+    if (any) m.touch();
 }
 
 } // namespace gs

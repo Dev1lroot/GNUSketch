@@ -67,6 +67,26 @@ int main(int argc, char** argv) {
     }
 
     {
+        // Texture Brush paint weights survive saving.
+        Document d;
+        d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 1, 0}, {0, 1, 0}}, true);
+        d.mesh().vertices[0].paint = {{0, 0.75f}, {1, 0.125f}};
+        Vec3 p0 = d.mesh().vertices[0].p;
+        QString p = dir.filePath("paint.gsketch");
+        CHECK(saveNative(d, p, {}));
+        Document e;
+        CHECK(loadNative(e, p, nullptr));
+        int found = 0;
+        for (const Vertex& v : e.mesh().vertices)
+            if (v.alive && v.p.nearlyEquals(p0) && v.paint.size() == 2 && v.paint[0].material == 0 &&
+                std::fabs(v.paint[0].weight - 0.75f) < 1e-6 && v.paint[1].material == 1)
+                ++found;
+            else if (v.alive && !v.paint.empty())
+                found = -100;
+        CHECK(found == 1);
+    }
+
+    {
         Document d;
         makeModel(d);
         QString p = dir.filePath("a.gsketch");

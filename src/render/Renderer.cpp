@@ -8,6 +8,7 @@
 #include <QOpenGLShaderProgram>
 
 #include <algorithm>
+#include <limits>
 #include <functional>
 #include <cmath>
 #include <numeric>
@@ -438,6 +439,7 @@ void Renderer::buildMesh(MeshGpu& g, const Mesh& m, const Document& doc) {
         Batch b;
     };
     std::map<std::tuple<int, int, int>, Entry> groups;
+    std::map<Id, Entry> paintGroups; // per painted material, drawn in id order
     auto colorOf = [&](Id mat, bool front) {
         const Material* mm = doc.material(mat);
         if (!mm) return front ? st.frontColor : st.backColor;
@@ -498,19 +500,75 @@ void Renderer::buildMesh(MeshGpu& g, const Mesh& m, const Document& doc) {
                 ft.push_back((float)p.z);
             }
         }
+
+        // Painted textures: one blended layer per material over this face.
+        std::vector<Id> layers;
+        for (Id vid : flat)
+            for (const PaintWeight& w : m.vertices[vid].paint)
+                if (std::find(layers.begin(), layers.end(), w.material) == layers.end()) layers.push_back(w.material);
+        for (Id L : layers) {
+            // Layers are composited over each other in material id order, so a
+            // vertex's normalised weights turn into "over" opacities.
+            auto alphaAt = [&](Id vid) {
+                const auto& P = m.vertices[vid].paint;
+                double rest = 1;
+                for (const PaintWeight& w : P) rest -= w.weight;
+                double cum = std::max(rest, 0.0);
+                for (Id mat = -1; ; ) {
+                    // next material id above `mat` present at this vertex
+                    Id next = std::numeric_limits<Id>::max();
+                    float wn = 0;
+                    for (const PaintWeight& w : P)
+                        if (w.material > mat && w.material < next) { next = w.material; wn = w.weight; }
+                    if (next == std::numeric_limits<Id>::max()) return 0.0f;
+                    cum += wn;
+                    if (next == L) return cum > 1e-9 ? (float)(wn / cum) : 0.0f;
+                    mat = next;
+                }
+            };
+            const Material* ml = doc.material(L);
+            const bool tex = ml && ml->hasTexture();
+            Color c = colorOf(L, true);
+            Entry& pe = paintGroups[L];
+            pe.b.matFront = pe.b.matBack = tex ? L : kNone;
+            pe.b.texFront = pe.b.texBack = tex;
+            pe.b.paint = true;
+            for (const auto& t : tris) {
+                float a[3];
+                for (int i = 0; i < 3; ++i) a[i] = alphaAt(flat[t[i]]);
+                if (a[0] <= 0 && a[1] <= 0 && a[2] <= 0) continue;
+                for (int i = 0; i < 3; ++i) {
+                    Id vid = flat[t[i]];
+                    const Vec3& p = m.pos(vid);
+                    Vec3 n = F.normal;
+                    auto it = smoothN.find(key(vid, f));
+                    if (it != smoothN.end()) n = it->second;
+                    Vec2 uf = projectedTexCoord(F, true, p, ml), ub = projectedTexCoord(F, false, p, ml);
+                    float ca = c.a * a[i];
+                    float vals[kFaceStride] = {(float)p.x, (float)p.y, (float)p.z, (float)n.x, (float)n.y, (float)n.z,
+                                               (float)uf.x, (float)uf.y, (float)ub.x, (float)ub.y,
+                                               c.r, c.g, c.b, ca, c.r, c.g, c.b, ca};
+                    pe.data.insert(pe.data.end(), vals, vals + kFaceStride);
+                }
+            }
+        }
     }
 
     std::vector<float> all;
     g.batches.clear();
-    // Opaque first, transparent last.
-    for (int pass = 0; pass < 2; ++pass)
-        for (auto& [k, en] : groups) {
-            if (en.b.transparent != (pass == 1)) continue;
-            en.b.first = (int)(all.size() / kFaceStride);
-            en.b.count = (int)(en.data.size() / kFaceStride);
-            all.insert(all.end(), en.data.begin(), en.data.end());
-            g.batches.push_back(en.b);
-        }
+    auto pushBatch = [&](Entry& en) {
+        en.b.first = (int)(all.size() / kFaceStride);
+        en.b.count = (int)(en.data.size() / kFaceStride);
+        all.insert(all.end(), en.data.begin(), en.data.end());
+        g.batches.push_back(en.b);
+    };
+    // Opaque first, then painted layers over them, transparent last.
+    for (auto& [k, en] : groups)
+        if (!en.b.transparent) pushBatch(en);
+    for (auto& [mat, en] : paintGroups)
+        if (!en.data.empty()) pushBatch(en);
+    for (auto& [k, en] : groups)
+        if (en.b.transparent) pushBatch(en);
     glBindBuffer(GL_ARRAY_BUFFER, g.vbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(all.size() * sizeof(float)), all.empty() ? nullptr : all.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -610,7 +668,9 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
     glBindVertexArray(g.vao);
     const bool xray = st.xray;
     for (const Batch& b : g.batches) {
-        bool transparent = b.transparent || xray || fade > 0;
+        // Paint layers only show in the shaded styles.
+        if (b.paint && (mode == 2 || mode == 3)) continue;
+        bool transparent = b.transparent || b.paint || xray || fade > 0;
         if (transparent) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -672,7 +732,7 @@ void Renderer::renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>
         setMat(depthProg_.get(), "uMVP", lightVP_ * xf);
         glBindVertexArray(g->vao);
         for (const Batch& b : g->batches)
-            if (!b.transparent) glDrawArrays(GL_TRIANGLES, b.first, b.count);
+            if (!b.transparent && !b.paint) glDrawArrays(GL_TRIANGLES, b.first, b.count);
     }
     glBindVertexArray(0);
     glDisable(GL_POLYGON_OFFSET_FILL);

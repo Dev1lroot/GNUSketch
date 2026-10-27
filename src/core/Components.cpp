@@ -111,6 +111,7 @@ void appendMesh(Mesh& dst, const Mesh& src, const Mat4& xf, const std::set<Id>* 
         if (it != vm.end()) return it->second;
         Vec3 p = xf.transformPoint(src.pos(v));
         Id nv = weld ? dst.addVertex(p) : dst.addVertexRaw(p);
+        if (dst.vertices[nv].paint.empty()) dst.vertices[nv].paint = src.vertices[v].paint;
         vm[v] = nv;
         return nv;
     };

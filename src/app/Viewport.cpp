@@ -68,7 +68,8 @@ void Viewport::setTool(ToolId id) {
     case ToolId::ZoomWindow: tool_ = std::make_unique<ZoomWindowTool>(this); break;
     case ToolId::Mountain:
     case ToolId::Pit:
-    case ToolId::Flatten: tool_ = std::make_unique<TerrainTool>(this, id); break;
+    case ToolId::Flatten:
+    case ToolId::TextureBrush: tool_ = std::make_unique<TerrainTool>(this, id); break;
     }
     inference_->resetMemory();
     vcbLabel_ = tool_->vcbLabel();

@@ -16,6 +16,8 @@ namespace {
 constexpr int kTickMs = 33;
 // A click without holding still applies this much brushing.
 constexpr double kMinStroke = 1.0 / 30.0;
+// A Texture Brush click lays down a visible dab.
+constexpr double kMinPaintStroke = 0.1;
 constexpr int kCircleSegments = 64;
 // Ctrl+wheel scales the radius by this factor per notch; Alt+wheel changes
 // the hardness by this much.
@@ -48,7 +50,9 @@ void TerrainSettings::setBrush(const TerrainBrush& b) {
     emit changed();
 }
 
-bool isTerrainTool(ToolId id) { return id == ToolId::Mountain || id == ToolId::Pit || id == ToolId::Flatten; }
+bool isTerrainTool(ToolId id) {
+    return id == ToolId::Mountain || id == ToolId::Pit || id == ToolId::Flatten || id == ToolId::TextureBrush;
+}
 
 TerrainTool::TerrainTool(Viewport* vp, ToolId id) : Tool(vp), id_(id), timer_(std::make_unique<QTimer>()) {
     timer_->setInterval(kTickMs);
@@ -61,12 +65,21 @@ TerrainMode TerrainTool::mode() const {
     switch (id_) {
     case ToolId::Pit: return TerrainMode::Lower;
     case ToolId::Flatten: return TerrainMode::Flatten;
+    case ToolId::TextureBrush: return TerrainMode::Paint;
     default: return TerrainMode::Raise;
     }
 }
 
 QString TerrainTool::status() const {
     const TerrainBrush& b = TerrainSettings::instance().brush();
+    if (mode() == TerrainMode::Paint) {
+        const Material* mat = vp_->doc().material(vp_->doc().currentMaterial);
+        QString name = mat ? QString::fromStdString(mat->name) : QStringLiteral("Default (erases painted textures)");
+        return QStringLiteral("Press and hold to paint %1 over any surface; choose it in Materials. Radius %2, hardness %3%. "
+                              "Ctrl+wheel: radius, Alt+wheel: hardness. Type a radius.")
+            .arg(name, fmtLen(b.radius))
+            .arg(std::lround(b.hardness * 100));
+    }
     QString what = mode() == TerrainMode::Raise   ? QStringLiteral("raise a mountain")
                    : mode() == TerrainMode::Lower ? QStringLiteral("sink a pit")
                                                   : QStringLiteral("flatten to the height under the cursor");
@@ -102,9 +115,10 @@ void TerrainTool::mousePress(const MouseEvent& e) {
     Vec3 p, toViewer;
     Id f;
     if (!surfaceAt(e.x, e.y, p, f, toViewer)) return;
-    static const char* names[] = {"Mountain", "Pit", "Flatten"};
+    static const char* names[] = {"Mountain", "Pit", "Flatten", "Texture Brush"};
     doc().beginOp(names[(int)mode()]);
     stroke_.emplace(mode(), TerrainSettings::instance().brush());
+    stroke_->setPaintMaterial(doc().currentMaterial);
     if (!stroke_->begin(mesh(), p, f, toViewer)) {
         stroke_.reset();
         doc().cancelOp();
@@ -178,7 +192,8 @@ void TerrainTool::mouseRelease(const MouseEvent& e) {
     if (e.button != Qt::LeftButton || !stroke_) return;
     timer_->stop();
     applyElapsed();
-    if (applied_ < kMinStroke && onSurface_) stroke_->apply(mesh(), center_, kMinStroke - applied_);
+    const double minStroke = mode() == TerrainMode::Paint ? kMinPaintStroke : kMinStroke;
+    if (applied_ < minStroke && onSurface_) stroke_->apply(mesh(), center_, minStroke - applied_);
     stroke_->finish(mesh(), center_);
     stroke_.reset();
     doc().commitOp();
@@ -218,6 +233,7 @@ void TerrainTool::buildPreview(Preview& pv) {
     const TerrainBrush& b = TerrainSettings::instance().brush();
     const Color color = mode() == TerrainMode::Raise   ? Color::rgb8(200, 110, 20)
                         : mode() == TerrainMode::Lower ? Color::rgb8(30, 110, 220)
+                        : mode() == TerrainMode::Paint ? Color::rgb8(200, 40, 160)
                                                        : Color::rgb8(30, 160, 60);
     const Vec3 normal = brushDirection();
     Vec3 u, v;
@@ -238,6 +254,7 @@ void TerrainTool::buildPreview(Preview& pv) {
     switch (mode()) {
     case TerrainMode::Raise: pv.line(c, c + normal * len, color, 2.0f); break;
     case TerrainMode::Lower: pv.line(c, c - normal * len, color, 2.0f); break;
+    case TerrainMode::Paint: break;
     case TerrainMode::Flatten:
         pv.line(c - u * (len * 0.5), c + u * (len * 0.5), color, 2.0f);
         pv.line(c - v * (len * 0.5), c + v * (len * 0.5), color, 2.0f);

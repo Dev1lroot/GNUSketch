@@ -166,6 +166,7 @@ void MainWindow::buildActions() {
     toolAction(ToolId::Mountain, QStringLiteral("Mountain"), QString());
     toolAction(ToolId::Pit, QStringLiteral("Pit"), QString());
     toolAction(ToolId::Flatten, QStringLiteral("Flatten"), QString());
+    toolAction(ToolId::TextureBrush, QStringLiteral("Texture Brush"), QString());
 
     auto act = [this](const QString& key, const QString& icon, const QString& text, const QKeySequence& sc,
                       std::function<void()> fn) {
@@ -418,7 +419,7 @@ void MainWindow::buildMenus() {
     tools->addAction(toolActions_[ToolId::Tape]);
     tools->addSeparator();
     QMenu* terraform = tools->addMenu(Icons::get("mountain"), QStringLiteral("Terra&form"));
-    for (ToolId id : {ToolId::Mountain, ToolId::Pit, ToolId::Flatten}) terraform->addAction(toolActions_[id]);
+    for (ToolId id : {ToolId::Mountain, ToolId::Pit, ToolId::Flatten, ToolId::TextureBrush}) terraform->addAction(toolActions_[id]);
     tools->addSeparator();
     tools->addAction(acts_["roundcorners"]);
     tools->addAction(acts_["traceimage"]);
@@ -508,7 +509,7 @@ void MainWindow::buildToolbars() {
         {-4, -5},
         {-2, -2},
         {(int)ToolId::Mountain, (int)ToolId::Pit},
-        {(int)ToolId::Flatten, -1},
+        {(int)ToolId::Flatten, (int)ToolId::TextureBrush},
         {-2, -2},
         {(int)ToolId::Orbit, (int)ToolId::Pan},
         {(int)ToolId::Zoom, (int)ToolId::ZoomWindow},
@@ -554,7 +555,9 @@ void MainWindow::buildTray() {
     styles_ = new StylesPanel(&doc_, viewport_, tray);
     instructor_ = new InstructorPanel(tray);
     terrain_ = new TerrainPanel(&doc_, viewport_,
-                                {toolActions_[ToolId::Mountain], toolActions_[ToolId::Pit], toolActions_[ToolId::Flatten]}, tray);
+                                {toolActions_[ToolId::Mountain], toolActions_[ToolId::Pit], toolActions_[ToolId::Flatten],
+                                 toolActions_[ToolId::TextureBrush]},
+                                tray);
     sections_["Entity Info"] = tray->addSection(QStringLiteral("Entity Info"), entityInfo_, true);
     sections_["Terraform"] = tray->addSection(QStringLiteral("Terraform"), terrain_, false);
     sections_["Materials"] = tray->addSection(QStringLiteral("Materials"), materials_, true);
@@ -896,18 +899,27 @@ void MainWindow::copySelection(bool cut) {
     for (Face& f : m.faces) clipFaces.push_back(&f);
     for (ComponentDef& d : clip.defs)
         for (Face& f : d.mesh.faces) clipFaces.push_back(&f);
+    auto mapMaterial = [&](Id& mat) {
+        if (mat < 0 || mat >= (Id)doc_.state.materials.size()) {
+            mat = kNone;
+            return;
+        }
+        auto it = matMap.find(mat);
+        if (it == matMap.end()) {
+            it = matMap.emplace(mat, (Id)clip.materials.size()).first;
+            clip.materials.push_back(doc_.state.materials[mat]);
+        }
+        mat = it->second;
+    };
     for (Face* fp : clipFaces)
-        for (FaceSide* s : {&fp->front, &fp->back}) {
-            if (s->material < 0 || s->material >= (Id)doc_.state.materials.size()) {
-                s->material = kNone;
-                continue;
-            }
-            auto it = matMap.find(s->material);
-            if (it == matMap.end()) {
-                it = matMap.emplace(s->material, (Id)clip.materials.size()).first;
-                clip.materials.push_back(doc_.state.materials[s->material]);
-            }
-            s->material = it->second;
+        for (FaceSide* s : {&fp->front, &fp->back}) mapMaterial(s->material);
+    // Textures painted with the Texture Brush.
+    std::vector<Mesh*> clipMeshes = {&m};
+    for (ComponentDef& d : clip.defs) clipMeshes.push_back(&d.mesh);
+    for (Mesh* cm : clipMeshes)
+        for (Vertex& v : cm->vertices) {
+            for (PaintWeight& w : v.paint) mapMaterial(w.material);
+            std::erase_if(v.paint, [](const PaintWeight& w) { return w.material == kNone; });
         }
     const size_t count = m.faces.size() + m.edges.size() + clip.instances.size();
     auto* md = new QMimeData;
@@ -966,7 +978,11 @@ void MainWindow::paste() {
     // Pasted vertices stay separate from the model (no weld): the paste lands
     // in place and is moved next; the move welds wherever it is dropped.
     std::vector<Id> vmap(c.mesh.vertices.size());
-    for (size_t i = 0; i < c.mesh.vertices.size(); ++i) vmap[i] = m.addVertexRaw(c.mesh.vertices[i].p);
+    for (size_t i = 0; i < c.mesh.vertices.size(); ++i) {
+        vmap[i] = m.addVertexRaw(c.mesh.vertices[i].p);
+        for (PaintWeight w : c.mesh.vertices[i].paint)
+            if ((w.material = mapMat(w.material)) != kNone) m.vertices[vmap[i]].paint.push_back(w);
+    }
     Selection sel;
     std::map<Id, Id> curveMap;
     for (const Edge& e : c.mesh.edges) {
@@ -1005,6 +1021,11 @@ void MainWindow::paste() {
         for (Face& f : cd.mesh.faces) {
             f.front.material = mapMat(f.front.material);
             f.back.material = mapMat(f.back.material);
+        }
+    for (ComponentDef& cd : c.defs)
+        for (Vertex& v : cd.mesh.vertices) {
+            for (PaintWeight& w : v.paint) w.material = mapMat(w.material);
+            std::erase_if(v.paint, [](const PaintWeight& w) { return w.material == kNone; });
         }
     std::vector<Id> defMap(c.defs.size(), kNone);
     for (const Instance& in : c.instances) {

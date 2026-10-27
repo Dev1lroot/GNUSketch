@@ -94,6 +94,12 @@ include its output in the bug report.
   **Ctrl+wheel** changes the radius, **Alt+wheel** the hardness.
   Textures run across the sculpted triangles without seams: they keep projecting
   the way the original face did (saved in the file as the face side's `axis`).
+* **Texture Brush** (Terraform group): paints the material chosen in Materials over
+  any surface, on top of its own texture, with the shared Radius and Hardness
+  (Ctrl/Alt+wheel). Painting another material over it mixes them; painting with
+  the Default material erases. Paint is stored per vertex as blend weights (the
+  faces under the brush are subdivided to carry it) and saved in `.gsketch`;
+  OBJ/glTF/STL exports show only the faces' own materials.
   Vertices shared with untouched faces stay put, so neighbouring walls stay flat.
 
 ## Tools (SketchUp-compatible shortcuts)
@@ -110,7 +116,7 @@ include its output in the bug report.
 | O / H / Z | Orbit / Pan / Zoom | Shift+Z | Zoom Extents |
 
 Also Freehand, Zoom Window, **Follow Me**, **Round Corners** and the **Terraform**
-brushes (Tools menu and the
+brushes and Texture Brush (Tools menu and the
 tool set; no shortcut keys). Middle mouse orbits and Shift+middle pans with any
 tool. The wheel zooms towards the cursor; double-clicking the middle button
 re-centres the view.

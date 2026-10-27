@@ -1040,6 +1040,55 @@ int main() {
         CHECK(maxSeam(m) < 1e-9);
     });
 
+    test("texture brush: paint weights mix and erase", [] {
+        Vertex v;
+        paintVertex(v, 3, 0.5);
+        CHECK(v.paint.size() == 1 && std::fabs(v.paint[0].weight - 0.5f) < 1e-6);
+        paintVertex(v, 7, 0.5); // mixes: 3 fades to 0.25, 7 gets 0.5
+        float w3 = 0, w7 = 0, sum = 0;
+        for (auto& w : v.paint) { sum += w.weight; if (w.material == 3) w3 = w.weight; if (w.material == 7) w7 = w.weight; }
+        CHECK(std::fabs(w3 - 0.25f) < 1e-6 && std::fabs(w7 - 0.5f) < 1e-6 && sum <= 1.0f + 1e-6);
+        for (int i = 0; i < 40; ++i) paintVertex(v, 7, 0.5);
+        CHECK(v.paint.size() == 1 && v.paint[0].material == 7 && v.paint[0].weight > 0.999f);
+        for (int i = 0; i < 40; ++i) paintVertex(v, kNone, 0.5);
+        CHECK(v.paint.empty());
+    });
+
+    test("texture brush: stroke paints over a textured face without moving it", [] {
+        Mesh m;
+        rect(m, 0, 0, 10, 10);
+        Id f = onlyFace(m);
+        m.faces[f].front.material = m.faces[f].back.material = 1; // the face's own texture
+        TerrainBrush b;
+        b.radius = 2;
+        b.hardness = 0.5;
+        TerrainStroke s(TerrainMode::Paint, b);
+        s.setPaintMaterial(2);
+        const Vec3 c(5, 5, 0);
+        CHECK(s.begin(m, c, f, Vec3(0, 0, 1)));
+        for (int i = 0; i < 10; ++i) s.apply(m, c, 0.05);
+        double maxZ = 0, centre = 0, outside = 0;
+        for (const Vertex& v : m.vertices) {
+            if (!v.alive) continue;
+            maxZ = std::max(maxZ, std::fabs(v.p.z));
+            float w = 0;
+            for (auto& pw : v.paint) if (pw.material == 2) w = pw.weight;
+            double d = (v.p - c).length();
+            if (d < 0.5) centre = std::max(centre, (double)w);
+            if (d > 2.0) outside = std::max(outside, (double)w);
+        }
+        CHECK(maxZ == 0);
+        CHECK(centre > 0.7);
+        CHECK(outside == 0);
+        int painted = 0;
+        for (const Face& F : m.faces)
+            if (F.alive) { CHECK(F.front.material == 1 && F.outer.size() == 3); ++painted; }
+        CHECK(painted > 100); // subdivided so the soft edge has vertices
+        // Split edges inherit the blend of their ends.
+        s.finish(m, c);
+        for (Id e = 0; e < (Id)m.edges.size(); ++e) CHECK(m.edges[e].alive);
+    });
+
     test("terrain: walls on the plane stay planar", [] {
         Mesh m;
         rect(m, 0, 0, 4, 4);

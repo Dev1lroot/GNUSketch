@@ -66,7 +66,12 @@ QJsonObject meshToJson(const Mesh& meshIn) {
     mesh.compact();
     QJsonObject root;
     QJsonArray verts, edges, faces;
-    for (const Vertex& v : mesh.vertices) verts.append(vec(v.p));
+    QJsonArray paint;
+    for (Id i = 0; i < (Id)mesh.vertices.size(); ++i) {
+        const Vertex& v = mesh.vertices[i];
+        verts.append(vec(v.p));
+        for (const PaintWeight& w : v.paint) paint.append(QJsonArray{i, w.material, w.weight});
+    }
     for (const Edge& e : mesh.edges) {
         QJsonObject o;
         o["v"] = QJsonArray{e.v[0], e.v[1]};
@@ -93,6 +98,7 @@ QJsonObject meshToJson(const Mesh& meshIn) {
     root["vertices"] = verts;
     root["edges"] = edges;
     root["faces"] = faces;
+    if (!paint.isEmpty()) root["paint"] = paint;
     root["nextCurve"] = mesh.nextCurve();
     return root;
 }
@@ -105,6 +111,14 @@ bool meshFromJson(const QJsonObject& root, Mesh& mesh) {
         mesh.vertices.push_back(vx);
     }
     const Id nv = (Id)mesh.vertices.size();
+    for (const auto& pj : root["paint"].toArray()) {
+        QJsonArray a = pj.toArray();
+        if (a.size() != 3) continue;
+        Id v = a[0].toInt(-1);
+        float w = (float)a[2].toDouble();
+        if (v < 0 || v >= nv || w <= 0) continue;
+        mesh.vertices[v].paint.push_back({a[1].toInt(kNone), std::min(w, 1.0f)});
+    }
     for (const auto& ej : root["edges"].toArray()) {
         QJsonObject o = ej.toObject();
         QJsonArray va = o["v"].toArray();

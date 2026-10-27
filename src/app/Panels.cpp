@@ -1032,6 +1032,9 @@ void InstructorPanel::showTool(ToolId id) {
         "Shift: vertical axis only &nbsp; Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Settings: Window &gt; Terraform &nbsp; Esc: cancel the stroke"}; break;
     case ToolId::Pit: i = {"Pit", "Sinks the surface under the brush: the opposite of Mountain.",
         "Press and hold on a face; drag to dig a trench.", "Shift: vertical axis only &nbsp; Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
+    case ToolId::TextureBrush: i = {"Texture Brush", "Paints the material chosen in the Materials panel over any surface, on top of the textures already there, so materials blend into each other with a soft edge.",
+        "Choose a material (colour or texture) in Materials, then press and hold on a surface and drag. Paint more of another material to mix it in; choose the Default material to erase painted textures. Faces under the brush are subdivided into a fine smooth mesh to carry the paint.",
+        "Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
     case ToolId::Flatten: i = {"Flatten", "Levels the surface around the brush to the height of the point where you start.",
         "Press on the height you want to keep, hold and drag over the bumps to flatten them.", "Shift: vertical axis only &nbsp; Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
     }

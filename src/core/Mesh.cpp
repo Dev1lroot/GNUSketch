@@ -1210,6 +1210,7 @@ void Mesh::duplicate(const std::set<Id>& faceIds, const std::set<Id>& edgeIds, s
         auto it = vm.find(v);
         if (it != vm.end()) return it->second;
         Id nv = addVertexRaw(pos(v));
+        vertices[nv].paint = vertices[v].paint;
         vm[v] = nv;
         newVerts.insert(nv);
         return nv;
@@ -1400,6 +1401,11 @@ Vec2 faceTexCoord(const Face& f, bool frontSide, const Vec3& p, const Material* 
         Vec3 d = p - s.tex.origin;
         return {d.dot(s.tex.u), d.dot(s.tex.v)};
     }
+    return projectedTexCoord(f, frontSide, p, m);
+}
+
+Vec2 projectedTexCoord(const Face& f, bool frontSide, const Vec3& p, const Material* m) {
+    const FaceSide& s = frontSide ? f.front : f.back;
     Vec3 n = s.axis.length2() > 0.5 ? s.axis : (frontSide ? f.normal : -f.normal);
     Vec3 u, v;
     planeBasis(n, u, v);

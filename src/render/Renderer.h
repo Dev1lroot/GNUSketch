@@ -71,6 +71,7 @@ private:
         Id matFront = kNone, matBack = kNone;
         bool texFront = false, texBack = false;
         bool transparent = false;
+        bool paint = false; // Texture Brush layer, blended over the faces below
     };
     struct GpuTex {
         unsigned id = 0;

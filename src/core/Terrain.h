@@ -15,7 +15,7 @@
 
 namespace gs {
 
-enum class TerrainMode { Raise, Lower, Flatten };
+enum class TerrainMode { Raise, Lower, Flatten, Paint };
 
 struct TerrainBrush {
     double radius = 1.0;   // meters
@@ -32,6 +32,10 @@ double terrainFalloff(double d, double radius, double hardness);
 // texture mappings and the front side carry over). f itself becomes the first
 // triangle. Returns the triangles; a triangle face returns {f}.
 std::vector<Id> triangulateFace(Mesh& m, Id f);
+
+// Adds `amount` (0..1) of material `mat` to a vertex's painted textures,
+// fading the others; mat == kNone fades everything (erases).
+void paintVertex(Vertex& v, Id mat, double amount);
 
 // Brush direction at a surface point: the area-weighted normal of the faces
 // under the brush, on the side of `toViewer`.
@@ -53,6 +57,8 @@ public:
     void finish(Mesh& m, const Vec3& center) { refine(m, center); }
 
     const Vec3& direction() const { return dir_; }
+    // Material the Paint mode lays down (kNone erases painted textures).
+    void setPaintMaterial(Id mat) { paintMat_ = mat; }
     // Changes radius/force/hardness for the rest of the stroke.
     void setBrush(const TerrainBrush& b) { brush_ = b; }
     // Overrides the brush direction (e.g. locked to the vertical axis).
@@ -63,6 +69,7 @@ private:
     void refine(Mesh& m, const Vec3& c, Id forceFace = kNone);
     void buildAdjacency(const Mesh& m);
     void shareTextureAxis(Mesh& m, Id start);
+    void paint(Mesh& m, const Vec3& c, double dt, const std::vector<char>& paintable);
     void refineEdge(Mesh& m, Id e, int depth);
     void bisect(Mesh& m, Id e);
     Id longestEdge(const Mesh& m, Id f) const;
@@ -73,6 +80,7 @@ private:
     Vec3 dir_ = Vec3(0, 0, 1), origin_;
     std::vector<std::vector<Id>> edgeFaces_;
     int splitBudget_ = 0;
+    Id paintMat_ = kNone;
 };
 
 } // namespace gs

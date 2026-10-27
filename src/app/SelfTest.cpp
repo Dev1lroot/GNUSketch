@@ -774,6 +774,46 @@ int runSelfTest(MainWindow& w) {
             d.check(std::fabs(TerrainSettings::instance().brush().hardness - (h0 - 0.1)) < 1e-9, "Alt+wheel lowers the hardness");
         }
 
+        // Texture Brush: paint a red material over the (sculpted) plane.
+        {
+            vp->camera().setStandardView(Vec3(0.3, 0.4, -1), Vec3(0, 0, 1));
+            vp->camera().zoomExtents(Vec3(300, 0, 0), Vec3(310, 10, 1));
+            d.pump();
+            Material red;
+            red.name = "Brush Red";
+            red.color = Color::rgb8(230, 0, 0);
+            doc.currentMaterial = doc.addMaterial(red);
+            b.radius = 1.5;
+            b.hardness = 0.6;
+            TerrainSettings::instance().setBrush(b);
+            vp->setTool(ToolId::TextureBrush);
+            const Vec3 spot(307, 2.5, 0);
+            double z = 0;
+            for (const Vertex& v : d.mesh().vertices)
+                if (v.alive && (v.p - spot).length() < 0.3) z = v.p.z;
+            const Vec3 at(spot.x, spot.y, z);
+            QPointF px = d.screen(at);
+            vp->update();
+            QColor before = vp->grabFramebuffer().pixelColor(px.toPoint());
+            std::vector<Vec3> pos;
+            for (const Vertex& v : d.mesh().vertices) pos.push_back(v.p);
+            d.move(QPointF(5, 5)); // no brush ring over the sampled pixel
+            hold(at, 400);
+            d.move(QPointF(5, 5));
+            bool still = true;
+            for (size_t i = 0; i < pos.size(); ++i) still = still && d.mesh().vertices[i].p.nearlyEquals(pos[i], 1e-12);
+            float w = 0;
+            for (const Vertex& v : d.mesh().vertices)
+                if (v.alive && (v.p - at).length() < 0.3)
+                    for (const PaintWeight& pw : v.paint)
+                        if (pw.material == doc.currentMaterial) w = std::max(w, pw.weight);
+            d.check(still && w > 0.6 && doc.undoName() == "Texture Brush", "Texture Brush paints the chosen material without moving geometry");
+            vp->update();
+            QColor after = vp->grabFramebuffer().pixelColor(px.toPoint());
+            d.check(after.red() - after.green() > before.red() - before.green() + 60, "painted material shows in the viewport");
+            doc.currentMaterial = kNone;
+        }
+
         TerrainSettings::instance().setBrush(userBrush);
         vp->camera() = savedCam;
         vp->setTool(ToolId::Select);

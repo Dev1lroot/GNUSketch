@@ -39,9 +39,17 @@ struct FaceSide {
     Vec3 axis;
 };
 
+// Texture painted onto the surface around a vertex (Texture Brush). Weights
+// of one vertex add up to at most 1; the rest shows the faces' own material.
+struct PaintWeight {
+    Id material = kNone;
+    float weight = 0;
+};
+
 struct Vertex {
     Vec3 p;
     bool alive = true;
+    std::vector<PaintWeight> paint;
 };
 
 struct Edge {
@@ -218,6 +226,9 @@ public:
 // Texture coordinate for a point on a face side (default world-aligned
 // projection unless the side has an explicit mapping).
 Vec2 faceTexCoord(const Face& f, bool frontSide, const Vec3& p, const Material* m);
+// The default projection only (ignores an explicit mapping): how a texture
+// painted over the face with the Texture Brush lies on it.
+Vec2 projectedTexCoord(const Face& f, bool frontSide, const Vec3& p, const Material* m);
 // Explicit mapping that stretches one copy of the texture over the face extents.
 TexMap fitTextureToFace(const Mesh& mesh, Id f, bool frontSide);
 

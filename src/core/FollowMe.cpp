@@ -182,6 +182,7 @@ bool followMe(Mesh& m, Id profile, const std::set<Id>& pathIn, std::string* erro
     // ---- build ------------------------------------------------------------------
     FaceSide front = P.front, back = P.back;
     front.tex.valid = back.tex.valid = false;
+    front.axis = back.axis = Vec3();
     std::vector<std::vector<std::vector<Id>>> ids(nv);
     for (int i = 0; i < nv; ++i)
         for (const auto& r : rings[i]) {

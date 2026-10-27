@@ -55,7 +55,7 @@ double terrainFalloff(double d, double radius, double hardness) {
 
 std::vector<Id> triangulateFace(Mesh& m, Id f) {
     if (f < 0 || f >= (Id)m.faces.size() || !m.faces[f].alive) return {};
-    const Face proto = m.faces[f];
+    Face proto = m.faces[f];
     if (proto.outer.size() == 3 && proto.holes.empty()) return {f};
 
     std::vector<Id> ids = proto.outer;
@@ -81,6 +81,10 @@ std::vector<Id> triangulateFace(Mesh& m, Id f) {
 
     std::vector<std::array<int, 3>> tris = triangulatePolygon(loops);
     if (tris.empty()) return {f};
+    // Every triangle keeps projecting the texture the way the whole face did,
+    // so it stays continuous however the triangles tilt later.
+    if (proto.front.axis.length2() < 0.5) proto.front.axis = proto.normal;
+    if (proto.back.axis.length2() < 0.5) proto.back.axis = -proto.normal;
 
     // Collinear boundary vertices produce zero-area ears; flip them away
     // against their neighbour so no slit opens when the vertices move.
@@ -193,7 +197,46 @@ bool TerrainStroke::begin(Mesh& m, const Vec3& hit, Id face, const Vec3& toViewe
     }
     origin_ = hit;
     refine(m, hit, face);
+    shareTextureAxis(m, face);
     return true;
+}
+
+void TerrainStroke::shareTextureAxis(Mesh& m, Id start) {
+    // Triangles sculpted before texture axes existed project along their own
+    // tilted normals, which shows seams. Give the connected triangles without
+    // an axis the nearest world axis (the ground's, usually) instead.
+    if (!isTri(m, start)) return;
+    Vec3 axis;
+    {
+        const Vec3 n = m.faces[start].normal;
+        int best = 0;
+        for (int i = 1; i < 3; ++i)
+            if (std::fabs(dir_[i]) > std::fabs(dir_[best])) best = i;
+        axis[best] = n[best] < 0 ? -1 : 1;
+    }
+    std::vector<char> seen(m.faces.size(), 0);
+    std::vector<Id> stack = {start};
+    seen[start] = 1;
+    while (!stack.empty()) {
+        const Id f = stack.back();
+        stack.pop_back();
+        Face& F = m.faces[f];
+        if (F.front.axis.length2() < 0.5) F.front.axis = axis;
+        if (F.back.axis.length2() < 0.5) F.back.axis = -axis;
+        for (size_t i = 0; i < 3; ++i) {
+            const Id e = m.findEdge(F.outer[i], F.outer[(i + 1) % 3]);
+            if (e == kNone) continue;
+            for (Id g : edgeFaces_[e]) {
+                if (seen[g] || !isTri(m, g)) continue;
+                seen[g] = 1;
+                const Face& G = m.faces[g];
+                // Only spread through triangles that still lack an axis.
+                if (G.front.axis.length2() > 0.5 && G.back.axis.length2() > 0.5) continue;
+                stack.push_back(g);
+            }
+        }
+    }
+    m.touch();
 }
 
 bool TerrainStroke::isTri(const Mesh& m, Id f) const {

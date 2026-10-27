@@ -41,6 +41,7 @@ QJsonObject sideToJson(const FaceSide& s) {
         uv["v"] = vec(s.tex.v);
         o["uv"] = uv;
     }
+    if (s.axis.length2() > 0.5) o["axis"] = vec(s.axis);
     return o;
 }
 
@@ -54,6 +55,7 @@ FaceSide sideFromJson(const QJsonObject& o) {
         s.tex.u = vec(uv["u"]);
         s.tex.v = vec(uv["v"]);
     }
+    if (o.contains("axis")) s.axis = vec(o["axis"]).normalized();
     return s;
 }
 

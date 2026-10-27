@@ -92,6 +92,8 @@ include its output in the bug report.
   section; type a value while a Terraform tool is active to set the radius. Hold
   **Shift** to keep the brush on the vertical axis instead of the surface normal.
   **Ctrl+wheel** changes the radius, **Alt+wheel** the hardness.
+  Textures run across the sculpted triangles without seams: they keep projecting
+  the way the original face did (saved in the file as the face side's `axis`).
   Vertices shared with untouched faces stay put, so neighbouring walls stay flat.
 
 ## Tools (SketchUp-compatible shortcuts)

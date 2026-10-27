@@ -33,6 +33,10 @@ struct TexMap {
 struct FaceSide {
     Id material = kNone;
     TexMap tex; // explicit mapping (invalid = default world-aligned projection)
+    // Direction the default projection looks along (zero = this side's normal).
+    // Faces of a sculpted terrain share one axis so the texture runs across
+    // their triangles without seams.
+    Vec3 axis;
 };
 
 struct Vertex {

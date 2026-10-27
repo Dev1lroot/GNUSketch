@@ -150,6 +150,7 @@ void appendMesh(Mesh& dst, const Mesh& src, const Mat4& xf, const std::set<Id>* 
         N.hidden = F.hidden;
         if (!identity)
             for (FaceSide* s : {&N.front, &N.back}) {
+                if (s->axis.length2() > 0.5) s->axis = xf.transformDir(s->axis).normalized();
                 if (!s->tex.valid) continue;
                 s->tex.origin = xf.transformPoint(s->tex.origin);
                 s->tex.u = transformCovector(xf, s->tex.u);

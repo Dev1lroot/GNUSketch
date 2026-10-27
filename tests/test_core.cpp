@@ -5,6 +5,7 @@
 #include "core/Mesh.h"
 #include "core/RoundCorners.h"
 #include "core/Terrain.h"
+#include "core/Material.h"
 #include "core/FollowMe.h"
 #include "core/ImageTrace.h"
 #include "core/Triangulate.h"
@@ -992,6 +993,51 @@ int main() {
         }
         CHECK(xyFixed);
         CHECK(rose);
+    });
+
+    test("terrain: texture stays continuous across sculpted triangles", [] {
+        // UVs of each shared vertex must agree between the faces on both sides
+        // of every edge (front and back), otherwise the texture shows seams.
+        auto maxSeam = [](const Mesh& m) {
+            Material mat;
+            mat.texture.worldWidth = 0.5;
+            mat.texture.worldHeight = 0.5;
+            double worst = 0;
+            for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+                if (!m.edges[e].alive) continue;
+                const auto& fs = m.edgeFaces(e);
+                if (fs.size() != 2) continue;
+                for (Id v : m.edges[e].v)
+                    for (bool front : {true, false}) {
+                        Vec2 a = faceTexCoord(m.faces[fs[0]], front, m.pos(v), &mat);
+                        Vec2 b = faceTexCoord(m.faces[fs[1]], front, m.pos(v), &mat);
+                        worst = std::max(worst, (a - b).length());
+                    }
+            }
+            return worst;
+        };
+        Mesh m;
+        rect(m, -5, -5, 5, 5);
+        Id f = onlyFace(m);
+        TerrainBrush b;
+        b.radius = 2;
+        b.force = 1;
+        TerrainStroke s(TerrainMode::Raise, b);
+        CHECK(s.begin(m, Vec3(0, 0, 0), f, Vec3(0, 0, 1)));
+        for (int i = 0; i < 20; ++i) s.apply(m, Vec3(0.1 * i, 0, 0), 0.05);
+        s.finish(m, Vec3(2, 0, 0));
+        CHECK(maxSeam(m) < 1e-9);
+
+        // Terrain sculpted before axes existed heals on the next stroke.
+        for (Face& F : m.faces) F.front.axis = F.back.axis = Vec3();
+        CHECK(maxSeam(m) > 1e-3);
+        Id hit = kNone;
+        for (Id i = 0; i < (Id)m.faces.size(); ++i)
+            if (m.faces[i].alive && m.pointInFace(i, Vec3(4.5, 4.5, 0))) hit = i;
+        TerrainStroke again(TerrainMode::Lower, b);
+        CHECK(again.begin(m, Vec3(4.5, 4.5, 0), hit, Vec3(0, 0, 1)));
+        again.apply(m, Vec3(4.5, 4.5, 0), 0.1);
+        CHECK(maxSeam(m) < 1e-9);
     });
 
     test("terrain: walls on the plane stay planar", [] {

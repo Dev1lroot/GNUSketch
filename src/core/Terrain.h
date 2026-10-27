@@ -62,6 +62,7 @@ public:
 private:
     void refine(Mesh& m, const Vec3& c, Id forceFace = kNone);
     void buildAdjacency(const Mesh& m);
+    void shareTextureAxis(Mesh& m, Id start);
     void refineEdge(Mesh& m, Id e, int depth);
     void bisect(Mesh& m, Id e);
     Id longestEdge(const Mesh& m, Id f) const;

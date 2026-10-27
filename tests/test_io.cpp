@@ -51,6 +51,22 @@ int main(int argc, char** argv) {
     QTemporaryDir dir;
 
     {
+        // Texture projection axes (sculpted terrain) survive saving.
+        Document d;
+        d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 1, 0}, {0, 1, 0}}, true);
+        for (Face& f : d.mesh().faces)
+            if (f.alive) { f.front.axis = Vec3(0, 0, 1); f.back.axis = Vec3(0, 0, -1); }
+        QString p = dir.filePath("axis.gsketch");
+        CHECK(saveNative(d, p, {}));
+        Document e;
+        CHECK(loadNative(e, p, nullptr));
+        int axes = 0;
+        for (const Face& f : e.mesh().faces)
+            axes += f.alive && f.front.axis.nearlyEquals(Vec3(0, 0, 1)) && f.back.axis.nearlyEquals(Vec3(0, 0, -1));
+        CHECK(axes == 1);
+    }
+
+    {
         Document d;
         makeModel(d);
         QString p = dir.filePath("a.gsketch");

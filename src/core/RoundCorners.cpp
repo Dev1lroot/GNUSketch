@@ -316,6 +316,7 @@ bool roundCorners(Mesh& m, const std::set<Id>& edgeSet, double R, int N, std::st
                 nf.front = m.faces[both->f].front;
                 nf.back = m.faces[both->f].back;
                 nf.front.tex.valid = nf.back.tex.valid = false;
+                nf.front.axis = nf.back.axis = Vec3();
                 extra.push_back(std::move(nf));
             }
         } else {
@@ -351,6 +352,7 @@ bool roundCorners(Mesh& m, const std::set<Id>& edgeSet, double R, int N, std::st
                 nf.front = m.faces[cs[0].f].front;
                 nf.back = m.faces[cs[0].f].back;
                 nf.front.tex.valid = nf.back.tex.valid = false;
+                nf.front.axis = nf.back.axis = Vec3();
                 extra.push_back(std::move(nf));
                 softPairs.emplace_back(p, q);
                 softPairs.emplace_back(q, r);
@@ -376,6 +378,7 @@ bool roundCorners(Mesh& m, const std::set<Id>& edgeSet, double R, int N, std::st
             nf.front = m.faces[F.f[0]].front;
             nf.back = m.faces[F.f[0]].back;
             nf.front.tex.valid = nf.back.tex.valid = false;
+            nf.front.axis = nf.back.axis = Vec3();
             std::vector<Vec3> quad = {pa[i], pa[i + 1], pb[i + 1], pb[i]};
             Vec3 qn = polyNormal({pa[i], pa[i + 1], pb[i + 1]}).normalized();
             if (std::fabs((pb[i] - pa[i]).dot(qn)) > kTol) {

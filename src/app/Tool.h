@@ -55,6 +55,9 @@ public:
     virtual bool keyPress(QKeyEvent* e);
     virtual bool keyRelease(QKeyEvent* e);
     virtual bool vcbEnter(const QString&) { return false; }
+    // Mouse wheel (steps of one notch, positive = away from the user). Return
+    // true to consume it instead of zooming.
+    virtual bool wheel(double /*steps*/, Qt::KeyboardModifiers) { return false; }
     virtual void buildPreview(Preview&) {}
     virtual void paintOverlay(QPainter&) {}
     virtual QCursor cursor() const;

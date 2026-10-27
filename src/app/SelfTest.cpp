@@ -18,6 +18,7 @@
 #include <QImage>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
@@ -679,15 +680,15 @@ int runSelfTest(MainWindow& w) {
         vp->camera().setStandardView(Vec3(0.3, 0.4, -1), Vec3(0, 0, 1));
         vp->camera().zoomExtents(Vec3(300, 0, 0), Vec3(310, 10, 1));
         d.pump();
-        auto hold = [&](const Vec3& at, int ms, bool escape = false) {
+        auto hold = [&](const Vec3& at, int ms, bool escape = false, Qt::KeyboardModifiers mods = Qt::NoModifier) {
             QPointF p = d.screen(at);
-            d.move(p);
-            d.send(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+            d.move(p, Qt::NoButton, mods);
+            d.send(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton, mods);
             QElapsedTimer t;
             t.start();
             while (t.elapsed() < ms) QApplication::processEvents(QEventLoop::AllEvents, 10);
             if (escape) d.key(Qt::Key_Escape);
-            d.send(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+            d.send(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton, mods);
             d.pump();
         };
         auto zRange = [&](double& lo, double& hi) {
@@ -732,6 +733,46 @@ int runSelfTest(MainWindow& w) {
         zRange(lo, hi);
         d.check(std::fabs(lo) < 1e-6 && std::fabs(hi) < 1e-6 && doc.undoName() == "Flatten",
                 "Flatten levels the terrain to the height where the stroke started");
+
+        // Shift keeps the brush vertical on a slope: nothing moves sideways.
+        doc.beginOp("Terrain slope");
+        d.mesh().drawPolyline({{320, 0, 0}, {330, 0, 0}, {330, 10, 5}, {320, 10, 5}}, true);
+        doc.commitOp();
+        vp->camera().zoomExtents(Vec3(320, 0, 0), Vec3(330, 10, 5));
+        d.pump();
+        b.radius = 2;
+        b.force = 1;
+        TerrainSettings::instance().setBrush(b);
+        std::vector<Vec3> before;
+        for (const Vertex& v : d.mesh().vertices) before.push_back(v.p);
+        vp->setTool(ToolId::Mountain);
+        hold(Vec3(325, 5, 2.5), 250, false, Qt::ShiftModifier);
+        bool sideways = false, rose = false;
+        for (size_t i = 0; i < d.mesh().vertices.size(); ++i) {
+            const Vertex& v = d.mesh().vertices[i];
+            if (!v.alive || v.p.x < 319.99) continue;
+            const Vec3 o = i < before.size() ? before[i] : Vec3(v.p.x, v.p.y, v.p.y * 0.5);
+            sideways = sideways || std::fabs(v.p.y - o.y) > 1e-9 || std::fabs(v.p.x - o.x) > 1e-9;
+            rose = rose || v.p.z - v.p.y * 0.5 > 0.1;
+        }
+        d.check(rose && !sideways, "Shift keeps Mountain on the vertical axis on a slope");
+
+        // Ctrl+wheel scales the radius, Alt+wheel steps the hardness; the camera stays put.
+        {
+            const Camera camBefore = vp->camera();
+            QPointF p = d.screen(Vec3(325, 5, 2.5));
+            auto wheel = [&](int dy, Qt::KeyboardModifiers m) {
+                QWheelEvent we(p, vp->mapToGlobal(p.toPoint()), QPoint(), QPoint(0, dy), Qt::NoButton, m, Qt::NoScrollPhase, false);
+                QApplication::sendEvent(vp, &we);
+                d.pump();
+            };
+            wheel(120, Qt::ControlModifier);
+            d.check(std::fabs(TerrainSettings::instance().brush().radius - 2.2) < 1e-9 && vp->camera().eye.nearlyEquals(camBefore.eye),
+                    "Ctrl+wheel grows the terrain brush radius without zooming");
+            const double h0 = TerrainSettings::instance().brush().hardness;
+            wheel(-240, Qt::AltModifier);
+            d.check(std::fabs(TerrainSettings::instance().brush().hardness - (h0 - 0.1)) < 1e-9, "Alt+wheel lowers the hardness");
+        }
 
         TerrainSettings::instance().setBrush(userBrush);
         vp->camera() = savedCam;

@@ -968,6 +968,32 @@ int main() {
         CHECK(dev < 1e-9);
     });
 
+    test("terrain: vertical lock on a slope", [] {
+        Mesh m;
+        m.drawPolyline({{0, 0, 0}, {10, 0, 0}, {10, 10, 5}, {0, 10, 5}}, true);
+        Id f = onlyFace(m);
+        TerrainBrush b;
+        b.radius = 2;
+        b.force = 1;
+        TerrainStroke s(TerrainMode::Raise, b);
+        const Vec3 hit(5, 5, 2.5);
+        CHECK(s.begin(m, hit, f, Vec3(0, 0, 1)));
+        CHECK(std::fabs(s.direction().y) > 0.1); // follows the slope by default
+        s.setDirection(terrainVertical(s.direction()));
+        CHECK(s.direction().z > 0.999);
+        std::vector<Vec3> before;
+        for (const Vertex& v : m.vertices) before.push_back(v.p);
+        s.apply(m, hit, 0.5);
+        bool xyFixed = true, rose = false;
+        for (size_t i = 0; i < before.size(); ++i) {
+            const Vec3 d = m.vertices[i].p - before[i];
+            xyFixed = xyFixed && std::fabs(d.x) < 1e-12 && std::fabs(d.y) < 1e-12;
+            rose = rose || d.z > 0.4;
+        }
+        CHECK(xyFixed);
+        CHECK(rose);
+    });
+
     test("terrain: walls on the plane stay planar", [] {
         Mesh m;
         rect(m, 0, 0, 4, 4);

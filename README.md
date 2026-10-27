@@ -89,7 +89,9 @@ include its output in the bug report.
   that keeps subdividing wherever triangles stretch, so it stays smooth. Brushes
   work in any direction (on walls and slopes too). Radius (shown on the cursor),
   Force (cm per second of holding) and Hardness are set in the Terraform tray
-  section; type a value while a Terraform tool is active to set the radius.
+  section; type a value while a Terraform tool is active to set the radius. Hold
+  **Shift** to keep the brush on the vertical axis instead of the surface normal.
+  **Ctrl+wheel** changes the radius, **Alt+wheel** the hardness.
   Vertices shared with untouched faces stay put, so neighbouring walls stay flat.
 
 ## Tools (SketchUp-compatible shortcuts)

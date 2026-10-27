@@ -3,6 +3,7 @@
 
 #include "Viewport.h"
 
+#include <QKeyEvent>
 #include <QSettings>
 #include <QTimer>
 
@@ -16,6 +17,10 @@ constexpr int kTickMs = 33;
 // A click without holding still applies this much brushing.
 constexpr double kMinStroke = 1.0 / 30.0;
 constexpr int kCircleSegments = 64;
+// Ctrl+wheel scales the radius by this factor per notch; Alt+wheel changes
+// the hardness by this much.
+constexpr double kRadiusStep = 1.1;
+constexpr double kHardnessStep = 0.05;
 
 } // namespace
 
@@ -65,7 +70,7 @@ QString TerrainTool::status() const {
     QString what = mode() == TerrainMode::Raise   ? QStringLiteral("raise a mountain")
                    : mode() == TerrainMode::Lower ? QStringLiteral("sink a pit")
                                                   : QStringLiteral("flatten to the height under the cursor");
-    return QStringLiteral("Press and hold on a surface to %1. Radius %2, force %3 cm/s, hardness %4%. Type a radius.")
+    return QStringLiteral("Press and hold on a surface to %1. Radius %2, force %3 cm/s, hardness %4%. Shift: vertical only. Ctrl+wheel: radius, Alt+wheel: hardness. Type a radius.")
         .arg(what, fmtLen(b.radius))
         .arg(b.force * 100, 0, 'g', 4)
         .arg(std::lround(b.hardness * 100));
@@ -106,7 +111,9 @@ void TerrainTool::mousePress(const MouseEvent& e) {
         return;
     }
     center_ = p;
-    normal_ = stroke_->direction();
+    surfaceNormal_ = stroke_->direction();
+    vertical_ = e.shift();
+    stroke_->setDirection(brushDirection());
     onSurface_ = true;
     applied_ = 0;
     clock_.start();
@@ -135,14 +142,34 @@ void TerrainTool::tick() {
     update();
 }
 
+void TerrainTool::setVertical(bool on) {
+    if (vertical_ == on) return;
+    vertical_ = on;
+    if (stroke_) stroke_->setDirection(brushDirection());
+    update();
+}
+
+bool TerrainTool::keyPress(QKeyEvent* e) {
+    if (e->key() != Qt::Key_Shift) return false;
+    setVertical(true);
+    return true;
+}
+
+bool TerrainTool::keyRelease(QKeyEvent* e) {
+    if (e->key() != Qt::Key_Shift) return false;
+    setVertical(false);
+    return true;
+}
+
 void TerrainTool::mouseMove(const MouseEvent& e) {
     lastMouse_ = e;
+    setVertical(e.shift());
     Vec3 p, toViewer;
     Id f;
     onSurface_ = surfaceAt(e.x, e.y, p, f, toViewer);
     if (onSurface_) {
         center_ = p;
-        if (!stroke_) normal_ = terrainNormal(mesh(), p, f, toViewer, TerrainSettings::instance().brush().radius);
+        if (!stroke_) surfaceNormal_ = terrainNormal(mesh(), p, f, toViewer, TerrainSettings::instance().brush().radius);
     }
     update();
 }
@@ -156,6 +183,23 @@ void TerrainTool::mouseRelease(const MouseEvent& e) {
     stroke_.reset();
     doc().commitOp();
     update();
+}
+
+bool TerrainTool::wheel(double steps, Qt::KeyboardModifiers mods) {
+    const bool ctrl = mods & Qt::ControlModifier, alt = mods & Qt::AltModifier;
+    if (ctrl == alt) return false; // plain wheel zooms
+    TerrainBrush b = TerrainSettings::instance().brush();
+    if (ctrl) {
+        b.radius *= std::pow(kRadiusStep, steps);
+        setVcb(fmtLen(b.radius));
+    } else {
+        b.hardness = std::clamp(std::round((b.hardness + steps * kHardnessStep) / kHardnessStep) * kHardnessStep, 0.0, 1.0);
+    }
+    TerrainSettings::instance().setBrush(b);
+    if (stroke_) stroke_->setBrush(TerrainSettings::instance().brush());
+    refreshStatus();
+    update();
+    return true;
 }
 
 bool TerrainTool::vcbEnter(const QString& text) {
@@ -175,10 +219,11 @@ void TerrainTool::buildPreview(Preview& pv) {
     const Color color = mode() == TerrainMode::Raise   ? Color::rgb8(200, 110, 20)
                         : mode() == TerrainMode::Lower ? Color::rgb8(30, 110, 220)
                                                        : Color::rgb8(30, 160, 60);
+    const Vec3 normal = brushDirection();
     Vec3 u, v;
-    planeBasis(normal_, u, v);
+    planeBasis(normal, u, v);
     // Lift the rings a little off the surface so they read on flat ground.
-    const Vec3 c = center_ + normal_ * (b.radius * 0.01);
+    const Vec3 c = center_ + normal * (b.radius * 0.01);
     auto ring = [&](double r, Dash dash, float width) {
         for (int i = 0; i < kCircleSegments; ++i) {
             double a0 = 2 * M_PI * i / kCircleSegments, a1 = 2 * M_PI * (i + 1) / kCircleSegments;
@@ -191,8 +236,8 @@ void TerrainTool::buildPreview(Preview& pv) {
     // Direction tick: up for Mountain, down for Pit, a short level cross for Flatten.
     const double len = b.radius * 0.35;
     switch (mode()) {
-    case TerrainMode::Raise: pv.line(c, c + normal_ * len, color, 2.0f); break;
-    case TerrainMode::Lower: pv.line(c, c - normal_ * len, color, 2.0f); break;
+    case TerrainMode::Raise: pv.line(c, c + normal * len, color, 2.0f); break;
+    case TerrainMode::Lower: pv.line(c, c - normal * len, color, 2.0f); break;
     case TerrainMode::Flatten:
         pv.line(c - u * (len * 0.5), c + u * (len * 0.5), color, 2.0f);
         pv.line(c - v * (len * 0.5), c + v * (len * 0.5), color, 2.0f);

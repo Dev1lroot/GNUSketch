@@ -36,6 +36,8 @@ std::vector<Id> triangulateFace(Mesh& m, Id f);
 // Brush direction at a surface point: the area-weighted normal of the faces
 // under the brush, on the side of `toViewer`.
 Vec3 terrainNormal(const Mesh& m, const Vec3& center, Id face, const Vec3& toViewer, double radius);
+// The vertical axis on the side of n (up for horizontal or upright surfaces).
+inline Vec3 terrainVertical(const Vec3& n) { return n.z < -1e-9 ? Vec3(0, 0, -1) : Vec3(0, 0, 1); }
 
 // One press-and-hold stroke. The direction (and the Flatten height) are taken
 // where the stroke starts and kept while the brush is dragged around.
@@ -51,6 +53,10 @@ public:
     void finish(Mesh& m, const Vec3& center) { refine(m, center); }
 
     const Vec3& direction() const { return dir_; }
+    // Changes radius/force/hardness for the rest of the stroke.
+    void setBrush(const TerrainBrush& b) { brush_ = b; }
+    // Overrides the brush direction (e.g. locked to the vertical axis).
+    void setDirection(const Vec3& d) { dir_ = d.normalized(); }
     const Vec3& origin() const { return origin_; }
 
 private:

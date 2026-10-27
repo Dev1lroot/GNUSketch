@@ -49,7 +49,10 @@ public:
     void mousePress(const MouseEvent& e) override;
     void mouseMove(const MouseEvent& e) override;
     void mouseRelease(const MouseEvent& e) override;
+    bool keyPress(QKeyEvent* e) override;
+    bool keyRelease(QKeyEvent* e) override;
     bool vcbEnter(const QString& text) override;
+    bool wheel(double steps, Qt::KeyboardModifiers mods) override;
     void buildPreview(Preview& pv) override;
 
 private:
@@ -57,6 +60,9 @@ private:
     bool surfaceAt(double x, double y, Vec3& p, Id& face, Vec3& toViewer);
     void tick();
     void applyElapsed();
+    // Brush direction: the surface normal, or the vertical axis while Shift is held.
+    Vec3 brushDirection() const { return vertical_ ? terrainVertical(surfaceNormal_) : surfaceNormal_; }
+    void setVertical(bool on);
 
     ToolId id_;
     std::optional<TerrainStroke> stroke_;
@@ -65,7 +71,8 @@ private:
     double applied_ = 0; // seconds of brushing applied in this stroke
     // Brush under the cursor.
     bool onSurface_ = false;
-    Vec3 center_, normal_ = Vec3(0, 0, 1);
+    Vec3 center_, surfaceNormal_ = Vec3(0, 0, 1);
+    bool vertical_ = false; // Shift: brush along the vertical axis only
 };
 
 } // namespace gs

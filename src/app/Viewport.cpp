@@ -390,7 +390,14 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
 }
 
 void Viewport::wheelEvent(QWheelEvent* e) {
-    double steps = e->angleDelta().y() / 120.0;
+    // Alt+wheel arrives as horizontal scrolling on some platforms.
+    const QPoint ad = e->angleDelta();
+    const double toolSteps = (ad.y() != 0 ? ad.y() : ad.x()) / 120.0;
+    if (tool_ && std::fabs(toolSteps) > 1e-6 && tool_->wheel(toolSteps, e->modifiers())) {
+        update();
+        return;
+    }
+    double steps = ad.y() / 120.0;
     if (std::fabs(steps) < 1e-6) return;
     Vec3 focus = focusPointAt(*inference_, camera_, e->position().x(), e->position().y());
     camera_.zoom(std::pow(0.8, steps), &focus);

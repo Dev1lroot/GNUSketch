@@ -1029,11 +1029,11 @@ void InstructorPanel::showTool(ToolId id) {
     case ToolId::ZoomWindow: i = {"Zoom Window", "Zooms to a rectangular area.", "Drag a window around the area of interest.", ""}; break;
     case ToolId::Mountain: i = {"Mountain", "Raises the surface like a 3D brush. Faces under the brush turn into a smooth triangle mesh that keeps subdividing as it stretches.",
         "Press and hold on a face; the longer you hold, the higher it grows (Force = cm per second). Drag to paint along a ridge. The circle shows the radius, the dashed circle the hard core.",
-        "Type a value to set the radius &nbsp; Settings: Window &gt; Terraform &nbsp; Esc: cancel the stroke"}; break;
+        "Shift: vertical axis only &nbsp; Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Settings: Window &gt; Terraform &nbsp; Esc: cancel the stroke"}; break;
     case ToolId::Pit: i = {"Pit", "Sinks the surface under the brush: the opposite of Mountain.",
-        "Press and hold on a face; drag to dig a trench.", "Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
+        "Press and hold on a face; drag to dig a trench.", "Shift: vertical axis only &nbsp; Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
     case ToolId::Flatten: i = {"Flatten", "Levels the surface around the brush to the height of the point where you start.",
-        "Press on the height you want to keep, hold and drag over the bumps to flatten them.", "Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
+        "Press on the height you want to keep, hold and drag over the bumps to flatten them.", "Shift: vertical axis only &nbsp; Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
     }
     QString html = QStringLiteral("<h3>%1</h3><p>%2</p><p><b>Tool operation</b><br>%3</p>").arg(i.title, i.what, i.steps);
     if (i.keys && *i.keys) html += QStringLiteral("<p><b>Modifier keys</b><br>%1</p>").arg(i.keys);

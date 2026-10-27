@@ -446,7 +446,7 @@ void Mesh::splitEdgesThrough(Id v) {
     }
 }
 
-void Mesh::splitEdge(Id e, Id v) {
+void Mesh::splitEdge(Id e, Id v, const std::vector<Id>* inFaces) {
     Id a = edges[e].v[0], b = edges[e].v[1];
     if (v == a || v == b) return;
     Edge copy = edges[e];
@@ -465,8 +465,8 @@ void Mesh::splitEdge(Id e, Id v) {
         edges.push_back(ne);
         edgeMapInsert((Id)edges.size() - 1);
     }
-    for (Face& F : faces) {
-        if (!F.alive) continue;
+    auto fixFace = [&](Face& F) {
+        if (!F.alive) return;
         auto fix = [&](std::vector<Id>& L) {
             for (size_t i = 0; i < L.size(); ++i) {
                 Id x = L[i], y = L[(i + 1) % L.size()];
@@ -478,6 +478,11 @@ void Mesh::splitEdge(Id e, Id v) {
         };
         fix(F.outer);
         for (auto& h : F.holes) fix(h);
+    };
+    if (inFaces) {
+        for (Id f : *inFaces) fixFace(faces[f]);
+    } else {
+        for (Face& F : faces) fixFace(F);
     }
     adjDirty_ = true;
     revision = nextMeshRevision();

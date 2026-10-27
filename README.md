@@ -82,6 +82,15 @@ include its output in the bug report.
   **Make Unique** gives the selected copies their own definition, and **Explode**
   turns a component back into loose geometry. Exporters write components as
   ordinary geometry.
+* **Terraform** (Tools → Terraform, tool set, Terraform tray section): **Mountain**,
+  **Pit** and **Flatten** sculpting brushes. Press and hold on a face: Mountain
+  raises it, Pit sinks it, Flatten levels it to the height where the stroke started;
+  drag to paint. The faces under the brush turn into a smooth-shaded triangle mesh
+  that keeps subdividing wherever triangles stretch, so it stays smooth. Brushes
+  work in any direction (on walls and slopes too). Radius (shown on the cursor),
+  Force (cm per second of holding) and Hardness are set in the Terraform tray
+  section; type a value while a Terraform tool is active to set the radius.
+  Vertices shared with untouched faces stay put, so neighbouring walls stay flat.
 
 ## Tools (SketchUp-compatible shortcuts)
 
@@ -96,7 +105,8 @@ include its output in the bug report.
 | F | Offset | T | Tape Measure (guides, model resize) |
 | O / H / Z | Orbit / Pan / Zoom | Shift+Z | Zoom Extents |
 
-Also Freehand, Zoom Window, **Follow Me** and **Round Corners** (Tools menu and the
+Also Freehand, Zoom Window, **Follow Me**, **Round Corners** and the **Terraform**
+brushes (Tools menu and the
 tool set; no shortcut keys). Middle mouse orbits and Shift+middle pans with any
 tool. The wheel zooms towards the cursor; double-clicking the middle button
 re-centres the view.
@@ -228,10 +238,11 @@ File → Export → FBX) or with assimp (`assimp export model.gltf model.fbx`).
 
 ```
 src/core    Math, Mesh (B-rep kernel + face inference), Triangulate, Units, Document (undo),
-            FollowMe (profile sweeps), RoundCorners (fillets), ImageTrace (image outlines)
+            FollowMe (profile sweeps), RoundCorners (fillets), ImageTrace (image outlines),
+            Terrain (sculpting brushes)
 src/io      NativeFormat, ObjIO, GltfExport, StlExport, ImageUtil
 src/render  Camera, Renderer (GL 3.3: faces, geometry-shader wide/dashed lines, sky/ground)
-src/app     Viewport, Inference, tools (Draw/Modify/Camera), Panels (tray), MainWindow, Icons
+src/app     Viewport, Inference, tools (Draw/Modify/Camera/Terrain), Panels (tray), MainWindow, Icons
 tests       kernel and I/O tests
 ```
 

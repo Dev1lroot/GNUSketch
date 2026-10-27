@@ -124,7 +124,9 @@ public:
     std::vector<Id> drawSegments(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve = kNone);
     std::vector<Id> drawPolyline(const std::vector<Vec3>& pts, bool closed, Id curve = kNone);
 
-    void splitEdge(Id e, Id v);
+    // Inserts vertex v into edge e. `inFaces` (all faces using e) limits the
+    // loop fix-up to those faces instead of scanning the whole mesh.
+    void splitEdge(Id e, Id v, const std::vector<Id>* inFaces = nullptr);
     void eraseFace(Id f);
     // Erases an edge and the faces it bounds. With heal=true, two coplanar faces
     // sharing the edge are merged into one instead (SketchUp eraser behaviour).

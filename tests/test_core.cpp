@@ -4,6 +4,7 @@
 #include "core/Document.h"
 #include "core/Mesh.h"
 #include "core/RoundCorners.h"
+#include "core/Terrain.h"
 #include "core/FollowMe.h"
 #include "core/ImageTrace.h"
 #include "core/Triangulate.h"
@@ -854,6 +855,144 @@ int main() {
         CHECK(u.parseLength("12\"", m) && std::fabs(m - 0.3048) < 1e-12);
         CHECK(!u.parseLength("abc", m));
         CHECK(u.format(1.5) == "1500mm");
+    });
+
+    test("terrain falloff", [] {
+        CHECK(std::fabs(terrainFalloff(0, 1, 0) - 1) < 1e-12);
+        CHECK(terrainFalloff(1, 1, 0.5) == 0);
+        CHECK(std::fabs(terrainFalloff(0.4, 1, 0.5) - 1) < 1e-12);
+        CHECK(terrainFalloff(0.7, 1, 0.5) > 0 && terrainFalloff(0.7, 1, 0.5) < 1);
+        CHECK(terrainFalloff(0.6, 1, 0) > terrainFalloff(0.8, 1, 0));
+    });
+
+    test("triangulate face keeps area and orientation", [] {
+        Mesh m;
+        rect(m, 0, 0, 4, 4);
+        rect(m, 1, 1, 2, 2);
+        Id outer = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && !m.faces[f].holes.empty()) outer = f;
+        CHECK(outer != kNone);
+        Vec3 n = m.faces[outer].normal;
+        auto tris = triangulateFace(m, outer);
+        CHECK(tris.size() >= 8);
+        double a = 0;
+        for (Id t : tris) {
+            a += m.faceArea(t);
+            CHECK(m.faces[t].outer.size() == 3 && m.faces[t].normal.dot(n) > 0.999);
+        }
+        CHECK(std::fabs(a - 15.0) < 1e-9);
+    });
+
+    test("terrain: collinear boundary points leave no slits", [] {
+        Mesh m;
+        m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}}, true);
+        Id f = onlyFace(m);
+        auto tris = triangulateFace(m, f);
+        for (Id t : tris) CHECK(m.faceArea(t) > 1e-9);
+        CHECK(std::fabs(totalArea(m) - 4.0) < 1e-9);
+    });
+
+    test("terrain: mountain on a plane", [] {
+        Mesh m;
+        rect(m, -5, -5, 5, 5);
+        Id f = onlyFace(m);
+        const double side = m.faces[f].normal.z; // ground faces point down
+        TerrainBrush b;
+        b.radius = 2;
+        b.force = 0.5;
+        b.hardness = 0.3;
+        TerrainStroke s(TerrainMode::Raise, b);
+        CHECK(s.begin(m, Vec3(0, 0, 0), f, Vec3(0, 0, 1)));
+        CHECK(s.direction().z > 0.999);
+        for (int i = 0; i < 30; ++i) s.apply(m, Vec3(0, 0, 0), 1.0 / 30);
+        s.finish(m, Vec3(0, 0, 0));
+        double top = -1, corner = 0;
+        for (const Vertex& v : m.vertices) {
+            if (!v.alive) continue;
+            top = std::max(top, v.p.z);
+            if (std::fabs(v.p.x) > 4.99 && std::fabs(v.p.y) > 4.99) corner = std::max(corner, std::fabs(v.p.z));
+        }
+        CHECK(std::fabs(top - 0.5) < 0.05); // 1 s at 0.5 m/s
+        CHECK(std::fabs(corner) < 1e-12);
+        int tris = 0;
+        double maxEdge = 0;
+        for (Id i = 0; i < (Id)m.faces.size(); ++i)
+            if (m.faces[i].alive) {
+                CHECK(m.faces[i].outer.size() == 3);
+                CHECK(m.faces[i].normal.z * side > 0);
+                ++tris;
+            }
+        for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+            if (!m.edges[e].alive) continue;
+            const Vec3 mid = (m.pos(m.edges[e].v[0]) + m.pos(m.edges[e].v[1])) * 0.5;
+            if (Vec3(mid.x, mid.y, 0).length() < 1.5) maxEdge = std::max(maxEdge, m.edgeLength(e));
+        }
+        CHECK(tris > 100);
+        CHECK(maxEdge <= b.detail() + 1e-9);
+        // Watertight: every interior edge is shared by exactly two triangles.
+        Mesh copy = m;
+        int open = 0;
+        for (Id e = 0; e < (Id)copy.edges.size(); ++e) {
+            if (!copy.edges[e].alive) continue;
+            const Vec3 a = copy.pos(copy.edges[e].v[0]), c = copy.pos(copy.edges[e].v[1]);
+            bool border = (std::fabs(a.x) > 4.99 && std::fabs(c.x) > 4.99 && std::fabs(a.x - c.x) < 1e-9) ||
+                          (std::fabs(a.y) > 4.99 && std::fabs(c.y) > 4.99 && std::fabs(a.y - c.y) < 1e-9);
+            if (!border && copy.edgeFaces(e).size() != 2) ++open;
+        }
+        CHECK_EQ(open, 0);
+
+        // Pit on top of it lowers again; Flatten levels to the start height.
+        TerrainStroke pit(TerrainMode::Lower, b);
+        Id hitFace = kNone;
+        for (Id i = 0; i < (Id)m.faces.size(); ++i)
+            if (m.faces[i].alive && m.pointInFace(i, Vec3(3.5, 3.5, 0))) hitFace = i;
+        CHECK(hitFace != kNone);
+        CHECK(pit.begin(m, Vec3(3.5, 3.5, 0), hitFace, Vec3(0, 0, 1)));
+        for (int i = 0; i < 10; ++i) pit.apply(m, Vec3(3.5, 3.5, 0), 0.1);
+        double low = 0;
+        for (const Vertex& v : m.vertices) if (v.alive) low = std::min(low, v.p.z);
+        CHECK(low < -0.3);
+
+        TerrainBrush fb = b;
+        fb.radius = 8;
+        fb.force = 10;
+        TerrainStroke flat(TerrainMode::Flatten, fb);
+        Id corner0 = kNone;
+        for (Id i = 0; i < (Id)m.faces.size(); ++i)
+            if (m.faces[i].alive && m.pointInFace(i, Vec3(-4.9, -4.9, 0))) corner0 = i;
+        CHECK(flat.begin(m, Vec3(-4.9, -4.9, 0), corner0, Vec3(0, 0, 1)));
+        for (int i = 0; i < 20; ++i) flat.apply(m, Vec3(0, 0, 0), 0.1);
+        double dev = 0;
+        for (const Vertex& v : m.vertices) if (v.alive) dev = std::max(dev, std::fabs(v.p.z));
+        CHECK(dev < 1e-9);
+    });
+
+    test("terrain: walls on the plane stay planar", [] {
+        Mesh m;
+        rect(m, 0, 0, 4, 4);
+        Id f = onlyFace(m);
+        m.pushPull(f, 2 * m.faces[f].normal.z); // up
+        Id top = kNone;
+        for (Id i = 0; i < (Id)m.faces.size(); ++i)
+            if (m.faces[i].alive && m.faces[i].normal.z > 0.99) top = i;
+        TerrainBrush b;
+        b.radius = 1.5;
+        b.force = 1;
+        TerrainStroke s(TerrainMode::Raise, b);
+        CHECK(s.begin(m, Vec3(0.5, 2, 2), top, Vec3(0, 0, 1)));
+        for (int i = 0; i < 10; ++i) s.apply(m, Vec3(0.5, 2, 2), 0.05);
+        int walls = 0;
+        for (Id i = 0; i < (Id)m.faces.size(); ++i) {
+            if (!m.faces[i].alive || m.faces[i].outer.size() == 3) continue;
+            ++walls;
+            Plane P = m.facePlane(i);
+            for (Id v : m.faceVertices(i)) CHECK(std::fabs(P.distance(m.pos(v))) < 1e-9);
+        }
+        CHECK_EQ(walls, 5);
+        double top2 = 0;
+        for (const Vertex& v : m.vertices) if (v.alive) top2 = std::max(top2, v.p.z);
+        CHECK(top2 > 2.3);
     });
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);

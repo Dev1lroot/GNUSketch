@@ -26,6 +26,7 @@ class EntityInfoPanel;
 class MaterialsPanel;
 class StylesPanel;
 class InstructorPanel;
+class TerrainPanel;
 class TraySection;
 
 class MainWindow : public QMainWindow {
@@ -92,6 +93,7 @@ private:
     MaterialsPanel* materials_ = nullptr;
     StylesPanel* styles_ = nullptr;
     InstructorPanel* instructor_ = nullptr;
+    TerrainPanel* terrain_ = nullptr;
     QDockWidget* trayDock_ = nullptr;
     std::map<QString, TraySection*> sections_;
 

@@ -4,6 +4,7 @@
 #include "Icons.h"
 #include "ModifyTools.h"
 #include "Panels.h"
+#include "TerrainTools.h"
 #include "Viewport.h"
 #include "core/Components.h"
 #include "core/RoundCorners.h"
@@ -87,6 +88,10 @@ MainWindow::MainWindow() {
         auto it = toolActions_.find(id);
         if (it != toolActions_.end()) it->second->setChecked(true);
         instructor_->showTool(id);
+        if (isTerrainTool(id)) {
+            terrain_->refresh();
+            sections_["Terraform"]->setExpanded(true);
+        }
     });
     connect(viewport_, &Viewport::materialPicked, this, [this] { materials_->refresh(); entityInfo_->refresh(); });
     connect(viewport_, &Viewport::imageDropped, this, [this](const QString& p) { materials_->addImageMaterial(p); });
@@ -158,6 +163,9 @@ void MainWindow::buildActions() {
     toolAction(ToolId::Pan, QStringLiteral("Pan"), QStringLiteral("H"));
     toolAction(ToolId::Zoom, QStringLiteral("Zoom"), QStringLiteral("Z"));
     toolAction(ToolId::ZoomWindow, QStringLiteral("Zoom Window"), QStringLiteral("Ctrl+Shift+W"));
+    toolAction(ToolId::Mountain, QStringLiteral("Mountain"), QString());
+    toolAction(ToolId::Pit, QStringLiteral("Pit"), QString());
+    toolAction(ToolId::Flatten, QStringLiteral("Flatten"), QString());
 
     auto act = [this](const QString& key, const QString& icon, const QString& text, const QKeySequence& sc,
                       std::function<void()> fn) {
@@ -409,6 +417,9 @@ void MainWindow::buildMenus() {
     tools->addSeparator();
     tools->addAction(toolActions_[ToolId::Tape]);
     tools->addSeparator();
+    QMenu* terraform = tools->addMenu(Icons::get("mountain"), QStringLiteral("Terra&form"));
+    for (ToolId id : {ToolId::Mountain, ToolId::Pit, ToolId::Flatten}) terraform->addAction(toolActions_[id]);
+    tools->addSeparator();
     tools->addAction(acts_["roundcorners"]);
     tools->addAction(acts_["traceimage"]);
 
@@ -419,7 +430,7 @@ void MainWindow::buildMenus() {
     trayAct->setChecked(true);
     connect(trayAct, &QAction::toggled, this, [this](bool on) { trayDock_->setVisible(on); });
     connect(win, &QMenu::aboutToShow, this, [this, trayAct] { trayAct->setChecked(trayDock_->isVisible()); });
-    for (const char* name : {"Entity Info", "Materials", "Styles", "Instructor"}) {
+    for (const char* name : {"Entity Info", "Terraform", "Materials", "Styles", "Instructor"}) {
         QAction* a = win->addAction(QString::fromUtf8(name));
         QString key = QString::fromUtf8(name);
         connect(a, &QAction::triggered, this, [this, key] {
@@ -496,6 +507,9 @@ void MainWindow::buildToolbars() {
         {(int)ToolId::Scale, (int)ToolId::FollowMe},
         {-4, -5},
         {-2, -2},
+        {(int)ToolId::Mountain, (int)ToolId::Pit},
+        {(int)ToolId::Flatten, -1},
+        {-2, -2},
         {(int)ToolId::Orbit, (int)ToolId::Pan},
         {(int)ToolId::Zoom, (int)ToolId::ZoomWindow},
         {-3, -1},
@@ -539,7 +553,10 @@ void MainWindow::buildTray() {
     materials_ = new MaterialsPanel(&doc_, viewport_, tray);
     styles_ = new StylesPanel(&doc_, viewport_, tray);
     instructor_ = new InstructorPanel(tray);
+    terrain_ = new TerrainPanel(&doc_, viewport_,
+                                {toolActions_[ToolId::Mountain], toolActions_[ToolId::Pit], toolActions_[ToolId::Flatten]}, tray);
     sections_["Entity Info"] = tray->addSection(QStringLiteral("Entity Info"), entityInfo_, true);
+    sections_["Terraform"] = tray->addSection(QStringLiteral("Terraform"), terrain_, false);
     sections_["Materials"] = tray->addSection(QStringLiteral("Materials"), materials_, true);
     sections_["Styles"] = tray->addSection(QStringLiteral("Styles"), styles_, false);
     sections_["Instructor"] = tray->addSection(QStringLiteral("Instructor"), instructor_, false);

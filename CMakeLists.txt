@@ -22,6 +22,7 @@ add_library(gs_core STATIC
   src/core/Units.h src/core/Units.cpp
   src/core/Document.h src/core/Document.cpp
   src/core/Components.h src/core/Components.cpp
+  src/core/Terrain.h src/core/Terrain.cpp
 )
 target_include_directories(gs_core PUBLIC src)
 target_compile_options(gs_core PRIVATE -Wall -Wextra)
@@ -48,6 +49,7 @@ add_executable(gnusketch
   src/app/Tool.h src/app/Tool.cpp
   src/app/DrawTools.h src/app/DrawTools.cpp
   src/app/ModifyTools.h src/app/ModifyTools.cpp
+  src/app/TerrainTools.h src/app/TerrainTools.cpp
   src/app/CameraTools.h src/app/CameraTools.cpp
   src/app/Viewport.h src/app/Viewport.cpp
   src/app/Icons.h src/app/Icons.cpp

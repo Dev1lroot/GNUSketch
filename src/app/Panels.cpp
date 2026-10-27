@@ -2,6 +2,7 @@
 #include "Panels.h"
 
 #include "Icons.h"
+#include "TerrainTools.h"
 #include "Viewport.h"
 #include "core/Components.h"
 #include "io/ImageUtil.h"
@@ -902,6 +903,76 @@ void StylesPanel::refresh() {
 }
 
 // ===========================================================================
+// Terraform
+// ===========================================================================
+
+TerrainPanel::TerrainPanel(Document* doc, Viewport* vp, const std::vector<QAction*>& tools, QWidget* parent)
+    : QWidget(parent), doc_(doc), vp_(vp) {
+    auto* lay = new QVBoxLayout(this);
+    lay->setContentsMargins(8, 6, 8, 8);
+    auto* row = new QHBoxLayout();
+    for (QAction* a : tools) {
+        auto* b = new QToolButton(this);
+        b->setDefaultAction(a);
+        b->setIconSize(QSize(24, 24));
+        b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        b->setAutoRaise(true);
+        row->addWidget(b);
+    }
+    row->addStretch(1);
+    lay->addLayout(row);
+
+    auto* fl = new QFormLayout();
+    radius_ = new QLineEdit(this);
+    radius_->setToolTip(QStringLiteral("Brush radius (shown as a circle under the cursor)"));
+    force_ = new QDoubleSpinBox(this);
+    force_->setRange(0.1, 10000);
+    force_->setDecimals(1);
+    force_->setSuffix(QStringLiteral(" cm/s"));
+    force_->setToolTip(QStringLiteral("How far the centre of the brush moves per second of holding"));
+    hardness_ = new QSlider(Qt::Horizontal, this);
+    hardness_->setRange(0, 100);
+    hardness_->setToolTip(QStringLiteral("0% = soft rounded hill, 100% = flat plateau with steep sides"));
+    hardnessValue_ = new QLabel(this);
+    hardnessValue_->setMinimumWidth(36);
+    auto* hl = new QHBoxLayout();
+    hl->addWidget(hardness_, 1);
+    hl->addWidget(hardnessValue_);
+    fl->addRow(QStringLiteral("Radius:"), radius_);
+    fl->addRow(QStringLiteral("Force:"), force_);
+    fl->addRow(QStringLiteral("Hardness:"), hl);
+    lay->addLayout(fl);
+
+    connect(radius_, &QLineEdit::editingFinished, this, [this] { apply(); });
+    connect(force_, &QDoubleSpinBox::valueChanged, this, [this] { apply(); });
+    connect(hardness_, &QSlider::valueChanged, this, [this] { apply(); });
+    connect(&TerrainSettings::instance(), &TerrainSettings::changed, this, [this] { refresh(); });
+    refresh();
+}
+
+void TerrainPanel::refresh() {
+    updating_ = true;
+    const TerrainBrush& b = TerrainSettings::instance().brush();
+    if (!radius_->hasFocus()) radius_->setText(QString::fromStdString(doc_->units.format(b.radius)));
+    force_->setValue(b.force * 100);
+    hardness_->setValue((int)std::lround(b.hardness * 100));
+    hardnessValue_->setText(QStringLiteral("%1%").arg(hardness_->value()));
+    updating_ = false;
+}
+
+void TerrainPanel::apply() {
+    if (updating_) return;
+    TerrainBrush b = TerrainSettings::instance().brush();
+    double r;
+    if (doc_->units.parseLength(radius_->text().toStdString(), r) && r > 0) b.radius = r;
+    b.force = force_->value() / 100;
+    b.hardness = hardness_->value() / 100.0;
+    TerrainSettings::instance().setBrush(b);
+    vp_->refreshToolStatus();
+    vp_->update();
+}
+
+// ===========================================================================
 // Instructor
 // ===========================================================================
 
@@ -956,6 +1027,13 @@ void InstructorPanel::showTool(ToolId id) {
     case ToolId::Pan: i = {"Pan", "Moves the camera sideways.", "Drag in the viewport. Shift + middle mouse pans with any tool.", ""}; break;
     case ToolId::Zoom: i = {"Zoom", "Moves the camera closer or farther.", "Drag up/down, or use the mouse wheel with any tool. Type a field of view in degrees.", "Shift + drag: change field of view"}; break;
     case ToolId::ZoomWindow: i = {"Zoom Window", "Zooms to a rectangular area.", "Drag a window around the area of interest.", ""}; break;
+    case ToolId::Mountain: i = {"Mountain", "Raises the surface like a 3D brush. Faces under the brush turn into a smooth triangle mesh that keeps subdividing as it stretches.",
+        "Press and hold on a face; the longer you hold, the higher it grows (Force = cm per second). Drag to paint along a ridge. The circle shows the radius, the dashed circle the hard core.",
+        "Type a value to set the radius &nbsp; Settings: Window &gt; Terraform &nbsp; Esc: cancel the stroke"}; break;
+    case ToolId::Pit: i = {"Pit", "Sinks the surface under the brush: the opposite of Mountain.",
+        "Press and hold on a face; drag to dig a trench.", "Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
+    case ToolId::Flatten: i = {"Flatten", "Levels the surface around the brush to the height of the point where you start.",
+        "Press on the height you want to keep, hold and drag over the bumps to flatten them.", "Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
     }
     QString html = QStringLiteral("<h3>%1</h3><p>%2</p><p><b>Tool operation</b><br>%3</p>").arg(i.title, i.what, i.steps);
     if (i.keys && *i.keys) html += QStringLiteral("<p><b>Modifier keys</b><br>%1</p>").arg(i.keys);

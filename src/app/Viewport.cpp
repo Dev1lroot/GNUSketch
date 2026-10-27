@@ -4,6 +4,7 @@
 #include "CameraTools.h"
 #include "DrawTools.h"
 #include "ModifyTools.h"
+#include "TerrainTools.h"
 #include "core/Components.h"
 #include "io/ImageUtil.h"
 
@@ -65,6 +66,9 @@ void Viewport::setTool(ToolId id) {
     case ToolId::Pan: tool_ = std::make_unique<PanTool>(this); break;
     case ToolId::Zoom: tool_ = std::make_unique<ZoomTool>(this); break;
     case ToolId::ZoomWindow: tool_ = std::make_unique<ZoomWindowTool>(this); break;
+    case ToolId::Mountain:
+    case ToolId::Pit:
+    case ToolId::Flatten: tool_ = std::make_unique<TerrainTool>(this, id); break;
     }
     inference_->resetMemory();
     vcbLabel_ = tool_->vcbLabel();

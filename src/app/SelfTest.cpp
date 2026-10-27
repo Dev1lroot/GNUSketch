@@ -3,6 +3,7 @@
 
 #include "MainWindow.h"
 #include "ModifyTools.h"
+#include "TerrainTools.h"
 #include "Viewport.h"
 #include "core/Components.h"
 #include "io/ImageUtil.h"
@@ -12,6 +13,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QElapsedTimer>
 #include <QMimeData>
 #include <QImage>
 #include <QKeyEvent>
@@ -665,6 +667,76 @@ int runSelfTest(MainWindow& w) {
                 "red axis line ends exactly on the face it hits");
         eng.resetMemory();
         vp->zoomExtents();
+    }
+
+    // Terraform: press-and-hold brushes on a ground plane away from the rest.
+    {
+        const TerrainBrush userBrush = TerrainSettings::instance().brush();
+        const Camera savedCam = vp->camera();
+        doc.beginOp("Terrain plane");
+        d.mesh().drawPolyline({{300, 0, 0}, {310, 0, 0}, {310, 10, 0}, {300, 10, 0}}, true);
+        doc.commitOp();
+        vp->camera().setStandardView(Vec3(0.3, 0.4, -1), Vec3(0, 0, 1));
+        vp->camera().zoomExtents(Vec3(300, 0, 0), Vec3(310, 10, 1));
+        d.pump();
+        auto hold = [&](const Vec3& at, int ms, bool escape = false) {
+            QPointF p = d.screen(at);
+            d.move(p);
+            d.send(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < ms) QApplication::processEvents(QEventLoop::AllEvents, 10);
+            if (escape) d.key(Qt::Key_Escape);
+            d.send(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+            d.pump();
+        };
+        auto zRange = [&](double& lo, double& hi) {
+            lo = 1e300, hi = -1e300;
+            for (const Vertex& v : d.mesh().vertices)
+                if (v.alive && v.p.x >= 299.99) { lo = std::min(lo, v.p.z); hi = std::max(hi, v.p.z); }
+        };
+        TerrainBrush b;
+        b.radius = 2;
+        b.force = 1; // 100 cm/s
+        b.hardness = 0.3;
+        TerrainSettings::instance().setBrush(b);
+        double lo, hi;
+
+        vp->setTool(ToolId::Mountain);
+        int facesBefore = d.mesh().aliveFaceCount();
+        hold(Vec3(305, 5, 0), 300);
+        zRange(lo, hi);
+        d.check(hi > 0.15 && hi < 1.5 && doc.undoName() == "Mountain", "holding Mountain raises the plane over time");
+        d.check(d.mesh().aliveFaceCount() > facesBefore + 100, "mountain subdivides the plane into a fine triangle mesh");
+        bool corners = true;
+        for (const Vertex& v : d.mesh().vertices)
+            if (v.alive && v.p.x >= 299.99 && (std::fabs(v.p.x - 305) > 4.99 && std::fabs(v.p.y - 5) > 4.99))
+                corners = corners && std::fabs(v.p.z) < 1e-9;
+        d.check(corners, "mountain leaves the plane corners in place");
+
+        hold(Vec3(305, 5, 0), 150, true);
+        double lo2, hi2;
+        zRange(lo2, hi2);
+        d.check(std::fabs(hi2 - hi) < 1e-9 && doc.undoName() == "Mountain", "Esc cancels a Mountain stroke");
+
+        vp->setTool(ToolId::Pit);
+        hold(Vec3(302, 8, 0), 200);
+        zRange(lo, hi);
+        d.check(lo < -0.1 && doc.undoName() == "Pit", "holding Pit sinks the plane");
+
+        b.radius = 15; // reaches the far corner from where the stroke starts
+        b.force = 20;
+        TerrainSettings::instance().setBrush(b);
+        vp->setTool(ToolId::Flatten);
+        hold(Vec3(300.3, 0.3, 0), 400);
+        zRange(lo, hi);
+        d.check(std::fabs(lo) < 1e-6 && std::fabs(hi) < 1e-6 && doc.undoName() == "Flatten",
+                "Flatten levels the terrain to the height where the stroke started");
+
+        TerrainSettings::instance().setBrush(userBrush);
+        vp->camera() = savedCam;
+        vp->setTool(ToolId::Select);
+        d.pump();
     }
 
     // Undo everything, redo everything.

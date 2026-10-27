@@ -153,6 +153,24 @@ private:
     bool updating_ = false;
 };
 
+// Brush settings of the Terraform tools (Mountain, Pit, Flatten).
+class TerrainPanel : public QWidget {
+    Q_OBJECT
+public:
+    TerrainPanel(Document* doc, Viewport* vp, const std::vector<QAction*>& tools, QWidget* parent = nullptr);
+    void refresh();
+
+private:
+    void apply();
+    Document* doc_;
+    Viewport* vp_;
+    QLineEdit* radius_;
+    QDoubleSpinBox* force_;
+    QSlider* hardness_;
+    QLabel* hardnessValue_;
+    bool updating_ = false;
+};
+
 class InstructorPanel : public QWidget {
     Q_OBJECT
 public:

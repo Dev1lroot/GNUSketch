@@ -14,6 +14,7 @@ struct Units {
 
     std::string format(double meters) const;
     std::string formatArea(double sqMeters) const;
+    std::string formatVolume(double cubicMeters) const;
     // Parses "1500", "1.5m", "150cm", "12'", "5'6\"", "3in" ... A bare number is
     // interpreted in the current unit. Returns false on syntax error.
     bool parseLength(const std::string& text, double& meters) const;

@@ -6,6 +6,7 @@
 #include "TerrainTools.h"
 #include "Viewport.h"
 #include "core/Components.h"
+#include "core/Solids.h"
 #include "io/ImageUtil.h"
 #include "io/NativeFormat.h"
 #include "render/Renderer.h"
@@ -558,6 +559,89 @@ int runSelfTest(MainWindow& w) {
         doc.selection.clear();
         doc.notifySelection();
         vp->zoomExtents();
+    }
+
+    // Solid tools: click the cutter, then the solid to cut; preselection; undo.
+    {
+        auto boxComponent = [&](Vec3 mn, Vec3 mx, const char* name) {
+            doc.selection.clear();
+            doc.beginOp("Box");
+            Mesh& m = d.mesh();
+            m.drawPolyline({{mn.x, mn.y, mn.z}, {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mn.x, mx.y, mn.z}}, true);
+            Vec3 c((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mn.z);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && m.facePlane(f).contains(c) && m.pointInFace(f, c)) {
+                    m.pushPull(f, (mx.z - mn.z) * m.faces[f].normal.z);
+                    break;
+                }
+            Selection s;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && m.faceInteriorPoint(f).x > mn.x - 1e-6 && m.faceInteriorPoint(f).x < mx.x + 1e-6 &&
+                    m.faceInteriorPoint(f).y > mn.y - 1e-6 && m.faceInteriorPoint(f).y < mx.y + 1e-6)
+                    s.faces.insert(f);
+            Id inst = makeComponent(doc.state, s, name);
+            doc.commitOp();
+            return inst;
+        };
+        auto volume = [&](Id inst) { return solidVolume(doc.state.defs[doc.state.instances[inst].def].mesh); };
+        Id plate = boxComponent(Vec3(40, 0, 0), Vec3(42, 2, 1), "Plate");
+        Id peg = boxComponent(Vec3(40.5, 0.5, 0), Vec3(41.5, 1.5, 2), "Peg");
+        d.check(plate != kNone && peg != kNone && instanceIsSolid(doc.state, plate) && instanceIsSolid(doc.state, peg),
+                "two solid components to cut");
+        doc.selection.clear();
+        doc.notifySelection();
+        vp->setStandardView(Vec3(1, 1, -0.8));
+        vp->camera().zoomExtents(Vec3(39.5, -0.5, 0), Vec3(42.5, 2.5, 2));
+        d.pump();
+
+        const QPointF onPeg = d.screen(Vec3(41, 1, 2)), onPlate = d.screen(Vec3(41.8, 0.2, 1));
+        vp->setTool(ToolId::SolidSubtract);
+        d.click(onPeg);
+        d.check(doc.selection.instances == std::set<Id>{peg}, "Subtract: first click picks the cutter");
+        d.click(onPlate);
+        d.check(!doc.state.instances[peg].alive && std::fabs(volume(plate) - 3) < 1e-6 && doc.undoName() == "Subtract" &&
+                    doc.selection.instances == std::set<Id>{plate},
+                "Subtract cuts a hole through the plate and removes the cutter");
+        d.check(!vp->grabFramebuffer().isNull(), "renders the subtracted solid");
+        doc.undo();
+        d.check(doc.state.instances[peg].alive && std::fabs(volume(plate) - 4) < 1e-6, "undo restores both solids");
+
+        doc.selection.clear();
+        doc.selection.instances.insert(peg);
+        doc.notifySelection();
+        vp->setTool(ToolId::SolidTrim);
+        d.click(onPlate);
+        d.check(doc.state.instances[peg].alive && std::fabs(volume(plate) - 3) < 1e-6 && doc.undoName() == "Trim",
+                "Trim with the cutter preselected keeps the cutter");
+        doc.undo();
+
+        Id lid = boxComponent(Vec3(40, 0, 1), Vec3(42, 2, 1.25), "Lid");
+        doc.selection.clear();
+        for (Id i : {plate, peg, lid}) doc.selection.instances.insert(i);
+        doc.notifySelection();
+        vp->setTool(ToolId::SolidUnion);
+        d.pump();
+        int alive = 0;
+        for (Id i : {plate, peg, lid}) alive += doc.state.instances[i].alive;
+        d.check(alive == 1 && doc.selection.instances.size() == 1 &&
+                    std::fabs(volume(*doc.selection.instances.begin()) - (4 + 1 + 1 - 0.25)) < 1e-6,
+                "Union of three preselected solids makes one");
+        doc.undo();
+
+        // A lone face is no solid: clicking it does nothing.
+        doc.beginOp("Card");
+        d.mesh().drawPolyline({{40, 3, 0}, {41, 3, 0}, {41, 3, 1}, {40, 3, 1}}, true);
+        Selection card;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive && d.mesh().faceInteriorPoint(f).y > 2.9) card.faces.insert(f);
+        Id cardInst = makeComponent(doc.state, card, "Card");
+        doc.commitOp();
+        vp->setTool(ToolId::SolidUnion);
+        std::string before = doc.undoName();
+        d.click(d.screen(Vec3(40.5, 3, 0.5)));
+        d.check(cardInst != kNone && doc.undoName() == before && doc.selection.instances.empty(),
+                "a component that isn't closed can't be picked");
+        vp->setTool(ToolId::Select);
     }
 
     // Magenta inference: along the edges at the start point (both ways) and

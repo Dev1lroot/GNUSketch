@@ -82,6 +82,22 @@ include its output in the bug report.
   **Make Unique** gives the selected copies their own definition, and **Explode**
   turns a component back into loose geometry. Exporters write components as
   ordinary geometry.
+* **Solid Tools** (Tools → Solid Tools, Solid Tools toolbar, right-click a
+  component): boolean operations on closed components ("solids"). Click the
+  first solid, then the second:
+  **Subtract** cuts the first out of the second and deletes the first (holes,
+  pockets, notches); **Trim** does the same but keeps the first; **Union** joins
+  both; **Intersect** keeps only what they share; **Split** leaves three
+  components (each one's own part and the shared part). Select a component before
+  picking the tool to make it the first click; with several components selected,
+  Union and Intersect combine them all at once. Results stay true n-gon faces (with
+  holes where a cutter goes through), flush faces merge, soft edges and materials
+  carry over (cut surfaces take the cutter's material), and each result keeps its
+  component's placement and name. A copy that shares its definition with other
+  copies gets its own definition, so the other copies don't change. Reversed faces
+  are fixed automatically; a component with holes in its surface or edges shared by
+  more than two faces isn't a solid, and the status bar says why. Entity Info
+  shows **Solid Component** and the volume for solids.
 * **View → Render**: sun **Shadows**, **Ambient Occlusion** (soft darkening in
   creases, corners and where objects meet; screen-space, so it follows what is on
   screen) and **Antialiasing** toggles.
@@ -118,8 +134,8 @@ include its output in the bug report.
 | F | Offset | T | Tape Measure (guides, model resize) |
 | O / H / Z | Orbit / Pan / Zoom | Shift+Z | Zoom Extents |
 
-Also Freehand, Zoom Window, **Follow Me**, **Round Corners** and the **Terraform**
-brushes and Texture Brush (Tools menu and the
+Also Freehand, Zoom Window, **Follow Me**, **Round Corners**, the **Solid Tools** and the
+**Terraform** brushes and Texture Brush (Tools menu and the
 tool set; no shortcut keys). Middle mouse orbits and Shift+middle pans with any
 tool. The wheel zooms towards the cursor; double-clicking the middle button
 re-centres the view.
@@ -252,17 +268,17 @@ File → Export → FBX) or with assimp (`assimp export model.gltf model.fbx`).
 ```
 src/core    Math, Mesh (B-rep kernel + face inference), Triangulate, Units, Document (undo),
             FollowMe (profile sweeps), RoundCorners (fillets), ImageTrace (image outlines),
-            Terrain (sculpting brushes)
+            Terrain (sculpting brushes), Solids (boolean solid tools)
 src/io      NativeFormat, ObjIO, GltfExport, StlExport, ImageUtil
 src/render  Camera, Renderer (GL 3.3: faces, geometry-shader wide/dashed lines, sky/ground)
-src/app     Viewport, Inference, tools (Draw/Modify/Camera/Terrain), Panels (tray), MainWindow, Icons
+src/app     Viewport, Inference, tools (Draw/Modify/Camera/Terrain/Solid), Panels (tray), MainWindow, Icons
 tests       kernel and I/O tests
 ```
 
 ## Not implemented yet
 
 Groups, nested components, component axes editing, 3-point arc and pie, rotated rectangle, text,
-dimensions, section planes, tags/layers, scenes, intersect faces, the
+dimensions, section planes, tags/layers, scenes, intersect faces, Outer Shell, the
 texture position editor, and folding of faces that move out of plane.
 
 ## Contributing

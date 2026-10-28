@@ -4,6 +4,7 @@
 #include "CameraTools.h"
 #include "DrawTools.h"
 #include "ModifyTools.h"
+#include "SolidTools.h"
 #include "TerrainTools.h"
 #include "core/Components.h"
 #include "io/ImageUtil.h"
@@ -70,6 +71,11 @@ void Viewport::setTool(ToolId id) {
     case ToolId::Pit:
     case ToolId::Flatten:
     case ToolId::TextureBrush: tool_ = std::make_unique<TerrainTool>(this, id); break;
+    case ToolId::SolidUnion:
+    case ToolId::SolidIntersect:
+    case ToolId::SolidSubtract:
+    case ToolId::SolidTrim:
+    case ToolId::SolidSplit: tool_ = std::make_unique<SolidTool>(this, id); break;
     }
     inference_->resetMemory();
     vcbLabel_ = tool_->vcbLabel();

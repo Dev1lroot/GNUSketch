@@ -49,6 +49,10 @@ namespace gs {
 
 namespace {
 
+// Solid Tools toolbar/menu order.
+const ToolId kSolidTools[] = {ToolId::SolidIntersect, ToolId::SolidUnion, ToolId::SolidSubtract, ToolId::SolidTrim,
+                              ToolId::SolidSplit};
+
 QJsonArray vec(const Vec3& v) { return QJsonArray{v.x, v.y, v.z}; }
 Vec3 vec(const QJsonValue& j, const Vec3& def) {
     QJsonArray a = j.toArray();
@@ -167,6 +171,11 @@ void MainWindow::buildActions() {
     toolAction(ToolId::Pit, QStringLiteral("Pit"), QString());
     toolAction(ToolId::Flatten, QStringLiteral("Flatten"), QString());
     toolAction(ToolId::TextureBrush, QStringLiteral("Texture Brush"), QString());
+    toolAction(ToolId::SolidUnion, QStringLiteral("Union"), QString());
+    toolAction(ToolId::SolidIntersect, QStringLiteral("Intersect"), QString());
+    toolAction(ToolId::SolidSubtract, QStringLiteral("Subtract"), QString());
+    toolAction(ToolId::SolidTrim, QStringLiteral("Trim"), QString());
+    toolAction(ToolId::SolidSplit, QStringLiteral("Split"), QString());
 
     auto act = [this](const QString& key, const QString& icon, const QString& text, const QKeySequence& sc,
                       std::function<void()> fn) {
@@ -422,6 +431,8 @@ void MainWindow::buildMenus() {
     tools->addSeparator();
     QMenu* terraform = tools->addMenu(Icons::get("mountain"), QStringLiteral("Terra&form"));
     for (ToolId id : {ToolId::Mountain, ToolId::Pit, ToolId::Flatten, ToolId::TextureBrush}) terraform->addAction(toolActions_[id]);
+    QMenu* solids = tools->addMenu(Icons::get("solid_union"), QStringLiteral("&Solid Tools"));
+    for (ToolId id : kSolidTools) solids->addAction(toolActions_[id]);
     tools->addSeparator();
     tools->addAction(acts_["roundcorners"]);
     tools->addAction(acts_["traceimage"]);
@@ -484,6 +495,11 @@ void MainWindow::buildToolbars() {
     camera->addSeparator();
     camera->addAction(perspectiveAct_);
     camera->addAction(parallelAct_);
+
+    auto* solids = addToolBar(QStringLiteral("Solid Tools"));
+    solids->setObjectName("SolidToolsToolbar");
+    solids->setIconSize(QSize(24, 24));
+    for (ToolId id : kSolidTools) solids->addAction(toolActions_[id]);
 
     // Large tool set: two columns on the left like the reference layout.
     auto* large = new QToolBar(QStringLiteral("Large Tool Set"), this);
@@ -1496,6 +1512,8 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
         }
         menu.addAction(acts_["makeunique"]);
         menu.addAction(acts_["explode"]);
+        QMenu* solids = menu.addMenu(Icons::get("solid_union"), QStringLiteral("Solid Tools"));
+        for (ToolId id : kSolidTools) solids->addAction(toolActions_[id]);
         menu.addSeparator();
     }
     if (doc_.editingComponent()) {

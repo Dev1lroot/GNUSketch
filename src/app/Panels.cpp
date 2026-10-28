@@ -5,6 +5,7 @@
 #include "TerrainTools.h"
 #include "Viewport.h"
 #include "core/Components.h"
+#include "core/Solids.h"
 #include "io/ImageUtil.h"
 
 #include <QButtonGroup>
@@ -283,7 +284,18 @@ void EntityInfoPanel::refresh() {
                                                 : QStringLiteral("%1 Components").arg(s.instances.size()));
         if (same) {
             measureLabel_->setText(QString::fromStdString(st.defs[def].name));
-            measure_->setText(QStringLiteral("%1 in model").arg(instanceCount(st, def)));
+            QString count = QStringLiteral("%1 in model").arg(instanceCount(st, def));
+            // A solid can be used with the Solid Tools; show its volume like SketchUp.
+            if (s.instances.size() == 1) {
+                const Id inst = *s.instances.begin();
+                const double v = solidVolume(st.defs[def].mesh);
+                if (v > 0) {
+                    title_->setText(QStringLiteral("Solid Component"));
+                    count += QStringLiteral(", volume %1").arg(QString::fromStdString(
+                        doc_->units.formatVolume(v * std::fabs(instanceWorldXf(st, inst).det3()))));
+                }
+            }
+            measure_->setText(count);
         } else {
             measureLabel_->setText(QStringLiteral("Definitions:"));
             measure_->setText(QStringLiteral("mixed"));
@@ -1035,6 +1047,17 @@ void InstructorPanel::showTool(ToolId id) {
     case ToolId::TextureBrush: i = {"Texture Brush", "Paints the material chosen in the Materials panel over any surface, on top of the textures already there, so materials blend into each other with a soft edge.",
         "Choose a material (colour or texture) in Materials, then press and hold on a surface and drag. Paint more of another material to mix it in; choose the Default material to erase painted textures. Faces under the brush are subdivided into a fine smooth mesh to carry the paint.",
         "Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
+    case ToolId::SolidUnion: i = {"Union", "Combines two solid components into one and removes the faces inside.",
+        "Click the first solid, then the second. Or select several solids and pick the tool to join them all.",
+        "A solid is a component whose faces close up with no holes. Esc: start over"}; break;
+    case ToolId::SolidIntersect: i = {"Intersect", "Keeps only the volume two solid components share.",
+        "Click the first solid, then the second. Or select several solids and pick the tool.", "Esc: start over"}; break;
+    case ToolId::SolidSubtract: i = {"Subtract", "Cuts the first solid out of the second and removes the first: holes, pockets and notches.",
+        "Click the solid that cuts (or select it before picking the tool), then the solid to cut it out of.", "Esc: start over"}; break;
+    case ToolId::SolidTrim: i = {"Trim", "Cuts the first solid out of the second but keeps the first, e.g. to fit a part into another.",
+        "Click the solid that cuts (or select it before picking the tool), then the solid to trim.", "Esc: start over"}; break;
+    case ToolId::SolidSplit: i = {"Split", "Splits two overlapping solids into three components: each one's own part and the part they share.",
+        "Click the first solid, then the second.", "Esc: start over"}; break;
     case ToolId::Flatten: i = {"Flatten", "Levels the surface around the brush to the height of the point where you start.",
         "Press on the height you want to keep, hold and drag over the bumps to flatten them.", "Shift: vertical axis only &nbsp; Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Esc: cancel the stroke"}; break;
     }

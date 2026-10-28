@@ -4,6 +4,7 @@
 #include "core/Document.h"
 #include "core/Mesh.h"
 #include "core/RoundCorners.h"
+#include "core/Solids.h"
 #include "core/Terrain.h"
 #include "core/Material.h"
 #include "core/FollowMe.h"
@@ -1114,6 +1115,338 @@ int main() {
         double top2 = 0;
         for (const Vertex& v : m.vertices) if (v.alive) top2 = std::max(top2, v.p.z);
         CHECK(top2 > 2.3);
+    });
+
+    // ---- solid tools ------------------------------------------------------------
+    // Axis-aligned box [mn, mx] drawn as loose geometry.
+    auto solidBox = [](Mesh& m, Vec3 mn, Vec3 mx) {
+        m.drawPolyline({{mn.x, mn.y, mn.z}, {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mn.x, mx.y, mn.z}}, true);
+        Vec3 c((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mn.z);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.facePlane(f).contains(c) && m.pointInFace(f, c)) {
+                m.pushPull(f, (mx.z - mn.z) * m.faces[f].normal.z);
+                return;
+            }
+    };
+    auto boxMesh = [&](Vec3 mn, Vec3 mx) {
+        Mesh m;
+        solidBox(m, mn, mx);
+        return m;
+    };
+    auto cylinder = [](Vec3 c, double r, double h, int n) {
+        Mesh m;
+        std::vector<Vec3> pts;
+        for (int i = 0; i < n; ++i) pts.push_back(c + Vec3(r * std::cos(2 * kPi * i / n), r * std::sin(2 * kPi * i / n), 0));
+        m.drawPolyline(pts, true, m.newCurveId());
+        Id f = onlyFace(m);
+        m.pushPull(f, h * m.faces[f].normal.z);
+        return m;
+    };
+    auto near = [](double a, double b, double tol = 1e-6) { return std::fabs(a - b) <= tol; };
+    // Every face lies in its plane and the result is a closed solid.
+    auto wellFormed = [](const Mesh& m) {
+        if (!isSolid(m)) return false;
+        for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+            if (!m.edges[e].alive) continue;
+            int n = 0;
+            for (Id f : m.edgeFaces(e)) n += m.faces[f].alive;
+            if (n != 2) return false;
+        }
+        for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+            if (!m.faces[f].alive) continue;
+            Plane P = m.facePlane(f);
+            for (Id v : m.faceVertices(f))
+                if (std::fabs(P.distance(m.pos(v))) > 1e-7) return false;
+        }
+        return true;
+    };
+
+    test("solids: closed box is a solid, open box is not", [&] {
+        Mesh m = boxMesh(Vec3(0, 0, 0), Vec3(2, 1, 1));
+        CHECK(isSolid(m));
+        CHECK(near(solidVolume(m), 2));
+        Mesh open = m;
+        for (Id f = 0; f < (Id)open.faces.size(); ++f)
+            if (open.faces[f].alive && open.faces[f].normal.z > 0.9) open.eraseFace(f);
+        std::string why;
+        CHECK(!isSolid(open, &why));
+        CHECK(why.find("one face") != std::string::npos);
+        CHECK_EQ(solidVolume(open), 0.0);
+        // Reversed faces are fixed up for the operation.
+        Mesh rev = m;
+        for (Id f = 0; f < (Id)rev.faces.size(); ++f)
+            if (rev.faces[f].alive && f % 2) rev.reverseFace(f);
+        CHECK(isSolid(rev));
+        CHECK(near(solidVolume(rev), 2));
+    });
+
+    test("solids: overlapping boxes union / subtract / intersect", [&] {
+        Mesh a = boxMesh(Vec3(0, 0, 0), Vec3(1, 1, 1));
+        Mesh b = boxMesh(Vec3(0.5, 0.5, 0.5), Vec3(1.5, 1.5, 1.5));
+        Mesh u, d, i;
+        std::string err;
+        CHECK(booleanMeshes(a, b, BoolOp::Union, u, &err));
+        CHECK(booleanMeshes(a, b, BoolOp::Difference, d, &err));
+        CHECK(booleanMeshes(a, b, BoolOp::Intersect, i, &err));
+        CHECK(err.empty());
+        CHECK(wellFormed(u) && wellFormed(d) && wellFormed(i));
+        CHECK(near(solidVolume(u), 1.875));
+        CHECK(near(solidVolume(d), 0.875));
+        CHECK(near(solidVolume(i), 0.125));
+        CHECK_EQ(i.aliveFaceCount(), 6);
+        CHECK_EQ(d.aliveFaceCount(), 9); // three notched faces + three faces of the cut corner + three untouched
+        CHECK_EQ(u.aliveFaceCount(), 12);
+        // Faces stay n-gons: the notched faces are L-shaped hexagons.
+        int hex = 0;
+        for (const Face& F : d.faces) hex += F.alive && F.outer.size() == 6;
+        CHECK_EQ(hex, 3);
+    });
+
+    test("solids: flush faces merge, touching faces vanish", [&] {
+        Mesh a = boxMesh(Vec3(0, 0, 0), Vec3(1, 1, 1));
+        Mesh b = boxMesh(Vec3(0.5, 0, 0), Vec3(1.5, 1, 1)); // shares four side planes
+        Mesh u, d, i;
+        CHECK(booleanMeshes(a, b, BoolOp::Union, u));
+        CHECK(booleanMeshes(a, b, BoolOp::Difference, d));
+        CHECK(booleanMeshes(a, b, BoolOp::Intersect, i));
+        CHECK(wellFormed(u) && wellFormed(d) && wellFormed(i));
+        CHECK(near(solidVolume(u), 1.5) && near(solidVolume(d), 0.5) && near(solidVolume(i), 0.5));
+        CHECK_EQ(u.aliveFaceCount(), 6);
+        CHECK_EQ(u.aliveEdgeCount(), 12);
+        CHECK_EQ(d.aliveFaceCount(), 6);
+        CHECK_EQ(i.aliveFaceCount(), 6);
+
+        Mesh c = boxMesh(Vec3(1, 0, 0), Vec3(2, 1, 1)); // touches a's +x face
+        Mesh j;
+        CHECK(booleanMeshes(a, c, BoolOp::Union, j));
+        CHECK(wellFormed(j) && near(solidVolume(j), 2));
+        CHECK_EQ(j.aliveFaceCount(), 6);
+        CHECK(booleanMeshes(a, c, BoolOp::Difference, j));
+        CHECK(wellFormed(j) && near(solidVolume(j), 1));
+        CHECK_EQ(j.aliveFaceCount(), 6);
+        CHECK(booleanMeshes(a, c, BoolOp::Intersect, j));
+        CHECK_EQ(j.aliveFaceCount(), 0);
+    });
+
+    test("solids: drilling a hole makes faces with holes", [&] {
+        Mesh plate = boxMesh(Vec3(0, 0, 0), Vec3(2, 2, 1));
+        Mesh drill = boxMesh(Vec3(0.5, 0.5, -1), Vec3(1.5, 1.5, 2));
+        Mesh r;
+        CHECK(booleanMeshes(plate, drill, BoolOp::Difference, r));
+        CHECK(wellFormed(r));
+        CHECK(near(solidVolume(r), 3));
+        CHECK_EQ(r.aliveFaceCount(), 10);
+        int holed = 0;
+        for (const Face& F : r.faces) holed += F.alive && F.holes.size() == 1;
+        CHECK_EQ(holed, 2);
+        // A pocket that stops inside the plate.
+        Mesh pocket = boxMesh(Vec3(0.5, 0.5, 0.5), Vec3(1.5, 1.5, 2));
+        CHECK(booleanMeshes(plate, pocket, BoolOp::Difference, r));
+        CHECK(wellFormed(r) && near(solidVolume(r), 3.5));
+        CHECK_EQ(r.aliveFaceCount(), 11);
+        // A cutter fully inside leaves a void (inward-facing inner shell).
+        Mesh inner = boxMesh(Vec3(0.5, 0.5, 0.25), Vec3(1.5, 1.5, 0.75));
+        CHECK(booleanMeshes(plate, inner, BoolOp::Difference, r));
+        CHECK(isSolid(r) && near(solidVolume(r), 3.5));
+        CHECK_EQ(r.aliveFaceCount(), 12);
+    });
+
+    test("solids: cylinder through a box keeps soft sides and n-gon caps", [&] {
+        Mesh boxm = boxMesh(Vec3(-1, -1, 0), Vec3(1, 1, 1));
+        Mesh cyl = cylinder(Vec3(0, 0, -0.5), 0.5, 2, 24);
+        CHECK(isSolid(cyl));
+        const double prism = 24 * 0.5 * 0.25 * std::sin(2 * kPi / 24); // cross-section area of the 24-gon
+        Mesh r;
+        CHECK(booleanMeshes(boxm, cyl, BoolOp::Difference, r));
+        CHECK(wellFormed(r));
+        CHECK(near(solidVolume(r), 4 - prism, 1e-6));
+        int soft = 0, ring = 0;
+        for (const Edge& E : r.edges) soft += E.alive && E.soft;
+        for (const Face& F : r.faces) ring += F.alive && F.holes.size() == 1 && F.holes[0].size() == 24;
+        CHECK_EQ(soft, 24);
+        CHECK_EQ(ring, 2);
+        Mesh i;
+        CHECK(booleanMeshes(boxm, cyl, BoolOp::Intersect, i));
+        CHECK(wellFormed(i) && near(solidVolume(i), prism, 1e-6));
+        // Rotated, off-axis cutter: generic intersection curves.
+        Mesh tilted = cyl;
+        std::set<Id> all;
+        for (Id v = 0; v < (Id)tilted.vertices.size(); ++v)
+            if (tilted.vertices[v].alive) all.insert(v);
+        tilted.transformVertices(all, Mat4::translation(Vec3(0.3, 0.1, 0.5)) * Mat4::rotation(Vec3(1, 0.3, 0), 0.7) *
+                                          Mat4::translation(Vec3(0, 0, -0.5)), false);
+        Mesh u;
+        CHECK(booleanMeshes(boxm, tilted, BoolOp::Union, u));
+        CHECK(booleanMeshes(boxm, tilted, BoolOp::Difference, r));
+        CHECK(booleanMeshes(boxm, tilted, BoolOp::Intersect, i));
+        CHECK(wellFormed(u) && wellFormed(r) && wellFormed(i));
+        double vu = solidVolume(u), vr = solidVolume(r), vi = solidVolume(i);
+        CHECK(near(vr + vi, 4, 1e-6));
+        CHECK(near(vu, 4 + solidVolume(tilted) - vi, 1e-6));
+    });
+
+    test("solids: random and grid-aligned pairs keep volumes consistent", [&] {
+        uint32_t seed = 12345;
+        auto rnd = [&] { seed = seed * 1664525u + 1013904223u; return (seed >> 8) / double(1 << 24); };
+        auto moved = [](Mesh m, const Mat4& xf) {
+            std::set<Id> all;
+            for (Id v = 0; v < (Id)m.vertices.size(); ++v)
+                if (m.vertices[v].alive) all.insert(v);
+            m.transformVertices(all, xf, false);
+            return m;
+        };
+        int bad = 0;
+        for (int it = 0; it < 200; ++it) {
+            Mesh a, b;
+            if (it % 2) {
+                // Grid-snapped boxes: many coplanar faces and shared edges/vertices.
+                auto g = [&] { return std::floor(rnd() * 4) * 0.5; };
+                Vec3 p(g(), g(), g());
+                a = boxMesh(Vec3(0, 0, 0), Vec3(1.5, 1.5, 1.5));
+                b = boxMesh(p, p + Vec3(0.5 + g(), 0.5 + g(), 0.5 + g()));
+            } else {
+                a = boxMesh(Vec3(0, 0, 0), Vec3(1, 1, 1));
+                Mat4 xf = Mat4::translation(Vec3(rnd(), rnd(), rnd())) *
+                          Mat4::rotation(Vec3(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5), rnd() * 3);
+                b = it % 4 == 0 ? moved(cylinder(Vec3(0, 0, -0.5), 0.3 + rnd() * 0.3, 1.2, 12 + it % 7), xf)
+                                : moved(boxMesh(Vec3(-0.4, -0.3, -0.35), Vec3(0.4, 0.3, 0.35)), xf);
+            }
+            Mesh u, d, i;
+            std::string err;
+            bool ok = booleanMeshes(a, b, BoolOp::Union, u, &err) && booleanMeshes(a, b, BoolOp::Difference, d, &err) &&
+                      booleanMeshes(a, b, BoolOp::Intersect, i, &err);
+            // Signed volume straight from the faces: also defined for results that
+            // touch themselves along an edge (not solids in the strict sense).
+            auto vol = [](const Mesh& m) {
+                double v = 0;
+                for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+                    if (!m.faces[f].alive) continue;
+                    Vec3 bu, bv;
+                    planeBasis(m.faces[f].normal, bu, bv);
+                    std::vector<std::vector<Vec2>> loops;
+                    std::vector<Vec3> flat;
+                    std::vector<std::vector<Id>> ls = {m.faces[f].outer};
+                    for (const auto& h : m.faces[f].holes) ls.push_back(h);
+                    for (const auto& L : ls) {
+                        loops.emplace_back();
+                        for (Id x : L) {
+                            loops.back().emplace_back(m.pos(x).dot(bu), m.pos(x).dot(bv));
+                            flat.push_back(m.pos(x));
+                        }
+                    }
+                    for (const auto& t : triangulatePolygon(loops)) v += flat[t[0]].dot(flat[t[1]].cross(flat[t[2]])) / 6;
+                }
+                return v;
+            };
+            double va = vol(a), vb = vol(b), vu = vol(u), vd = vol(d), vi = vol(i);
+            bool good = ok && near(vd + vi, va, 1e-6) && near(vu, va + vb - vi, 1e-6);
+            // Results may touch themselves along an edge (grid cases); only check
+            // closedness when the pieces are regular solids.
+            for (const Mesh* r : {&u, &d, &i}) {
+                if (r->aliveFaceCount() == 0) continue;
+                std::string why;
+                if (!isSolid(*r, &why) && why.find("more than two") == std::string::npos) good = false;
+            }
+            if (!good) {
+                ++bad;
+                std::printf("    case %d: ok=%d err='%s' va=%g vb=%g vu=%g vd=%g vi=%g\n", it, ok, err.c_str(), va, vb, vu, vd, vi);
+            }
+        }
+        CHECK_EQ(bad, 0);
+    });
+
+    test("solids: split gives three pieces that add up", [&] {
+        Mesh a = boxMesh(Vec3(0, 0, 0), Vec3(1, 1, 1));
+        Mesh b = boxMesh(Vec3(0.25, 0.25, 0.5), Vec3(2, 2, 2));
+        Mesh x, y, z;
+        CHECK(splitMeshes(a, b, x, y, z));
+        CHECK(wellFormed(x) && wellFormed(y) && wellFormed(z));
+        double va = solidVolume(a), vb = solidVolume(b);
+        CHECK(near(solidVolume(x) + solidVolume(y), va));
+        CHECK(near(solidVolume(z) + solidVolume(y), vb));
+        CHECK(near(solidVolume(y), 0.75 * 0.75 * 0.5));
+    });
+
+    test("solids: not a solid gives a message and no result", [&] {
+        Mesh a = boxMesh(Vec3(0, 0, 0), Vec3(1, 1, 1));
+        Mesh b;
+        rect(b, 0, 0, 1, 1, 0.5);
+        Mesh r;
+        std::string err;
+        CHECK(!booleanMeshes(a, b, BoolOp::Union, r, &err));
+        CHECK(err.find("second solid is not a solid") != std::string::npos);
+        CHECK_EQ(r.aliveFaceCount(), 0);
+    });
+
+    test("solids: component subtract, trim and split", [&] {
+        auto twoBoxes = [&](Document& d, Id& target, Id& cutter) {
+            solidBox(d.mesh(), Vec3(0, 0, 0), Vec3(2, 2, 1));
+            target = makeComponent(d.state, selectAllGeometry(d), "Plate");
+            solidBox(d.mesh(), Vec3(0.5, 0.5, -1), Vec3(1.5, 1.5, 2));
+            cutter = makeComponent(d.state, selectAllGeometry(d), "Peg");
+        };
+        auto defVolume = [](const Document& d, Id inst) {
+            return solidVolume(d.state.defs[d.state.instances[inst].def].mesh);
+        };
+        {
+            Document d;
+            Id plate, peg;
+            twoBoxes(d, plate, peg);
+            CHECK(instanceIsSolid(d.state, plate) && instanceIsSolid(d.state, peg));
+            Selection out;
+            std::string err;
+            CHECK(solidOperation(d.state, SolidOp::Subtract, peg, plate, &out, &err));
+            CHECK(!d.state.instances[peg].alive && d.state.instances[plate].alive);
+            CHECK(out.instances == std::set<Id>{plate});
+            CHECK(near(defVolume(d, plate), 3));
+            // The result keeps the instance's own axes.
+            CHECK(d.state.instances[plate].xf.isIdentity());
+        }
+        {
+            Document d;
+            Id plate, peg;
+            twoBoxes(d, plate, peg);
+            // Move the plate's instance: the result must stay where it is in the world.
+            d.state.instances[plate].xf = Mat4::translation(Vec3(0.25, 0, 0)) * d.state.instances[plate].xf;
+            Id copy = cloneInstance(d.state, plate);
+            d.state.instances[copy].xf = Mat4::translation(Vec3(10, 0, 0)) * d.state.instances[copy].xf;
+            CHECK(solidOperation(d.state, SolidOp::Trim, peg, plate));
+            CHECK(d.state.instances[peg].alive && near(defVolume(d, peg), 3));
+            CHECK(near(defVolume(d, plate), 3));
+            CHECK(near(defVolume(d, copy), 4)); // the other copy keeps the old definition
+            CHECK(d.state.instances[plate].def != d.state.instances[copy].def);
+            Vec3 mn, mx;
+            CHECK(instanceBounds(d.state, plate, mn, mx));
+            CHECK(mn.nearlyEquals(Vec3(0.25, 0, 0)) && mx.nearlyEquals(Vec3(2.25, 2, 1)));
+        }
+        {
+            Document d;
+            Id plate, peg;
+            twoBoxes(d, plate, peg);
+            Selection out;
+            CHECK(solidOperation(d.state, SolidOp::Split, peg, plate, &out));
+            CHECK_EQ((int)out.instances.size(), 3);
+            double total = 0;
+            for (Id i : out.instances) total += defVolume(d, i);
+            CHECK(near(total, 4 + 3 - 1));
+            CHECK(near(defVolume(d, peg), 2) && near(defVolume(d, plate), 3));
+            CHECK(d.state.defs[d.state.instances[peg].def].name == "Peg");
+            CHECK(d.state.defs[d.state.instances[plate].def].name == "Plate");
+        }
+        {
+            Document d;
+            Id plate, peg;
+            twoBoxes(d, plate, peg);
+            CHECK(solidOperation(d.state, SolidOp::Union, peg, plate));
+            CHECK(!d.state.instances[peg].alive && near(defVolume(d, plate), 6));
+            Id far = kNone;
+            solidBox(d.mesh(), Vec3(5, 5, 5), Vec3(6, 6, 6));
+            far = makeComponent(d.state, selectAllGeometry(d), "Far");
+            std::string err;
+            ModelState before = d.state;
+            CHECK(!solidOperation(d.state, SolidOp::Intersect, far, plate, nullptr, &err));
+            CHECK(!err.empty() && d.state.instances[far].alive && d.state.instances[plate].alive);
+        }
     });
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);

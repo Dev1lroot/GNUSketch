@@ -72,6 +72,16 @@ std::string Units::formatArea(double sq) const {
     return fmtNum(sq / (f * f), prec) + " " + sfx;
 }
 
+std::string Units::formatVolume(double cu) const {
+    // Millimetres would give unreadably large numbers: show cubic centimetres.
+    LengthUnit u = unit == LengthUnit::Millimeters ? LengthUnit::Centimeters : unit;
+    double f = toMeters(u);
+    const char* sfx = u == LengthUnit::Centimeters ? "cm³"
+                    : u == LengthUnit::Meters ? "m³"
+                    : u == LengthUnit::Inches ? "in³" : "ft³";
+    return fmtNum(cu / (f * f * f), u == LengthUnit::Meters ? 3 : 1) + " " + sfx;
+}
+
 bool parseNumber(const std::string& textIn, double& out) {
     std::string t;
     for (char c : textIn) {

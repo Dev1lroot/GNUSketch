@@ -82,6 +82,9 @@ include its output in the bug report.
   **Make Unique** gives the selected copies their own definition, and **Explode**
   turns a component back into loose geometry. Exporters write components as
   ordinary geometry.
+* **View → Render**: sun **Shadows**, **Ambient Occlusion** (soft darkening in
+  creases, corners and where objects meet; screen-space, so it follows what is on
+  screen) and **Antialiasing** toggles.
 * **Terraform** (Tools → Terraform, tool set, Terraform tray section): **Mountain**,
   **Pit** and **Flatten** sculpting brushes. Press and hold on a face: Mountain
   raises it, Pit sinks it, Flatten levels it to the height where the stroke started;
@@ -259,7 +262,7 @@ tests       kernel and I/O tests
 ## Not implemented yet
 
 Groups, nested components, component axes editing, 3-point arc and pie, rotated rectangle, text,
-dimensions, section planes, tags/layers, scenes, shadows, intersect faces, the
+dimensions, section planes, tags/layers, scenes, intersect faces, the
 texture position editor, and folding of faces that move out of plane.
 
 ## Contributing

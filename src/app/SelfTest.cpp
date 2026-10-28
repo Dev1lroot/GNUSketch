@@ -814,6 +814,35 @@ int runSelfTest(MainWindow& w) {
             doc.currentMaterial = kNone;
         }
 
+        // View > Render > Ambient Occlusion darkens the inside corner where a
+        // floor meets a wall.
+        {
+            doc.beginOp("AO box");
+            d.mesh().drawPolyline({{302, 4, 0.5}, {306, 4, 0.5}, {306, 8, 0.5}, {302, 8, 0.5}}, true);
+            d.mesh().drawPolyline({{302, 8, 0.5}, {306, 8, 0.5}, {306, 8, 2.5}, {302, 8, 2.5}}, true);
+            doc.commitOp();
+            QAction* ao = w.findChild<QAction*>(QStringLiteral("ambientocclusion"));
+            d.check(ao && !ao->isChecked(), "View > Render has an Ambient Occlusion toggle");
+            if (ao) {
+                d.move(QPointF(5, 5));
+                vp->update();
+                QImage base = vp->grabFramebuffer();
+                ao->trigger();
+                QImage shaded = vp->grabFramebuffer();
+                int darker = 0, lighter = 0;
+                for (int y = 0; y < base.height(); ++y)
+                    for (int x = 0; x < base.width(); ++x) {
+                        int g0 = qGray(base.pixel(x, y)), g1 = qGray(shaded.pixel(x, y));
+                        if (g1 + 6 < g0) ++darker;
+                        if (g1 > g0 + 2) ++lighter;
+                    }
+                d.check(doc.style.ambientOcclusion && darker > base.width() * base.height() / 500 && lighter == 0,
+                        "ambient occlusion darkens creases and never brightens");
+                ao->trigger();
+                d.check(vp->grabFramebuffer() == base, "switching ambient occlusion off restores the frame");
+            }
+        }
+
         TerrainSettings::instance().setBrush(userBrush);
         vp->camera() = savedCam;
         vp->setTool(ToolId::Select);

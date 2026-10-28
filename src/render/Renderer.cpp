@@ -207,6 +207,92 @@ const char* kDepthFS = R"(#version 330 core
 void main() {}
 )";
 
+// Screen-space ambient occlusion: a full-screen triangle, then the occlusion
+// estimated from the depth of the faces, then a depth-aware blur multiplied
+// over the shaded faces.
+const char* kScreenVS = R"(#version 330 core
+out vec2 vUv;
+void main() {
+    vec2 p = vec2((gl_VertexID == 1) ? 3.0 : -1.0, (gl_VertexID == 2) ? 3.0 : -1.0);
+    vUv = p * 0.5 + 0.5;
+    gl_Position = vec4(p, 0.0, 1.0);
+}
+)";
+
+#define GS_VIEWPOS_GLSL R"(
+uniform sampler2D uDepth;
+uniform mat4 uInvProj;
+vec3 viewPos(vec2 uv) {
+    float d = texture(uDepth, uv).r;
+    vec4 p = uInvProj * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+    return p.xyz / p.w;
+}
+)"
+
+const char* kAoFS = "#version 330 core\n" GS_VIEWPOS_GLSL R"(
+in vec2 vUv;
+uniform mat4 uProj;
+uniform float uRadius;
+uniform vec2 uTexel;
+out vec4 fragColor;
+const int K = 16;
+void main() {
+    if (texture(uDepth, vUv).r >= 1.0) { fragColor = vec4(1.0); return; }
+    vec3 P = viewPos(vUv);
+    // Normal from the neighbour on the flatter side (keeps silhouettes clean).
+    vec3 px = viewPos(vUv + vec2(uTexel.x, 0.0)) - P, nx = P - viewPos(vUv - vec2(uTexel.x, 0.0));
+    vec3 py = viewPos(vUv + vec2(0.0, uTexel.y)) - P, ny = P - viewPos(vUv - vec2(0.0, uTexel.y));
+    vec3 N = normalize(cross(abs(px.z) < abs(nx.z) ? px : nx, abs(py.z) < abs(ny.z) ? py : ny));
+    vec3 toEye = length(P) > 0.0 && uProj[3][3] < 0.5 ? -P : vec3(0.0, 0.0, 1.0);
+    if (dot(N, toEye) < 0.0) N = -N;
+    vec3 T = normalize(cross(N, abs(N.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+    vec3 B = cross(N, T);
+    // A 4x4 pixel pattern rotates the samples; the blur pass averages it out.
+    ivec2 ip = ivec2(gl_FragCoord.xy) % 4;
+    float rnd = float(ip.x * 4 + ip.y) / 16.0;
+    float occ = 0.0;
+    for (int i = 0; i < K; ++i) {
+        float fi = (float(i) + 0.5) / float(K);
+        float a = float(i) * 2.39996323 + rnd * 6.2831853;
+        float r = sqrt(fi);
+        vec3 dir = T * (cos(a) * r) + B * (sin(a) * r) + N * sqrt(max(1.0 - fi, 0.05));
+        float s = mix(0.15, 1.0, fract(fi + rnd) * fract(fi + rnd));
+        vec3 S = P + dir * (uRadius * s);
+        vec4 c = uProj * vec4(S, 1.0);
+        vec2 uv = c.xy / c.w * 0.5 + 0.5;
+        if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) continue;
+        if (texture(uDepth, uv).r >= 1.0) continue;
+        float sceneZ = viewPos(uv).z;
+        float range = smoothstep(0.0, 1.0, uRadius / max(abs(P.z - sceneZ), 1e-6));
+        occ += (sceneZ >= S.z + uRadius * 0.03 ? 1.0 : 0.0) * range;
+    }
+    fragColor = vec4(vec3(1.0 - occ / float(K)), 1.0);
+}
+)";
+
+const char* kAoBlendFS = "#version 330 core\n" GS_VIEWPOS_GLSL R"(
+in vec2 vUv;
+uniform sampler2D uAo;
+uniform vec2 uTexel;
+uniform float uStrength;
+out vec4 fragColor;
+void main() {
+    if (texture(uDepth, vUv).r >= 1.0) { fragColor = vec4(1.0); return; }
+    float z0 = viewPos(vUv).z;
+    float sum = 0.0, wsum = 0.0;
+    for (int y = -2; y <= 1; ++y)
+        for (int x = -2; x <= 1; ++x) {
+            vec2 uv = vUv + vec2(float(x) + 0.5, float(y) + 0.5) * uTexel;
+            float dz = abs(viewPos(uv).z - z0) / max(abs(z0), 1e-3);
+            float w = 1.0 / (1.0 + dz * 200.0);
+            sum += texture(uAo, uv).r * w;
+            wsum += w;
+        }
+    float ao = sum / max(wsum, 1e-6);
+    fragColor = vec4(vec3(mix(1.0, ao, uStrength)), 1.0);
+}
+)";
+
 constexpr int kShadowSize = 4096;
 const Vec3 kLightDir = Vec3(-0.3, -0.6, 0.75).normalized(); // towards the sun
 
@@ -252,6 +338,8 @@ bool Renderer::initialize(QString* log) {
     ok = make(skyProg_, kSkyVS, nullptr, kSkyFS) && ok;
     ok = make(flatProg_, kFlatVS, nullptr, kFlatFS) && ok;
     ok = make(depthProg_, kDepthVS, nullptr, kDepthFS) && ok;
+    ok = make(aoProg_, kScreenVS, nullptr, kAoFS) && ok;
+    ok = make(aoBlendProg_, kScreenVS, nullptr, kAoBlendFS) && ok;
     if (!ok) return false;
 
     glGenTextures(1, &shadowTex_);
@@ -310,6 +398,9 @@ void Renderer::cleanup() {
     glDeleteFramebuffers(1, &shadowFbo_);
     glDeleteTextures(1, &shadowTex_);
     shadowFbo_ = shadowTex_ = 0;
+    freeAoTargets();
+    aoProg_.reset();
+    aoBlendProg_.reset();
     depthProg_.reset();
     faceProg_.reset();
     lineProg_.reset();
@@ -708,6 +799,107 @@ void Renderer::setShadowUniforms(QOpenGLShaderProgram* p) {
     glActiveTexture(GL_TEXTURE0);
 }
 
+void Renderer::freeAoTargets() {
+    if (aoDepthFbo_) glDeleteFramebuffers(1, &aoDepthFbo_);
+    if (aoFbo_) glDeleteFramebuffers(1, &aoFbo_);
+    if (aoDepthTex_) glDeleteTextures(1, &aoDepthTex_);
+    if (aoTex_) glDeleteTextures(1, &aoTex_);
+    aoDepthFbo_ = aoFbo_ = aoDepthTex_ = aoTex_ = 0;
+    aoW_ = aoH_ = 0;
+}
+
+bool Renderer::ensureAoTargets(int w, int h) {
+    if (aoDepthFbo_ && aoW_ == w && aoH_ == h) return true;
+    freeAoTargets();
+    auto tex = [&](unsigned& t, GLint internal, GLenum format, GLenum type) {
+        glGenTextures(1, &t);
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, format, type, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    };
+    tex(aoDepthTex_, GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_FLOAT);
+    tex(aoTex_, GL_R8, GL_RED, GL_UNSIGNED_BYTE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glGenFramebuffers(1, &aoDepthFbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, aoDepthFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, aoDepthTex_, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glGenFramebuffers(1, &aoFbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, aoFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, aoTex_, 0);
+    ok = ok && glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    if (!ok) freeAoTargets();
+    aoW_ = w;
+    aoH_ = h;
+    return ok;
+}
+
+void Renderer::drawAmbientOcclusion(const std::vector<std::pair<const MeshGpu*, Mat4>>& meshes, const Camera& cam) {
+    // The widget renders into its own framebuffer: remember it before
+    // (re)creating the AO targets binds theirs.
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFbo);
+    const bool ready = ensureAoTargets(vpW_, vpH_);
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+    if (!ready) return;
+
+    // 1. Depth of the opaque faces.
+    glBindFramebuffer(GL_FRAMEBUFFER, aoDepthFbo_);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    depthProg_->bind();
+    for (const auto& [g, xf] : meshes) {
+        setMat(depthProg_.get(), "uMVP", cam.viewProjection() * xf);
+        glBindVertexArray(g->vao);
+        for (const Batch& b : g->batches)
+            if (!b.transparent && !b.paint) glDrawArrays(GL_TRIANGLES, b.first, b.count);
+    }
+
+    // 2. Occlusion from that depth.
+    const Mat4 proj = cam.projection();
+    const double radius = std::clamp(cam.distance() * 0.04, 0.01, 5.0);
+    glDisable(GL_DEPTH_TEST);
+    glBindFramebuffer(GL_FRAMEBUFFER, aoFbo_);
+    aoProg_->bind();
+    setMat(aoProg_.get(), "uProj", proj);
+    setMat(aoProg_.get(), "uInvProj", proj.inverted());
+    aoProg_->setUniformValue("uRadius", (float)radius);
+    aoProg_->setUniformValue("uTexel", QVector2D(1.0f / vpW_, 1.0f / vpH_));
+    aoProg_->setUniformValue("uDepth", 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, aoDepthTex_);
+    glBindVertexArray(skyVao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // 3. Blurred and multiplied over the shaded faces.
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+    aoBlendProg_->bind();
+    setMat(aoBlendProg_.get(), "uInvProj", proj.inverted());
+    aoBlendProg_->setUniformValue("uTexel", QVector2D(1.0f / vpW_, 1.0f / vpH_));
+    aoBlendProg_->setUniformValue("uStrength", 0.85f);
+    aoBlendProg_->setUniformValue("uDepth", 0);
+    aoBlendProg_->setUniformValue("uAo", 1);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, aoTex_);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+    glDepthMask(GL_FALSE);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindVertexArray(0);
+    glEnable(GL_DEPTH_TEST);
+}
+
 void Renderer::renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Vec3& mn, const Vec3& mx) {
     // Orthographic sun view fitted around the model's bounding sphere; the depth
     // range reaches down to the ground plane so ground shadows are covered.
@@ -863,6 +1055,12 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     drawMeshFaces(activeGpu, doc, cam, Mat4(), 0.0f);
     if (!editing)
         for (const Placed& p : placed) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.0f);
+    if (st.ambientOcclusion && !st.xray && st.faceStyle != RenderStyle::Wireframe) {
+        std::vector<std::pair<const MeshGpu*, Mat4>> meshes{{&activeGpu, Mat4()}};
+        if (!editing)
+            for (const Placed& p : placed) meshes.push_back({&meshGpu(doc, p.def), p.xf});
+        drawAmbientOcclusion(meshes, cam);
+    }
 
     // Selection / highlight stipple over faces.
     {

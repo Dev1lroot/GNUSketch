@@ -108,8 +108,14 @@ private:
     // Sun shadow map from the given meshes (with their world transforms).
     void renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Vec3& mn, const Vec3& mx);
     void setShadowUniforms(QOpenGLShaderProgram* p);
+    // Screen-space ambient occlusion multiplied over the faces drawn so far.
+    void drawAmbientOcclusion(const std::vector<std::pair<const MeshGpu*, Mat4>>& meshes, const Camera& cam);
+    bool ensureAoTargets(int w, int h);
+    void freeAoTargets();
 
-    std::unique_ptr<QOpenGLShaderProgram> faceProg_, lineProg_, skyProg_, flatProg_, depthProg_;
+    std::unique_ptr<QOpenGLShaderProgram> faceProg_, lineProg_, skyProg_, flatProg_, depthProg_, aoProg_, aoBlendProg_;
+    unsigned aoDepthFbo_ = 0, aoFbo_ = 0, aoDepthTex_ = 0, aoTex_ = 0;
+    int aoW_ = 0, aoH_ = 0;
     unsigned shadowFbo_ = 0, shadowTex_ = 0;
     bool shadowsOn_ = false; // shadow map valid for this frame
     Mat4 lightVP_;

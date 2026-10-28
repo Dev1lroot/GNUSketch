@@ -584,17 +584,17 @@ int runSelfTest(MainWindow& w) {
             return inst;
         };
         auto volume = [&](Id inst) { return solidVolume(doc.state.defs[doc.state.instances[inst].def].mesh); };
-        Id plate = boxComponent(Vec3(40, 0, 0), Vec3(42, 2, 1), "Plate");
-        Id peg = boxComponent(Vec3(40.5, 0.5, 0), Vec3(41.5, 1.5, 2), "Peg");
+        Id plate = boxComponent(Vec3(100, 0, 0), Vec3(102, 2, 1), "Plate");
+        Id peg = boxComponent(Vec3(100.5, 0.5, 0), Vec3(101.5, 1.5, 2), "Peg");
         d.check(plate != kNone && peg != kNone && instanceIsSolid(doc.state, plate) && instanceIsSolid(doc.state, peg),
                 "two solid components to cut");
         doc.selection.clear();
         doc.notifySelection();
         vp->setStandardView(Vec3(1, 1, -0.8));
-        vp->camera().zoomExtents(Vec3(39.5, -0.5, 0), Vec3(42.5, 2.5, 2));
+        vp->camera().zoomExtents(Vec3(99.5, -0.5, 0), Vec3(102.5, 2.5, 2));
         d.pump();
 
-        const QPointF onPeg = d.screen(Vec3(41, 1, 2)), onPlate = d.screen(Vec3(41.8, 0.2, 1));
+        const QPointF onPeg = d.screen(Vec3(101, 1, 2)), onPlate = d.screen(Vec3(101.8, 0.2, 1));
         vp->setTool(ToolId::SolidSubtract);
         d.click(onPeg);
         d.check(doc.selection.instances == std::set<Id>{peg}, "Subtract: first click picks the cutter");
@@ -615,7 +615,7 @@ int runSelfTest(MainWindow& w) {
                 "Trim with the cutter preselected keeps the cutter");
         doc.undo();
 
-        Id lid = boxComponent(Vec3(40, 0, 1), Vec3(42, 2, 1.25), "Lid");
+        Id lid = boxComponent(Vec3(100, 0, 1), Vec3(102, 2, 1.25), "Lid");
         doc.selection.clear();
         for (Id i : {plate, peg, lid}) doc.selection.instances.insert(i);
         doc.notifySelection();
@@ -630,7 +630,7 @@ int runSelfTest(MainWindow& w) {
 
         // A lone face is no solid: clicking it does nothing.
         doc.beginOp("Card");
-        d.mesh().drawPolyline({{40, 3, 0}, {41, 3, 0}, {41, 3, 1}, {40, 3, 1}}, true);
+        d.mesh().drawPolyline({{100, 3, 0}, {101, 3, 0}, {101, 3, 1}, {100, 3, 1}}, true);
         Selection card;
         for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
             if (d.mesh().faces[f].alive && d.mesh().faceInteriorPoint(f).y > 2.9) card.faces.insert(f);
@@ -638,7 +638,7 @@ int runSelfTest(MainWindow& w) {
         doc.commitOp();
         vp->setTool(ToolId::SolidUnion);
         std::string before = doc.undoName();
-        d.click(d.screen(Vec3(40.5, 3, 0.5)));
+        d.click(d.screen(Vec3(100.5, 3, 0.5)));
         d.check(cardInst != kNone && doc.undoName() == before && doc.selection.instances.empty(),
                 "a component that isn't closed can't be picked");
         vp->setTool(ToolId::Select);
@@ -680,6 +680,123 @@ int runSelfTest(MainWindow& w) {
                 "line snaps parallel to the last hovered edge");
         eng.resetMemory();
         vp->zoomExtents();
+    }
+
+    // Components offer the same snaps as loose geometry: midpoints, edges,
+    // parallel/perpendicular to their edges and perpendicular to their faces.
+    {
+        auto boxInst = [&](Vec3 mn, Vec3 mx, const char* name) {
+            doc.beginOp("Box");
+            Mesh& m = d.mesh();
+            m.drawPolyline({{mn.x, mn.y, mn.z}, {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mn.x, mx.y, mn.z}}, true);
+            Vec3 c((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mn.z);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && m.facePlane(f).contains(c) && m.pointInFace(f, c)) {
+                    m.pushPull(f, (mx.z - mn.z) * m.faces[f].normal.z);
+                    break;
+                }
+            Selection s;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+                Vec3 q = m.faceInteriorPoint(f);
+                if (m.faces[f].alive && q.x > mn.x - 1e-6 && q.x < mx.x + 1e-6 && q.y > mn.y - 1e-6 && q.y < mx.y + 1e-6)
+                    s.faces.insert(f);
+            }
+            Id inst = makeComponent(doc.state, s, name);
+            doc.commitOp();
+            return inst;
+        };
+        InferenceEngine& eng = vp->inference();
+        InferenceEngine::Options none;
+        Id base = boxInst(Vec3(70, 0, 0), Vec3(74, 2, 1), "Base");
+        Id block = boxInst(Vec3(76, 0, 0), Vec3(77, 1, 0.5), "Block");
+        doc.selection.clear();
+        doc.notifySelection();
+        vp->setStandardView(Vec3(1, 1, -0.8));
+        vp->camera().zoomExtents(Vec3(69.5, -0.5, 0), Vec3(77.5, 2.5, 1));
+        d.pump();
+        eng.resetMemory();
+        const Vec3 topMid(72, 0, 1); // middle of the base's top front edge
+        QPointF q = d.screen(topMid) + QPointF(1, 1);
+        InferenceResult mid = eng.infer(q.x(), q.y(), none);
+        d.check(mid.type == InferenceResult::Midpoint && mid.p.nearlyEquals(topMid, 1e-9) && mid.hasEdge,
+                "midpoint of a component's edge");
+        q = d.screen(Vec3(70.6, 0, 1)) + QPointF(0, 2);
+        InferenceResult on = eng.infer(q.x(), q.y(), none);
+        d.check(on.type == InferenceResult::OnEdge && on.edge == kNone && on.hasEdge && std::fabs(on.p.y) < 1e-6 &&
+                    std::fabs(on.p.z - 1) < 1e-6,
+                "on a component's edge");
+
+        // Centre the block on the base: move its bottom front midpoint to the
+        // base's top front midpoint.
+        vp->setTool(ToolId::Move);
+        doc.selection.clear();
+        doc.selection.instances.insert(block);
+        doc.notifySelection();
+        d.click(d.screen(Vec3(76.5, 0, 0)) + QPointF(1, 1));
+        d.click(d.screen(topMid) + QPointF(1, 1));
+        Vec3 bmn, bmx;
+        instanceBounds(doc.state, block, bmn, bmx);
+        d.check(bmn.nearlyEquals(Vec3(71.5, 0, 1), 1e-9) && bmx.nearlyEquals(Vec3(72.5, 1, 1.5), 1e-9),
+                "Move snaps a component midpoint to another component's midpoint (centred)");
+        doc.undo();
+        vp->setTool(ToolId::Select);
+
+        // Rotated component: parallel / perpendicular to its edge, from a free point on the ground.
+        const double ang = 0.5;
+        doc.beginOp("Rotate");
+        doc.state.instances[block].xf = Mat4::translation(Vec3(76, 0, 0)) * Mat4::rotation(Vec3(0, 0, 1), ang) *
+                                        Mat4::translation(Vec3(-76, 0, 0)) * doc.state.instances[block].xf;
+        doc.commitOp();
+        vp->setStandardView(Vec3(0, 0, -1));
+        vp->camera().zoomExtents(Vec3(69, -3, 0), Vec3(79, 4, 0));
+        d.pump();
+        eng.resetMemory();
+        const Vec3 ex(std::cos(ang), std::sin(ang), 0), ey(-std::sin(ang), std::cos(ang), 0);
+        q = d.screen(Vec3(76, 0, 0.5) + ex * 0.3);
+        eng.infer(q.x(), q.y(), none); // hover the block's front edge
+        InferenceEngine::Options o;
+        o.ref = Vec3(76, -2.5, 0);
+        o.plane = Plane(Vec3(0, 0, 1), Vec3());
+        q = d.screen(*o.ref + ex * 1.7) + QPointF(1, 1);
+        InferenceResult par = eng.infer(q.x(), q.y(), o);
+        d.check(par.type == InferenceResult::Parallel && std::fabs(std::fabs(par.dir.dot(ex)) - 1) < 1e-9,
+                "parallel to a component's edge");
+        q = d.screen(*o.ref + ey * 1.3) + QPointF(1, 1);
+        InferenceResult perp = eng.infer(q.x(), q.y(), o);
+        d.check(perp.type == InferenceResult::Perpendicular && std::fabs(perp.dir.dot(ex)) < 1e-9,
+                "perpendicular to a component's edge");
+
+        // Tilted component: perpendicular to its sloped top face.
+        doc.beginOp("Tilt");
+        doc.state.instances[base].xf = Mat4::translation(Vec3(70, 0, 0)) * Mat4::rotation(Vec3(1, 0, 0), 0.4) *
+                                       Mat4::translation(Vec3(-70, 0, 0)) * doc.state.instances[base].xf;
+        doc.commitOp();
+        const Vec3 n = Mat4::rotation(Vec3(1, 0, 0), 0.4).transformDir(Vec3(0, 0, 1));
+        Mat4 tilt = Mat4::translation(Vec3(70, 0, 0)) * Mat4::rotation(Vec3(1, 0, 0), 0.4) * Mat4::translation(Vec3(-70, 0, 0));
+        const Vec3 topPt = tilt.transformPoint(Vec3(71.3, 1.2, 1));
+        vp->setStandardView(Vec3(1, 1, -0.8));
+        vp->camera().zoomExtents(Vec3(69, -1, 0), Vec3(75, 3, 3));
+        d.pump();
+        eng.resetMemory();
+        q = d.screen(topPt);
+        eng.infer(q.x(), q.y(), none); // hover the sloped top
+        InferenceEngine::Options from;
+        from.ref = topPt;
+        q = d.screen(topPt + n * 1.2) + QPointF(1, 1);
+        InferenceResult fn = eng.infer(q.x(), q.y(), from);
+        d.check(fn.type == InferenceResult::FaceNormal && std::fabs(fn.dir.dot(n) - 1) < 1e-9 &&
+                    ((fn.p - topPt).cross(n)).length() < 1e-9,
+                "perpendicular to a component's face");
+
+        // Tape Measure: double-click a component edge for an infinite guide.
+        vp->setTool(ToolId::Tape);
+        size_t guides = doc.state.guides.size();
+        const Vec3 edgePt = tilt.transformPoint(Vec3(70.7, 0, 1));
+        d.dblclick(d.screen(edgePt));
+        d.check(doc.state.guides.size() == guides + 1 && std::fabs(std::fabs(doc.state.guides.back().dir.x) - 1) < 1e-9,
+                "Tape double-click on a component edge makes a guide along it");
+        vp->setTool(ToolId::Select);
+        eng.resetMemory();
     }
 
     // Rectangles on vertical planes, front side toward the camera.

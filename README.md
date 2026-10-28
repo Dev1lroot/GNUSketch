@@ -149,8 +149,14 @@ while scaling, or right after to adjust it.
 **Inference:** endpoint (green), midpoint (cyan), on edge (red), on face (blue),
 origin, red/green/blue axis lines, "from point" alignment, guides, and magenta
 directions of existing geometry: **Along Edge** (from a corner along the edges
-that meet there, or their extension behind it) and **Parallel to Edge** (hover an
-edge, then move away). Shift or Down arrow locks a magenta direction too.
+that meet there, or their extension behind it), **Parallel to Edge** and
+**Perpendicular to Edge** (hover an edge, then move away; perpendicular stays in the
+drawing plane when there is one) and **Perpendicular to Face** (hover a face, then
+draw or move away from it along its normal). Shift or Down arrow locks a magenta
+direction too. Components offer all of these just like loose geometry (corners,
+midpoints, edges, faces and their directions), so Move can put a component's
+midpoint exactly on another component's midpoint to centre it; the copies being
+moved are never snapped to. The Tape Measure makes guides from component edges too.
 The **arrow keys** lock the red, green or blue axis. In Rectangle, Circle and Rotate
 they choose the drawing plane instead. **Shift** locks the current inference.
 

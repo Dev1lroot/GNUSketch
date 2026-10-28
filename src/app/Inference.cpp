@@ -27,6 +27,8 @@ std::string InferenceResult::label() const {
     case Intersection: return "Intersection";
     case AlongEdge: return "Along Edge";
     case Parallel: return "Parallel to Edge";
+    case Perpendicular: return "Perpendicular to Edge";
+    case FaceNormal: return "Perpendicular to Face";
     default: return "";
     }
 }
@@ -69,10 +71,11 @@ Id InferenceEngine::pickFace(double px, double py, double* tOut, const std::set<
     return best;
 }
 
-Id InferenceEngine::pickInstance(double px, double py, double* tOut) const {
+Id InferenceEngine::pickInstance(double px, double py, double* tOut, Vec3* normalOut) const {
     const ModelState& st = doc_.state;
     Id best = kNone;
     double bestT = std::numeric_limits<double>::infinity();
+    if (normalOut) *normalOut = Vec3();
     if (st.editing != kNone) return kNone;
     Ray r = cam_.ray(px, py);
     const bool wire = doc_.style.faceStyle == RenderStyle::Wireframe;
@@ -90,6 +93,7 @@ Id InferenceEngine::pickInstance(double px, double py, double* tOut) const {
                 if (m.rayFace(f, lr, t) && t < bestT) {
                     bestT = t;
                     best = i;
+                    if (normalOut) *normalOut = transformCovector(xf, m.faces[f].normal).normalized();
                 }
             }
         // Edges near the cursor (lines and wireframe have no faces to hit).
@@ -104,11 +108,72 @@ Id InferenceEngine::pickInstance(double px, double py, double* tOut) const {
             if (depth < bestT) {
                 bestT = depth;
                 best = i;
+                if (normalOut) *normalOut = Vec3();
             }
         }
     }
     if (tOut) *tOut = bestT;
     return best;
+}
+
+bool InferenceEngine::snapsTo(Id i) const {
+    const ModelState& st = doc_.state;
+    const Instance& I = st.instances[i];
+    // The open component is the active mesh itself.
+    return I.alive && !I.hidden && i != st.editing && !ignoredInstances.count(i);
+}
+
+const std::vector<InferenceEngine::Segment>& InferenceEngine::instanceEdges(Id i) const {
+    const ModelState& st = doc_.state;
+    const Mesh& m = st.defs[st.instances[i].def].mesh;
+    const Mat4 xf = instanceWorldXf(st, i);
+    CachedEdges& c = instEdges_[i];
+    if (c.revision != m.revision || !std::equal(std::begin(c.xf.m), std::end(c.xf.m), std::begin(xf.m))) {
+        c.revision = m.revision;
+        c.xf = xf;
+        c.edges.clear();
+        for (const Edge& E : m.edges)
+            if (E.alive && !E.soft && !E.hidden)
+                c.edges.push_back({xf.transformPoint(m.pos(E.v[0])), xf.transformPoint(m.pos(E.v[1]))});
+    }
+    return c.edges;
+}
+
+bool InferenceEngine::pickAnyEdge(double px, double py, double tolPx, const std::set<Id>* ex, double tFace,
+                                  EdgeHit& hit) const {
+    const Mesh& m = doc_.mesh();
+    Ray r = cam_.ray(px, py);
+    auto closest = [&](const Vec3& a, const Vec3& b) {
+        double s, t;
+        return closestLineLine(a, b - a, r.origin, r.dir, s, t) ? lerp(a, b, std::clamp(s, 0.0, 1.0)) : a;
+    };
+    double bestD = tolPx;
+    bool found = false;
+    Id e = pickEdgeT(px, py, tolPx, ex, tFace);
+    if (e != kNone) {
+        hit.seg = {m.pos(m.edges[e].v[0]), m.pos(m.edges[e].v[1])};
+        hit.edge = e;
+        hit.p = closest(hit.seg.a, hit.seg.b);
+        bestD = pixelDistance(hit.p, px, py);
+        found = true;
+    }
+    for (Id i = 0; i < (Id)doc_.state.instances.size(); ++i) {
+        if (!snapsTo(i)) continue;
+        for (const Segment& s : instanceEdges(i)) {
+            Vec3 q = closest(s.a, s.b);
+            double d = pixelDistance(q, px, py);
+            if (d >= bestD) continue;
+            double depth = (q - r.origin).dot(r.dir);
+            if (depth > tFace + std::max(cam_.pixelSize(q) * 3.0, 1e-4)) continue;
+            if (cam_.perspective && depth < 0) continue;
+            bestD = d;
+            hit.seg = s;
+            hit.edge = kNone;
+            hit.p = q;
+            found = true;
+        }
+    }
+    return found;
 }
 
 Id InferenceEngine::pickEdge(double px, double py, double tolPx, const std::set<Id>* ex) const {
@@ -236,6 +301,13 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
 
     double tFace = std::numeric_limits<double>::infinity();
     Id face = pickFace(px, py, &tFace, o.excludeVerts);
+    if (face != kNone) {
+        rememberedNormal_ = m.faces[face].normal;
+    } else if (std::isfinite(tFace)) {
+        Vec3 n;
+        pickInstance(px, py, nullptr, &n);
+        if (n.length2() > 0.5) rememberedNormal_ = n;
+    }
     auto visible = [&](const Vec3& p) {
         double depth = (p - r.origin).dot(r.dir);
         if (cam_.perspective && depth < 0) return false;
@@ -271,12 +343,12 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     // Corners of components.
     bool instPoint = false;
     Vec3 instP;
-    if (bestV == kNone && doc_.state.editing == kNone) {
+    if (bestV == kNone) {
         const ModelState& st = doc_.state;
         double bd = snap;
         for (Id i = 0; i < (Id)st.instances.size(); ++i) {
             const Instance& I = st.instances[i];
-            if (!I.alive || I.hidden || ignoredInstances.count(i)) continue;
+            if (!snapsTo(i)) continue;
             Mat4 xf = instanceWorldXf(st, i);
             for (const Vertex& v : st.defs[I.def].mesh.vertices) {
                 if (!v.alive) continue;
@@ -305,10 +377,26 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
             }
         }
     }
-    bool origin = bestV == kNone && !instPoint && bestMid == kNone && doc_.style.showAxes && pixelDistance(Vec3(), px, py) < snap &&
+    // Midpoints of component edges.
+    std::optional<Segment> instMid;
+    if (bestV == kNone && !instPoint && bestMid == kNone) {
+        double bd = snap;
+        for (Id i = 0; i < (Id)doc_.state.instances.size(); ++i) {
+            if (!snapsTo(i)) continue;
+            for (const Segment& s : instanceEdges(i)) {
+                Vec3 mid = (s.a + s.b) * 0.5;
+                double d = pixelDistance(mid, px, py);
+                if (d < bd && visible(mid)) {
+                    bd = d;
+                    instMid = s;
+                }
+            }
+        }
+    }
+    bool origin = bestV == kNone && !instPoint && bestMid == kNone && !instMid && doc_.style.showAxes && pixelDistance(Vec3(), px, py) < snap &&
                   visible(Vec3());
     int guidePt = -1;
-    if (bestV == kNone && !instPoint && bestMid == kNone && !origin && doc_.style.showGuides) {
+    if (bestV == kNone && !instPoint && bestMid == kNone && !instMid && !origin && doc_.style.showGuides) {
         double bd = snap;
         for (int i = 0; i < (int)doc_.state.guides.size(); ++i) {
             const Guide& g = doc_.state.guides[i];
@@ -333,6 +421,17 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         res.p = (m.pos(m.edges[bestMid].v[0]) + m.pos(m.edges[bestMid].v[1])) * 0.5;
         remembered_ = res.p;
         rememberedEdge_ = Segment{m.pos(m.edges[bestMid].v[0]), m.pos(m.edges[bestMid].v[1])};
+        res.hasEdge = true;
+        res.edgeA = rememberedEdge_->a;
+        res.edgeB = rememberedEdge_->b;
+    } else if (instMid) {
+        res.type = InferenceResult::Midpoint;
+        res.p = (instMid->a + instMid->b) * 0.5;
+        remembered_ = res.p;
+        rememberedEdge_ = instMid;
+        res.hasEdge = true;
+        res.edgeA = instMid->a;
+        res.edgeB = instMid->b;
     } else if (origin) {
         res.type = InferenceResult::Origin;
         res.p = Vec3();
@@ -357,12 +456,11 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
             lr.lineB = q;
             lr.lineColor = lc;
         } else {
-            Id e = pickEdgeT(px, py, 6.0, o.excludeVerts, tFace);
+            EdgeHit eh;
             double s, t;
-            if (e != kNone) {
+            if (pickAnyEdge(px, py, 6.0, o.excludeVerts, tFace, eh)) {
                 // Project the hovered edge point on the locked line.
-                Vec3 a = m.pos(m.edges[e].v[0]), b = m.pos(m.edges[e].v[1]);
-                Vec3 ep = closestLineLine(a, b - a, r.origin, r.dir, s, t) ? lerp(a, b, std::clamp(s, 0.0, 1.0)) : a;
+                Vec3 a = eh.seg.a, b = eh.seg.b, ep = eh.p;
                 if (closestLineLine(*o.ref, d, a, b - a, s, t) && t >= -1e-9 && t <= 1 + 1e-9) q = *o.ref + d * s;
                 else q = *o.ref + d * (ep - *o.ref).dot(d);
             } else if (Vec3 fp; pierceFace(*o.ref, d, fp)) {
@@ -428,12 +526,13 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     }
     // Directions of existing geometry (magenta): along the edges meeting at the
     // reference point, both ways, and parallel to the last hovered edge.
-    bool edgeDir = false, parallel = false;
+    bool edgeDir = false;
+    InferenceResult::Type dirType = InferenceResult::AlongEdge;
     Vec3 edgeDirV, edgePt;
     if (o.ref && o.axes) {
         struct Cand {
             Vec3 dir;
-            bool parallel;
+            InferenceResult::Type type;
         };
         std::vector<Cand> cands;
         Id rv = m.findVertex(*o.ref);
@@ -442,12 +541,37 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
                 const Edge& E = m.edges[e];
                 if (!E.alive || E.hidden) continue;
                 Vec3 d = m.pos(E.other(rv)) - *o.ref;
-                if (d.length() > kTol) cands.push_back({d.normalized(), false});
+                if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge});
             }
+        // Edges of components meeting at the reference point.
+        for (Id i = 0; i < (Id)doc_.state.instances.size(); ++i) {
+            if (!snapsTo(i)) continue;
+            for (const Segment& s : instanceEdges(i)) {
+                Vec3 d = s.a.nearlyEquals(*o.ref) ? s.b - s.a : s.b.nearlyEquals(*o.ref) ? s.a - s.b : Vec3();
+                if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge});
+            }
+        }
         if (rememberedEdge_) {
             Vec3 d = rememberedEdge_->b - rememberedEdge_->a;
-            if (d.length() > kTol) cands.push_back({d.normalized(), true});
+            if (d.length() > kTol) {
+                d = d.normalized();
+                cands.push_back({d, InferenceResult::Parallel});
+                // Perpendicular: square to the edge within the drawing plane,
+                // or else towards the edge's line.
+                Vec3 foot = rememberedEdge_->a + d * (*o.ref - rememberedEdge_->a).dot(d);
+                Vec3 pd = foot - *o.ref;
+                if (o.plane && std::fabs(o.plane->n.dot(d)) < 1e-6)
+                    cands.push_back({o.plane->n.cross(d).normalized(), InferenceResult::Perpendicular});
+                else if (pd.length() > kTol)
+                    cands.push_back({pd.normalized(), InferenceResult::Perpendicular});
+            }
         }
+        if (rememberedNormal_) cands.push_back({*rememberedNormal_, InferenceResult::FaceNormal});
+        // The same line can come from several sources: keep the first.
+        for (size_t i = 0; i < cands.size(); ++i)
+            for (size_t j = i + 1; j < cands.size();)
+                if (std::fabs(cands[i].dir.dot(cands[j].dir)) > 1 - 1e-9) cands.erase(cands.begin() + j);
+                else ++j;
         for (const Cand& c : cands) {
             bool axisAligned = false;
             for (int i = 0; i < 3; ++i) axisAligned = axisAligned || std::fabs(c.dir.dot(kAxes[i])) > 1 - 1e-6;
@@ -465,7 +589,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
                 bestAD = d;
                 bestAxis = -1;
                 edgeDir = true;
-                parallel = c.parallel;
+                dirType = c.type;
                 edgeDirV = c.dir;
                 edgePt = q;
             }
@@ -477,11 +601,11 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     bool edgeWins = false;
     if (bestAxis >= 0 || edgeDir) {
         Vec3 d = edgeDir ? edgeDirV : kAxes[bestAxis];
-        Id he = pickEdgeT(px, py, 6.0, o.excludeVerts, tFace);
+        EdgeHit eh;
         Vec3 stop;
         bool stopped = false;
-        if (he != kNone) {
-            Vec3 a = m.pos(m.edges[he].v[0]), b = m.pos(m.edges[he].v[1]);
+        if (pickAnyEdge(px, py, 6.0, o.excludeVerts, tFace, eh)) {
+            Vec3 a = eh.seg.a, b = eh.seg.b;
             double s, t;
             bool atRef = false;
             if (closestLineLine(*o.ref, d, a, b - a, s, t) && t >= -1e-9 && t <= 1 + 1e-9) {
@@ -490,7 +614,10 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
                 atRef = (p1 - *o.ref).length() < kTol * 10;
                 if (!atRef && (p1 - p2).length() < std::max(cam_.pixelSize(p1) * 2, kTol * 10) && pixelDistance(p1, px, py) < snap) {
                     res.type = InferenceResult::OnEdge;
-                    res.edge = he;
+                    res.edge = eh.edge;
+                    res.hasEdge = true;
+                    res.edgeA = a;
+                    res.edgeB = b;
                     stop = p1;
                     stopped = true;
                 }
@@ -510,11 +637,11 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         if (stopped) res = InferenceResult();
     }
     if (edgeDir && !edgeWins) {
-        res.type = parallel ? InferenceResult::Parallel : InferenceResult::AlongEdge;
+        res.type = dirType;
         res.p = o.plane ? o.plane->project(edgePt) : edgePt;
         res.dir = edgeDirV;
         res.hasDir = true;
-        if (parallel) {
+        if (dirType == InferenceResult::Parallel || dirType == InferenceResult::Perpendicular) {
             // Highlight the edge the line runs parallel to.
             res.hasLine = true;
             res.lineA = rememberedEdge_->a;
@@ -550,14 +677,15 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     }
 
     // --- on edge / guide / face -------------------------------------------------
-    Id e = pickEdgeT(px, py, 6.0, o.excludeVerts, tFace);
-    if (e != kNone) {
-        Vec3 a = m.pos(m.edges[e].v[0]), b = m.pos(m.edges[e].v[1]);
-        double s, t;
+    if (EdgeHit eh; pickAnyEdge(px, py, 6.0, o.excludeVerts, tFace, eh)) {
+        Vec3 a = eh.seg.a, b = eh.seg.b;
         res.type = InferenceResult::OnEdge;
-        res.edge = e;
-        rememberedEdge_ = Segment{a, b};
-        res.p = closestLineLine(a, b - a, r.origin, r.dir, s, t) ? lerp(a, b, std::clamp(s, 0.0, 1.0)) : a;
+        res.edge = eh.edge;
+        res.hasEdge = true;
+        res.edgeA = a;
+        res.edgeB = b;
+        rememberedEdge_ = eh.seg;
+        res.p = eh.p;
         res.dir = (b - a).normalized();
         res.hasDir = true;
         if (o.plane) res.p = o.plane->project(res.p);

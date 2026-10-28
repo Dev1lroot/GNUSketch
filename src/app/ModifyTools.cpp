@@ -1669,10 +1669,9 @@ void TapeTool::mousePress(const MouseEvent& e) {
     setVcb(fmtLen(len));
     if (e.ctrl()) return;
     Guide g;
-    if (startInf_.type == InferenceResult::OnEdge && startInf_.edge != kNone) {
-        const Edge& E = mesh().edges[startInf_.edge];
+    if (startInf_.type == InferenceResult::OnEdge && startInf_.hasEdge) {
         g.kind = Guide::Line;
-        g.dir = (mesh().pos(E.v[1]) - mesh().pos(E.v[0])).normalized();
+        g.dir = (startInf_.edgeB - startInf_.edgeA).normalized();
         g.p = cur_;
     } else {
         g.kind = Guide::Point;
@@ -1697,15 +1696,16 @@ void TapeTool::mouseMove(const MouseEvent& e) {
 }
 
 void TapeTool::mouseDoubleClick(const MouseEvent& e) {
-    Id ed = engine().pickEdge(e.x, e.y, 7.0);
+    // Any edge under the cursor, loose or of a component.
+    InferenceEngine::Options o;
+    InferenceResult r = engine().infer(e.x, e.y, o);
     stage_ = 0;
     refreshStatus();
-    if (ed == kNone) return;
-    const Edge& E = mesh().edges[ed];
+    if (!r.hasEdge || (r.type != InferenceResult::OnEdge && r.type != InferenceResult::Midpoint)) return;
     Guide g;
     g.kind = Guide::Line;
-    g.p = mesh().pos(E.v[0]);
-    g.dir = (mesh().pos(E.v[1]) - mesh().pos(E.v[0])).normalized();
+    g.p = r.edgeA;
+    g.dir = (r.edgeB - r.edgeA).normalized();
     doc().beginOp("Guide");
     doc().state.guides.push_back(g);
     mesh().touch();
@@ -1721,10 +1721,9 @@ bool TapeTool::vcbEnter(const QString& text) {
         if (d.length() < kTol) return false;
         Guide g;
         g.p = start_ + d.normalized() * len;
-        if (startInf_.type == InferenceResult::OnEdge && startInf_.edge != kNone) {
-            const Edge& E = mesh().edges[startInf_.edge];
+        if (startInf_.type == InferenceResult::OnEdge && startInf_.hasEdge) {
             g.kind = Guide::Line;
-            g.dir = (mesh().pos(E.v[1]) - mesh().pos(E.v[0])).normalized();
+            g.dir = (startInf_.edgeB - startInf_.edgeA).normalized();
         } else {
             g.kind = Guide::Point;
         }
@@ -1766,9 +1765,8 @@ bool TapeTool::vcbEnter(const QString& text) {
 void TapeTool::buildPreview(Preview& pv) {
     if (stage_ == 1) {
         pv.line(start_, cur_, hasLock() ? lockColor() : lineColor(start_, cur_), 1.2f, Dash::Dashed);
-        if (startInf_.type == InferenceResult::OnEdge && startInf_.edge != kNone) {
-            const Edge& E = mesh().edges[startInf_.edge];
-            Vec3 d = (mesh().pos(E.v[1]) - mesh().pos(E.v[0])).normalized();
+        if (startInf_.type == InferenceResult::OnEdge && startInf_.hasEdge) {
+            Vec3 d = (startInf_.edgeB - startInf_.edgeA).normalized();
             pv.line(cur_ - d * 1e4, cur_ + d * 1e4, Color::rgb8(60, 60, 60), 1.0f, Dash::Dashed, true);
         }
         pv.labels.push_back({(start_ + cur_) * 0.5, fmtLen((cur_ - start_).length()).toStdString()});

@@ -952,12 +952,22 @@ TerrainPanel::TerrainPanel(Document* doc, Viewport* vp, const std::vector<QActio
     hl->addWidget(hardnessValue_);
     fl->addRow(QStringLiteral("Radius:"), radius_);
     fl->addRow(QStringLiteral("Force:"), force_);
+    density_ = new QDoubleSpinBox(this);
+    density_->setRange(0, 1000);
+    density_->setDecimals(1);
+    density_->setSingleStep(1);
+    density_->setSuffix(QStringLiteral(" / m"));
+    density_->setSpecialValueText(QStringLiteral("Auto"));
+    density_->setToolTip(QStringLiteral("Most triangle edges per meter: triangles never get smaller than 1 m divided by "
+                                        "this, for a lighter surface. Auto = brush radius ÷ 8."));
     fl->addRow(QStringLiteral("Hardness:"), hl);
+    fl->addRow(QStringLiteral("Max density:"), density_);
     lay->addLayout(fl);
 
     connect(radius_, &QLineEdit::editingFinished, this, [this] { apply(); });
     connect(force_, &QDoubleSpinBox::valueChanged, this, [this] { apply(); });
     connect(hardness_, &QSlider::valueChanged, this, [this] { apply(); });
+    connect(density_, &QDoubleSpinBox::valueChanged, this, [this] { apply(); });
     connect(&TerrainSettings::instance(), &TerrainSettings::changed, this, [this] { refresh(); });
     refresh();
 }
@@ -969,6 +979,7 @@ void TerrainPanel::refresh() {
     force_->setValue(b.force * 100);
     hardness_->setValue((int)std::lround(b.hardness * 100));
     hardnessValue_->setText(QStringLiteral("%1%").arg(hardness_->value()));
+    density_->setValue(b.density);
     updating_ = false;
 }
 
@@ -979,6 +990,7 @@ void TerrainPanel::apply() {
     if (doc_->units.parseLength(radius_->text().toStdString(), r) && r > 0) b.radius = r;
     b.force = force_->value() / 100;
     b.hardness = hardness_->value() / 100.0;
+    b.density = density_->value();
     TerrainSettings::instance().setBrush(b);
     vp_->refreshToolStatus();
     vp_->update();

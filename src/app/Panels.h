@@ -168,6 +168,7 @@ private:
     QDoubleSpinBox* force_;
     QSlider* hardness_;
     QLabel* hardnessValue_;
+    QDoubleSpinBox* density_;
     bool updating_ = false;
 };
 

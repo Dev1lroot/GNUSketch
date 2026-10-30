@@ -225,6 +225,31 @@ bool TerrainStroke::begin(Mesh& m, const Vec3& hit, Id face, const Vec3& toViewe
     return true;
 }
 
+// Вычисляет целевую длину ребра на основе кривизны (разницы нормалей соседей) и базового шага
+double targetEdgeLength(const Mesh& m, Id e, const std::vector<std::vector<Id>>& edgeFaces, double baseDetail, double minDetail, double maxDetail) {
+    const Edge& E = m.edges[e];
+    if (!E.alive) return baseDetail;
+
+    // Если у ребра есть соседние треугольники, оценим угол между ними (кривизну)
+    const auto& faces = edgeFaces[e];
+    if (faces.size() == 2) {
+        Id f1 = faces[0];
+        Id f2 = faces[1];
+        if (f1 >= 0 && f2 >= 0 && f1 < (Id)m.faces.size() && f2 < (Id)m.faces.size()) {
+            Vec3 n1 = m.faces[f1].normal;
+            Vec3 n2 = m.faces[f2].normal;
+            double dot = std::clamp(n1.dot(n2), -1.0, 1.0);
+            double angle = std::acos(dot); // Угол изгиба между полигонами
+
+            // Чем выше угол (сильнее искривление), тем меньше должна быть длина ребра (выше детализация)
+            // При нулевом угле берем baseDetail, при сильном изгибе уменьшаем вплоть до minDetail
+            double curvatureFactor = 1.0 / (1.0 + 5.0 * angle); 
+            return std::clamp(baseDetail * curvatureFactor, minDetail, maxDetail);
+        }
+    }
+    return baseDetail;
+}
+
 void TerrainStroke::shareTextureAxis(Mesh& m, Id start) {
     // Triangles sculpted before texture axes existed project along their own
     // tilted normals, which shows seams. Give the connected triangles without
@@ -363,8 +388,14 @@ void TerrainStroke::refineEdge(Mesh& m, Id e, int depth) {
 }
 
 void TerrainStroke::refine(Mesh& m, const Vec3& c, Id forceFace) {
-    const double R = brush_.radius, L = brush_.detail();
-    // Convert the n-gons under the brush.
+    const double R = brush_.radius; 
+    
+    // Базовые параметры детализации (можно вынести в настройки кисти или константы)
+    const double baseDetail = brush_.detail(); // например, желаемый размер в метрах (например, 1.0 метр)
+    const double minDetail = 0.01;  // Максимальная детализация (~100 полигонов на метр, ~1 см)
+    const double maxDetail = baseDetail * 4.0; // Максимальное разрежение на ровных участках
+
+    // Конвертируем n-гоны под кистью
     const Id nf = (Id)m.faces.size();
     for (Id f = 0; f < nf; ++f) {
         if (!m.faces[f].alive || isTri(m, f)) continue;
@@ -377,6 +408,8 @@ void TerrainStroke::refine(Mesh& m, const Vec3& c, Id forceFace) {
 
     buildAdjacency(m);
     splitBudget_ = kMaxSplitsPerStep;
+
+    // Итеративное адаптивное измельчение сетки
     for (int pass = 0; pass < 64 && splitBudget_ > 0; ++pass) {
         std::vector<std::pair<double, Id>> todo;
         for (Id e = 0; e < (Id)m.edges.size(); ++e) {
@@ -384,17 +417,29 @@ void TerrainStroke::refine(Mesh& m, const Vec3& c, Id forceFace) {
             if (!E.alive) continue;
             const Vec3 &a = m.pos(E.v[0]), &b = m.pos(E.v[1]);
             const double len = (b - a).length();
-            if (len <= L) continue;
-            if (distancePointSegment(a, b, c) >= R + L) continue;
+            
+            // Вычисляем динамический целевой размер для этого конкретного ребра
+            double targetLen = targetEdgeLength(m, e, edgeFaces_, baseDetail, minDetail, maxDetail);
+
+            // Если текущая длина ребра больше целевой — добавляем в очередь на сплит
+            if (len <= targetLen) continue;
+            if (distancePointSegment(a, b, c) >= R + targetLen) continue;
+            
             bool tri = false;
             for (Id f : edgeFaces_[e]) tri = tri || isTri(m, f);
             if (tri) todo.push_back({len, e});
         }
         if (todo.empty()) break;
+        
+        // Сортируем по длине, чтобы в первую очередь дробить самые длинные ребра
         std::sort(todo.begin(), todo.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
         for (const auto& [len, e] : todo) {
             if (splitBudget_ <= 0) break;
-            if (!m.edges[e].alive || m.edgeLength(e) <= L) continue;
+            if (!m.edges[e].alive) continue;
+            
+            double targetLen = targetEdgeLength(m, e, edgeFaces_, baseDetail, minDetail, maxDetail);
+            if (m.edgeLength(e) <= targetLen) continue;
+            
             refineEdge(m, e, 0);
         }
     }

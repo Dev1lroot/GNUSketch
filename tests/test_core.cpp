@@ -1090,6 +1090,43 @@ int main() {
         for (Id e = 0; e < (Id)m.edges.size(); ++e) CHECK(m.edges[e].alive);
     });
 
+    test("terrain: max density limits the triangles", [] {
+        auto sculpt = [](double density, int& tris, double& shortest) {
+            Mesh m;
+            rect(m, 0, 0, 6, 6);
+            Id f = onlyFace(m);
+            if (m.faces[f].normal.z < 0) m.reverseFace(f);
+            TerrainBrush b;
+            b.radius = 2;
+            b.force = 1;
+            b.density = density;
+            TerrainStroke s(TerrainMode::Raise, b);
+            CHECK(s.begin(m, Vec3(3, 3, 0), f, Vec3(0, 0, 1)));
+            for (int i = 0; i < 20; ++i) s.apply(m, Vec3(3, 3, 0), 0.05);
+            s.finish(m, Vec3(3, 3, 0));
+            tris = 0;
+            shortest = 1e300;
+            for (Id i = 0; i < (Id)m.faces.size(); ++i) tris += m.faces[i].alive;
+            for (Id e = 0; e < (Id)m.edges.size(); ++e)
+                if (m.edges[e].alive && m.edges[e].soft) shortest = std::min(shortest, m.edgeLength(e));
+        };
+        TerrainBrush b;
+        b.radius = 2;
+        CHECK(std::fabs(b.detail() - 0.25) < 1e-12);
+        b.density = 2;
+        CHECK(std::fabs(b.detail() - 0.5) < 1e-12);
+        b.density = 100; // finer than automatic: the automatic size still applies
+        CHECK(std::fabs(b.detail() - 0.25) < 1e-12);
+        int autoTris, capTris;
+        double autoShort, capShort;
+        sculpt(0, autoTris, autoShort);
+        sculpt(2, capTris, capShort);
+        std::printf("    tris auto=%d cap=%d shortest auto=%g cap=%g\n", autoTris, capTris, autoShort, capShort);
+        CHECK(capTris * 2 < autoTris);
+        CHECK(capShort >= 0.25 - 1e-9);
+        CHECK(autoShort < 0.25);
+    });
+
     test("terrain: walls on the plane stay planar", [] {
         Mesh m;
         rect(m, 0, 0, 4, 4);

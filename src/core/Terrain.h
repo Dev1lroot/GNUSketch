@@ -21,8 +21,11 @@ struct TerrainBrush {
     double radius = 1.0;   // meters
     double force = 0.10;   // meters per second of holding, at the brush centre
     double hardness = 0.5; // 0 = soft bell, 1 = flat top with a sharp rim
+    // Most triangle edges per meter (0 = automatic): limits how finely the
+    // surface is subdivided, for lighter models.
+    double density = 0;
     // Target edge length of the generated triangles.
-    double detail() const { return std::max(radius / 8.0, 1e-3); }
+    double detail() const { return std::max({radius / 8.0, density > 0 ? 1.0 / density : 0.0, 1e-3}); }
 };
 
 // Strength of the brush (0..1) at distance d from its centre.

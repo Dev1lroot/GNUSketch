@@ -23,6 +23,7 @@ constexpr int kCircleSegments = 64;
 // the hardness by this much.
 constexpr double kRadiusStep = 1.1;
 constexpr double kHardnessStep = 0.05;
+constexpr double kDensityStep = 1.25; // Коэффициент изменения плотности сетки
 
 } // namespace
 
@@ -36,6 +37,8 @@ TerrainSettings::TerrainSettings() {
     brush_.radius = std::max(s.value("terrain/radius", brush_.radius).toDouble(), 1e-3);
     brush_.force = std::max(s.value("terrain/force", brush_.force).toDouble(), 1e-4);
     brush_.hardness = std::clamp(s.value("terrain/hardness", brush_.hardness).toDouble(), 0.0, 1.0);
+    // Плотность сетки / детализация (целевой размер ребра или полигонов на метр)
+    brush_.density = std::max(s.value("terrain/density", 1.0).toDouble(), 0.01); 
 }
 
 void TerrainSettings::setBrush(const TerrainBrush& b) {
@@ -43,10 +46,12 @@ void TerrainSettings::setBrush(const TerrainBrush& b) {
     brush_.radius = std::max(brush_.radius, 1e-3);
     brush_.force = std::max(brush_.force, 1e-4);
     brush_.hardness = std::clamp(brush_.hardness, 0.0, 1.0);
+    brush_.density = std::max(brush_.density, 0.01);
     QSettings s;
     s.setValue("terrain/radius", brush_.radius);
     s.setValue("terrain/force", brush_.force);
     s.setValue("terrain/hardness", brush_.hardness);
+    s.setValue("terrain/density", brush_.density);
     emit changed();
 }
 
@@ -75,18 +80,21 @@ QString TerrainTool::status() const {
     if (mode() == TerrainMode::Paint) {
         const Material* mat = vp_->doc().material(vp_->doc().currentMaterial);
         QString name = mat ? QString::fromStdString(mat->name) : QStringLiteral("Default (erases painted textures)");
-        return QStringLiteral("Press and hold to paint %1 over any surface; choose it in Materials. Radius %2, hardness %3%. "
-                              "Ctrl+wheel: radius, Alt+wheel: hardness. Type a radius.")
+        return QStringLiteral("Press and hold to paint %1 over any surface. Radius %2, hardness %3%, density/detail %4. "
+                              "Ctrl+wheel: radius, Alt+wheel: hardness, Shift+wheel: density.")
             .arg(name, fmtLen(b.radius))
-            .arg(std::lround(b.hardness * 100));
+            .arg(std::lround(b.hardness * 100))
+            .arg(fmtLen(b.density));
     }
     QString what = mode() == TerrainMode::Raise   ? QStringLiteral("raise a mountain")
                    : mode() == TerrainMode::Lower ? QStringLiteral("sink a pit")
                                                   : QStringLiteral("flatten to the height under the cursor");
-    return QStringLiteral("Press and hold on a surface to %1. Radius %2, force %3 cm/s, hardness %4%. Shift: vertical only. Ctrl+wheel: radius, Alt+wheel: hardness. Type a radius.")
+    return QStringLiteral("Press and hold on a surface to %1. Radius %2, force %3 cm/s, hardness %4%, density %5. "
+                          "Shift: vertical only. Ctrl+wheel: radius, Alt+wheel: hardness, Shift+wheel: density.")
         .arg(what, fmtLen(b.radius))
         .arg(b.force * 100, 0, 'g', 4)
-        .arg(std::lround(b.hardness * 100));
+        .arg(std::lround(b.hardness * 100))
+        .arg(fmtLen(b.density));
 }
 
 bool TerrainTool::surfaceAt(double x, double y, Vec3& p, Id& face, Vec3& toViewer) {
@@ -201,15 +209,25 @@ void TerrainTool::mouseRelease(const MouseEvent& e) {
 }
 
 bool TerrainTool::wheel(double steps, Qt::KeyboardModifiers mods) {
-    const bool ctrl = mods & Qt::ControlModifier, alt = mods & Qt::AltModifier;
-    if (ctrl == alt) return false; // plain wheel zooms
+    const bool ctrl = mods & Qt::ControlModifier;
+    const bool alt = mods & Qt::AltModifier;
+    const bool shift = mods & Qt::ShiftModifier;
+
+    // Если задействовано ровно одно из назначений
+    if ((ctrl + alt + shift) != 1) return false; 
+
     TerrainBrush b = TerrainSettings::instance().brush();
     if (ctrl) {
         b.radius *= std::pow(kRadiusStep, steps);
         setVcb(fmtLen(b.radius));
-    } else {
+    } else if (alt) {
         b.hardness = std::clamp(std::round((b.hardness + steps * kHardnessStep) / kHardnessStep) * kHardnessStep, 0.0, 1.0);
+    } else if (shift) {
+        // Регулировка целевой плотности / детализации сетки
+        b.density = std::clamp(b.density * std::pow(kDensityStep, steps), 0.01, 10.0);
+        setVcb(fmtLen(b.density));
     }
+    
     TerrainSettings::instance().setBrush(b);
     if (stroke_) stroke_->setBrush(TerrainSettings::instance().brush());
     refreshStatus();

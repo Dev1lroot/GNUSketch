@@ -48,6 +48,7 @@ struct Preview {
     std::vector<Label> labels; // drawn next to the cursor-ish world point
     std::set<Id> highlightFaces, highlightEdges;
     std::set<Id> highlightInstances;
+    bool hideFaceSelection = false; // no selection pattern over the faces (it would hide their texture)
     // Faces/edges to hide while the tool shows a modified ghost (e.g. move).
     void clear() { *this = Preview(); }
     void line(const Vec3& a, const Vec3& b, const Color& c, float w = 1.0f, Dash d = Dash::None, bool depth = false) {

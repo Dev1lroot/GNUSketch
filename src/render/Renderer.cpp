@@ -1148,7 +1148,8 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
             if (f >= 0 && f < (Id)activeGpu.faceTris.size())
                 sel.insert(sel.end(), activeGpu.faceTris[f].begin(), activeGpu.faceTris[f].end());
         };
-        for (Id f : doc.selection.faces) addFace(f);
+        if (!preview.hideFaceSelection)
+            for (Id f : doc.selection.faces) addFace(f);
         for (Id f : preview.highlightFaces)
             if (!doc.selection.faces.count(f)) addFace(f);
         glEnable(GL_POLYGON_OFFSET_FILL);

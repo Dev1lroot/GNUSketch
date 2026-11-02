@@ -8,6 +8,7 @@
 #include "core/RoundCorners.h"
 #include "core/Solids.h"
 #include "core/Terrain.h"
+#include "core/TextureMapping.h"
 #include "core/Material.h"
 #include "core/FollowMe.h"
 #include "core/ImageTrace.h"
@@ -2341,6 +2342,87 @@ int main() {
         CHECK(d.state.instances[a].def != shared);
         CHECK_EQ(d.state.defs[shared].mesh.aliveFaceCount(), defFaces);
         CHECK(isSolid(d.state.defs[d.state.instances[a].def].mesh));
+    });
+
+    // ---- position texture -----------------------------------------------------
+    auto uvAt = [](const TexMap& t, const Vec3& p) {
+        const Vec3 d = p - t.origin;
+        return Vec2(d.dot(t.u), d.dot(t.v));
+    };
+    auto sameUv = [&](const Vec2& a, const Vec2& b) { return near(a.x, b.x, 1e-9) && near(a.y, b.y, 1e-9); };
+    test("texture: explicit map equals the default projection", [&] {
+        Mesh m;
+        solidBox(m, Vec3(0, 0, 0), Vec3(2, 3, 1));
+        Material mat;
+        mat.texture.data = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1});
+        mat.texture.worldWidth = 0.5;
+        mat.texture.worldHeight = 2;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+            if (!m.faces[f].alive) continue;
+            for (bool front : {true, false}) {
+                const TexMap t = explicitTexMap(m.faces[f], front, &mat);
+                for (Id v : m.faceVertices(f)) {
+                    const Vec2 want = faceTexCoord(m.faces[f], front, m.pos(v), &mat);
+                    CHECK(sameUv(uvAt(t, m.pos(v)), want));
+                }
+            }
+        }
+    });
+    test("texture: each move shows the image where it should", [&] {
+        TexMap base;
+        base.valid = true;
+        base.origin = Vec3(1, 2, 0);
+        base.u = Vec3(2, 0, 0);
+        base.v = Vec3(0, 0.5, 0);
+        const Vec3 p(3, 5, 0);
+        auto check = [&](const UvAffine& moved) {
+            TexMap t = base;
+            CHECK(moveTexMap(t, moved));
+            // What showed at uv now shows at the place moved(uv) occupied.
+            for (Vec2 uv : {Vec2(0, 0), Vec2(1, 0), Vec2(0.3, 0.7), Vec2(-2, 5)}) {
+                const Vec2 to = moved.apply(uv);
+                const Vec3 world = base.origin + Vec3(to.x / 2, to.y / 0.5, 0);
+                CHECK(sameUv(uvAt(t, world), uv));
+            }
+            (void)p;
+        };
+        check(UvAffine::translate(0.25, -3));
+        check(UvAffine::scaleAbout(Vec2(1, 1), 2, 0.5));
+        check(UvAffine::scaleAbout(Vec2(0, 0), -1, 1)); // mirrored
+        check(UvAffine::shearAbout(Vec2(0.5, 0), 0.8, true));
+        check(UvAffine::shearAbout(Vec2(0, 0.5), -0.4, false));
+        // Undoes itself.
+        const UvAffine a = UvAffine::shearAbout(Vec2(1, 2), 0.3, true);
+        TexMap t = base;
+        CHECK(moveTexMap(t, a));
+        CHECK(moveTexMap(t, a.inverse()));
+        for (Vec3 q : {Vec3(0, 0, 0), Vec3(4, 1, 0)}) CHECK(sameUv(uvAt(t, q), uvAt(base, q)));
+        // Collapsing is refused; the map stays.
+        t = base;
+        CHECK(!moveTexMap(t, UvAffine::scaleAbout(Vec2(0, 0), 0, 1)));
+        CHECK(t.u.nearlyEquals(base.u));
+    });
+    test("texture: rotation turns in the world whatever the proportions", [&] {
+        TexMap base; // a tile 4 m wide and 1 m high, on the ground
+        base.valid = true;
+        base.u = Vec3(0.25, 0, 0);
+        base.v = Vec3(0, 1, 0);
+        PlaneTexMap plane;
+        CHECK(plane.set(base, Vec3(0, 0, 1), Vec3(1, 1, 0)));
+        CHECK(near(plane.lengthU(), 4) && near(plane.lengthV(), 1));
+        const Vec3 q(3, -2, 0);
+        CHECK(plane.pointAt(plane.uvAt(q)).nearlyEquals(q, 1e-9));
+        const Vec2 c(0.5, 0.5); // world (2, 0.5)
+        const UvAffine r = plane.rotationAbout(c, kPi / 2);
+        // The tile's right middle, 2 m east of the centre, lands 2 m north of it.
+        const Vec2 to = r.apply(Vec2(1, 0.5));
+        CHECK(plane.pointAt(to).nearlyEquals(Vec3(2, 2.5, 0), 1e-9));
+        // Lengths stay, right angles stay, in the world.
+        TexMap t = base;
+        CHECK(moveTexMap(t, r));
+        CHECK(near(t.u.dot(t.v), 0, 1e-9));
+        CHECK(near(1 / t.u.length(), 4, 1e-9) && near(1 / t.v.length(), 1, 1e-9));
+        CHECK(near(plane.angleOf(c, Vec3(2, 5, 0)), kPi / 2, 1e-9));
     });
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);

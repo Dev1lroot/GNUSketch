@@ -186,6 +186,8 @@ void MainWindow::buildActions() {
     toolAction(ToolId::SolidTrim, QStringLiteral("Trim"), QString());
     toolAction(ToolId::SolidSplit, QStringLiteral("Split"), QString());
     toolAction(ToolId::Bend, QStringLiteral("Bend"), QStringLiteral("Ctrl+B"));
+    toolAction(ToolId::TexturePosition, QStringLiteral("Position Texture"), QStringLiteral("Ctrl+U"));
+    toolActions_[ToolId::TexturePosition]->setObjectName(QStringLiteral("textureposition"));
     toolAction(ToolId::PlaceCharacter, QStringLiteral("Game Mode"), QStringLiteral("Ctrl+G"));
     toolActions_[ToolId::PlaceCharacter]->setObjectName(QStringLiteral("gamemode"));
     toolActions_[ToolId::PlaceCharacter]->setStatusTip(QStringLiteral("Place a character on the model and walk around it in a separate window."));
@@ -465,6 +467,7 @@ void MainWindow::buildMenus() {
     for (ToolId id : kSolidTools) solids->addAction(toolActions_[id]);
     tools->addSeparator();
     tools->addAction(toolActions_[ToolId::Bend]);
+    tools->addAction(toolActions_[ToolId::TexturePosition]);
     tools->addAction(acts_["roundcorners"]);
     tools->addAction(acts_["traceimage"]);
     tools->addSeparator();
@@ -568,7 +571,7 @@ void MainWindow::buildToolbars() {
         {(int)ToolId::Rotate, (int)ToolId::Offset},
         {(int)ToolId::Scale, (int)ToolId::FollowMe},
         {-4, -5},
-        {(int)ToolId::Bend, -1},
+        {(int)ToolId::Bend, (int)ToolId::TexturePosition},
         {-2, -2},
         {(int)ToolId::Mountain, (int)ToolId::Pit},
         {(int)ToolId::Flatten, (int)ToolId::TextureBrush},
@@ -1620,7 +1623,7 @@ void MainWindow::showShortcuts() {
                                             "<tr><td><b>Arrows</b></td><td>Lock axis / plane</td><td><b>Shift</b></td><td>Lock inference</td></tr>"
                                             "<tr><td><b>Ctrl+T</b></td><td>Select none</td><td><b>Esc</b></td><td>Cancel</td></tr>"
                                             "<tr><td><b>Ctrl+F</b></td><td>Repeat last effect</td><td><b>Ctrl+G</b></td><td>Game Mode</td></tr>"
-                                            "<tr><td><b>Ctrl+B</b></td><td>Bend</td><td></td><td></td></tr>"
+                                            "<tr><td><b>Ctrl+B</b></td><td>Bend</td><td><b>Ctrl+U</b></td><td>Position Texture</td></tr>"
                                             "</table><p>Type numbers at any time to enter exact values in the Measurements box.</p>"));
 }
 
@@ -1686,6 +1689,7 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
             menu.addSeparator();
             menu.addAction(acts_["reverse"]);
             QMenu* tex = menu.addMenu(QStringLiteral("Texture"));
+            tex->addAction(toolActions_[ToolId::TexturePosition]);
             tex->addAction(acts_["texfit"]);
             tex->addAction(acts_["texreset"]);
         }

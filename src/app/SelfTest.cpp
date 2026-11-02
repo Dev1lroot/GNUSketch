@@ -2,6 +2,8 @@
 #include "SelfTest.h"
 
 #include "GameMode.h"
+#include "TextureTool.h"
+#include "core/TextureMapping.h"
 
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -45,6 +47,14 @@
 namespace gs {
 
 namespace {
+
+int diffFrames(const QImage& a, const QImage& b) {
+    int n = 0;
+    for (int y = 0; y < std::min(a.height(), b.height()); ++y)
+        for (int x = 0; x < std::min(a.width(), b.width()); ++x)
+            if (a.pixel(x, y) != b.pixel(x, y)) ++n;
+    return n;
+}
 
 void waitMs(int ms) {
     QEventLoop loop;
@@ -1480,6 +1490,191 @@ int runSelfTest(MainWindow& w) {
         w.findChild<QAction*>(QStringLiteral("undo"))->trigger();
         d.pump();
         d.check(d.mesh().aliveFaceCount() == facesBefore, "undo brings the straight stairs back");
+        vp->setTool(ToolId::Select);
+    }
+
+    // Position Texture: real mouse drags on a textured face.
+    {
+        doc.reset();
+        vp->setTool(ToolId::Select);
+        Mesh& m = d.mesh();
+        m.viewHint = Vec3(0, 0, 10);
+        m.groundFacesDown = false;
+        m.drawPolyline({{0, 0, 0}, {4, 0, 0}, {4, 4, 0}, {0, 4, 0}}, true);
+        Id face = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) face = f;
+        QImage img(64, 64, QImage::Format_RGB32);
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 64; ++x) img.setPixel(x, y, (x < 32) == (y < 32) ? qRgb(220, 40, 40) : qRgb(40, 40, 220));
+        Material mat;
+        mat.name = "Checker";
+        mat.texture = textureFromImage(img);
+        mat.texture.worldWidth = mat.texture.worldHeight = 2;
+        const Id matId = doc.addMaterial(mat);
+        m.faces[face].front.material = matId;
+        ++doc.materialsRevision;
+        m.touch();
+        vp->setStandardView(Vec3(0, 0, -1));
+        vp->zoomExtents();
+        d.pump();
+        doc.style.showAxes = false;
+        vp->setTool(ToolId::TexturePosition);
+        d.check(vp->toolId() == ToolId::TexturePosition, "the Position Texture tool starts");
+        const QPointF centre = d.screen(Vec3(2, 2, 0));
+        d.move(centre);
+        d.click(centre);
+        d.pump();
+        d.check(doc.selection.faces.count(face) == 1, "clicking a face selects it for the tool");
+        auto* tool = dynamic_cast<TextureTool*>(vp->tool());
+        d.check(tool != nullptr, "the tool is active");
+        const Face& F = m.faces[face];
+        auto uvNow = [&](const Vec3& p) { return faceTexCoord(d.mesh().faces[face], true, p, doc.material(matId)); };
+        const Vec3 probe(1.3, 2.1, 0);
+
+        // Moving: the image follows the cursor exactly, also while dragging.
+        {
+            const Vec2 before = uvNow(probe);
+            const QImage still = vp->grabFramebuffer();
+            const QPointF from = d.screen(Vec3(1.7, 1.2, 0)), to = d.screen(Vec3(2.2, 1.5, 0));
+            d.move(from);
+            d.send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+            d.move(to, Qt::LeftButton);
+            d.pump();
+            const QImage live = vp->grabFramebuffer();
+            d.check(diffFrames(still, live) > 500, "the texture changes on screen during the drag");
+            d.send(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+            d.pump();
+            const Vec2 after = uvNow(probe + Vec3(0.5, 0.3, 0));
+            d.check(std::fabs(after.x - before.x) < 2e-3 && std::fabs(after.y - before.y) < 2e-3, "moving: the image stays under the cursor");
+            d.check(doc.undoName() == "Position Texture" && !tool->busy(), "a drag is one undo step");
+        }
+        // Esc during a drag restores it.
+        {
+            const Vec2 before = uvNow(probe);
+            const QPointF from = d.screen(Vec3(2, 2, 0));
+            d.move(from);
+            d.send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+            d.move(from + QPointF(40, 25), Qt::LeftButton);
+            d.key(Qt::Key_Escape);
+            d.send(QEvent::MouseButtonRelease, from + QPointF(40, 25), Qt::LeftButton, Qt::NoButton);
+            d.pump();
+            const Vec2 after = uvNow(probe);
+            d.check(after.x == before.x && after.y == before.y && !tool->busy(), "Esc cancels a drag");
+        }
+        // Every handle, by dragging it, changes the image in its own way.
+        auto dragHandle = [&](TextureTool::Handle h, QPointF by, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+            const auto at = tool->handleAt(h);
+            if (!at) return false;
+            d.move(*at);
+            d.send(QEvent::MouseButtonPress, *at, Qt::LeftButton, Qt::LeftButton, mods);
+            d.move(*at + by, Qt::LeftButton, mods);
+            d.send(QEvent::MouseButtonRelease, *at + by, Qt::LeftButton, Qt::NoButton, mods);
+            d.pump();
+            return true;
+        };
+        auto axes = [&] { return explicitTexMap(d.mesh().faces[face], true, doc.material(matId)); };
+        {
+            d.check(F.front.tex.valid, "the face has its own mapping now");
+            const TexMap a = axes();
+            d.check(dragHandle(TextureTool::Handle::Corner2, QPointF(60, -60)), "a corner can be dragged");
+            const TexMap b = axes();
+            d.check(std::fabs(a.u.length() / b.u.length() - a.v.length() / b.v.length()) < 1e-6 && b.u.length() < a.u.length(), "a corner resizes in proportion");
+            d.check(dragHandle(TextureTool::Handle::Corner2, QPointF(50, -10), Qt::ShiftModifier), "Shift+corner can be dragged");
+            const TexMap c = axes();
+            d.check(std::fabs(b.u.length() / c.u.length() - b.v.length() / c.v.length()) > 1e-3, "Shift+corner resizes freely");
+            d.check(dragHandle(TextureTool::Handle::Edge1, QPointF(40, 0)), "a side square can be dragged");
+            const TexMap e = axes();
+            d.check(std::fabs(e.v.length() - c.v.length()) < 1e-6 && e.u.length() < c.u.length(), "a side square stretches one way only");
+            d.check(std::fabs(e.u.dot(e.v)) < 1e-9, "stretching does not skew");
+            d.check(dragHandle(TextureTool::Handle::Skew2, QPointF(40, 0)), "a diamond can be dragged");
+            const TexMap sk = axes();
+            d.check(std::fabs(sk.u.dot(sk.v)) > 1e-3, "a diamond skews");
+            d.check(dragHandle(TextureTool::Handle::Rotate, QPointF(-30, 60)), "the circle can be dragged");
+            const TexMap ro = axes();
+            d.check(!ro.u.nearlyEquals(sk.u, 1e-6), "the circle rotates");
+            d.check(std::fabs(ro.u.dot(ro.u) * ro.v.dot(ro.v) - ro.u.dot(ro.v) * ro.u.dot(ro.v) - (sk.u.dot(sk.u) * sk.v.dot(sk.v) - sk.u.dot(sk.v) * sk.u.dot(sk.v))) < 1e-6 * sk.u.dot(sk.u) * sk.v.dot(sk.v),
+                    "rotating keeps the image's size");
+        }
+        // Click a handle, type a value; mirror by typing; Ctrl+Z.
+        {
+            // From a clean default mapping.
+            d.mesh().faces[face].front.tex.valid = false;
+            d.mesh().touch();
+            d.pump();
+            const TexMap a = axes();
+            const auto rot = tool->handleAt(TextureTool::Handle::Rotate);
+            if (rot) {
+                d.move(*rot);
+                d.click(*rot);
+                d.pump();
+                d.check(tool->busy(), "clicking a handle keeps it grabbed");
+                d.type(QStringLiteral("90"));
+                d.pump();
+                d.check(!tool->busy(), "typing the value finishes");
+            }
+            const TexMap b = axes();
+            d.check(std::fabs(a.u.dot(b.u)) < 1e-6 * a.u.dot(a.u) && std::fabs(b.u.length() - a.u.length()) < 1e-6, "typing 90 rotates exactly a quarter turn");
+            const auto corner = tool->handleAt(TextureTool::Handle::Corner0);
+            if (corner) {
+                d.move(*corner);
+                d.click(*corner);
+                d.pump();
+                d.type(QStringLiteral("-1,1"));
+                d.pump();
+            }
+            const TexMap c = axes();
+            d.check(c.u.dot(b.u) < 0 && c.v.nearlyEquals(b.v, 1e-9), "a negative factor mirrors");
+            const QImage textured = vp->grabFramebuffer();
+            d.check(!textured.isNull(), "the mirrored texture renders");
+        }
+        // Several faces move together.
+        {
+            d.mesh().drawPolyline({{4, 0, 0}, {6, 0, 0}, {6, 4, 0}, {4, 4, 0}}, true);
+            // Drawing in the same plane rebuilds its faces: found again by position.
+            Id second = kNone;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f) {
+                if (!d.mesh().faces[f].alive) continue;
+                if (d.mesh().pointInFace(f, Vec3(2, 2, 0))) face = f;
+                if (d.mesh().pointInFace(f, Vec3(5, 2, 0))) second = f;
+            }
+            d.mesh().faces[second].front.material = matId;
+            d.mesh().touch();
+            doc.selection.clear();
+            doc.selection.faces = {face, second};
+            doc.notifySelection();
+            d.pump();
+            const TexMap a0 = explicitTexMap(d.mesh().faces[second], true, doc.material(matId));
+            const QPointF at = d.screen(Vec3(2.6, 1.3, 0)); // clear of the handles
+            d.move(at);
+            d.drag(at, at + QPointF(30, 0));
+            d.pump();
+            const TexMap a1 = explicitTexMap(d.mesh().faces[second], true, doc.material(matId));
+            d.check(!a1.origin.nearlyEquals(a0.origin, 1e-6) && a1.u.nearlyEquals(a0.u, 1e-9), "all selected faces move together");
+        }
+        // Without a texture the tool says so and does nothing.
+        {
+            d.mesh().drawPolyline({{-3, 0, 0}, {-1, 0, 0}, {-1, 2, 0}, {-3, 2, 0}}, true);
+            vp->setStandardView(Vec3(0, 0, -1));
+            vp->zoomExtents();
+            d.pump();
+            const QPointF plain = d.screen(Vec3(-2, 1, 0));
+            d.move(plain);
+            d.click(plain);
+            d.pump();
+            d.check(tool->status().contains(QStringLiteral("no texture")), "a face without a texture is reported");
+        }
+        // Skewed maps survive saving.
+        {
+            d.mesh().faces[face].front.tex.v = d.mesh().faces[face].front.tex.v + d.mesh().faces[face].front.tex.u * 0.5;
+            QByteArray json = modelToJson(doc.state);
+            ModelState back;
+            d.check(modelFromJson(json, back), "the model saves");
+            const TexMap& t0 = d.mesh().faces[face].front.tex;
+            const TexMap& t1 = back.mesh.faces[face].front.tex;
+            d.check(t1.valid && t1.u.nearlyEquals(t0.u, 1e-9) && t1.v.nearlyEquals(t0.v, 1e-9) && t1.origin.nearlyEquals(t0.origin, 1e-9), "a skewed mapping is saved exactly");
+        }
+        doc.style = RenderStyle();
         vp->setTool(ToolId::Select);
     }
 

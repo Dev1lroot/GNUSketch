@@ -74,13 +74,19 @@ include its output in the bug report.
   with a radius in mm and a number of segments, with a live preview. Edges between
   two faces get a rounded strip with mitred or spherical corners; corners of
   rectangles and polylines get a tangent arc.
+* **Position Texture** (Ctrl+U, Tools menu, tool set, right-click > Texture) adjusts the
+  texture of the selected faces on the model, live: an orange outline shows one repeat of
+  the image. Drag inside to move, corners to resize (Shift: free proportions, Ctrl: about the
+  centre; they snap to the face's corners), side squares to stretch, diamonds to skew, the
+  circle to rotate; drag a corner across to mirror. Selected faces change together. To type a
+  value, click a handle instead of dragging, then type `45`, `2`, `2,1` or `0.5,0.2`.
 * **Bend** (Ctrl+B, Tools menu, tool set) bends any geometry: select it (or click it),
   click the start and the end of the bend, then move the mouse or type the angle. Before the
   bend nothing moves, the stretch curves with its length kept, and what lies after it
   follows rigidly. The arrow keys pick the axis (default: blue), so straight stairs bent
   90° around blue become a quarter-circle staircase that keeps its height. Type `24s` for
   the number of segments. Flat pieces stay single n-gons and curved parts are smooth-shaded.
-  Painted or fitted textures keep their old placement, so they may need refitting.
+  Painted or fitted textures keep their old placement: use Position Texture to refit them.
 * **Effects** (menu, like the Effects menu of an image editor) work on the selected
   faces or components, with a dialog and a live preview; **Ctrl+F** repeats the last
   one. Faces around the selection stay put and stay connected. A component that has

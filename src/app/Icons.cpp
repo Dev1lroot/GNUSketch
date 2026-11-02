@@ -29,6 +29,7 @@ const char* svgFor(const QString& n) {
         {"scale", R"svg(<rect x="3" y="9" width="12" height="12" fill="#dfe6ee" stroke="#222" stroke-width="1.2"/><rect x="3" y="3" width="18" height="18" fill="none" stroke="#222" stroke-width="1" stroke-dasharray="2 1.5"/><path d="M10 14 L19 5" stroke="#d6262e" stroke-width="2"/><path d="M14.5 4 L20.5 3.5 L20 9.5 Z" fill="#d6262e"/><rect x="1.8" y="19.8" width="2.6" height="2.6" fill="#2fae3a"/><rect x="19.6" y="1.6" width="2.6" height="2.6" fill="#2fae3a"/>)svg"},
         {"roundcorners", R"svg(<path d="M3 21 L3 11 A8 8 0 0 1 11 3 L21 3" fill="none" stroke="#222" stroke-width="1.6"/><path d="M3 21 L3 3 L21 3" fill="none" stroke="#d6262e" stroke-width="1" stroke-dasharray="2 1.5"/><path d="M5.3 5.3 L8.4 8.4" stroke="#2f7de1" stroke-width="1.4"/><circle cx="11" cy="11" r="1.5" fill="#2f7de1"/><circle cx="3" cy="11" r="1.6" fill="#d6262e"/><circle cx="11" cy="3" r="1.6" fill="#d6262e"/>)svg"},
         {"traceimage", R"svg(<rect x="2.5" y="3.5" width="19" height="17" fill="#e8f1fb" stroke="#556" stroke-width="1"/><path d="M5 18 L9.5 10 L12.5 14.5 L15 11.5 L19 18 Z" fill="#9fb4c9"/><path d="M5 18 L9.5 10 L12.5 14.5 L15 11.5 L19 18 Z" fill="none" stroke="#d6262e" stroke-width="1.5" stroke-linejoin="round"/><circle cx="16.5" cy="7.5" r="1.8" fill="#f2c230"/>)svg"},
+        {"textureposition", R"svg(<path d="M3 7 L17 4 L21 17 L7 20 Z" fill="#cfe0f2" stroke="#222" stroke-width="1.1"/><path d="M6.5 10.5 L18 8 M8 15 L19.5 12.5 M9 6 L12 18.8 M14 5 L16.8 17.8" stroke="#7d93ad" stroke-width=".8"/><path d="M3 7 L17 4 L21 17 L7 20 Z" fill="none" stroke="#f07800" stroke-width="1.2"/><rect x="1.2" y="5.2" width="3.6" height="3.6" fill="#fff" stroke="#b05a00" stroke-width=".9"/><rect x="19.2" y="15.2" width="3.6" height="3.6" fill="#fff" stroke="#b05a00" stroke-width=".9"/>)svg"},
         {"bend", R"svg(<path d="M3 21 L3 15 L9 15 C14.5 15 15 10.5 15 8 L15 3 L21 3 L21 8 C21 16 16 21 9 21 Z" fill="#b9c4d1" stroke="#222" stroke-width="1.2" stroke-linejoin="round"/><path d="M6 18 L9 18 C15 18 18 14 18 8 L18 6" fill="none" stroke="#d6262e" stroke-width="1.3" stroke-dasharray="2 1.4"/>)svg"},
         {"character", R"svg(<ellipse cx="12" cy="22" rx="7" ry="1.6" fill="#9aa5b1"/><circle cx="12" cy="5" r="3.2" fill="#f0c9a0" stroke="#5e4022" stroke-width="1"/><path d="M7.5 19.5 L9 9.8 Q12 8.3 15 9.8 L16.5 19.5 L13.6 19.5 L12 14 L10.4 19.5 Z" fill="#2f7de1" stroke="#1d4f8f" stroke-width="1" stroke-linejoin="round"/>)svg"},
         {"effects", R"svg(<path d="M12 2 L14 9 L21 11 L14 13 L12 20 L10 13 L3 11 L10 9 Z" fill="#f2c230" stroke="#6b5310" stroke-width="1" stroke-linejoin="round"/><path d="M19 16 L20 19 L23 20 L20 21 L19 24 L18 21 L15 20 L18 19 Z" fill="#2f7de1"/>)svg"},
@@ -148,6 +149,7 @@ QString toolIconName(ToolId id) {
     case ToolId::SolidSplit: return "solid_split";
     case ToolId::PlaceCharacter: return "character";
     case ToolId::Bend: return "bend";
+    case ToolId::TexturePosition: return "textureposition";
     }
     return "select";
 }

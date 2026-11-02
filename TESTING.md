@@ -30,6 +30,15 @@ bottom. Screenshots help.
 - [ ] Round Corners: rectangle corners, one cube edge, four top edges, all cube edges; live preview and too-large radius message
 - [ ] Components: select a box, right-click Make Component; Ctrl+Move copies; double-click a copy, push/pull and draw on it (rest fades, other copies change live); Esc / click outside closes; rotate and scale one copy (others unchanged); Make Unique then edit; Explode; undo/redo through all of it; save, reopen, copy/paste between windows
 
+## Position Texture
+- [ ] Drop an image on a face, Ctrl+U, click the face: orange outline with handles, no blue selection pattern over the texture
+- [ ] Drag inside: the image follows the cursor exactly, live; the faint full image shows past the face; Esc mid-drag restores it; one Undo per drag
+- [ ] Corners (uniform, Shift free, Ctrl about the centre, snapping to the face's corner); drag across to mirror
+- [ ] Side squares stretch one way; diamonds skew; circle rotates and snaps every 15°, correct with non-square images
+- [ ] Click a handle (don't drag), type `45` / `2` / `2,1` / `0.5,0.2`, Enter; or click again to place
+- [ ] Several selected faces, also on different sides of a box; a back face; a terrain; save, reopen and export to glTF keep it all
+- [ ] A face with no texture says so; Texture: Fit and Reset still work
+
 ## Bend
 - [ ] Open samples/stairs.gsketch, Ctrl+A, Ctrl+B, click the bottom front corner of the stairs, then a point along their run; move the mouse: the ghost follows both ways, snaps every 15°; type 90, Enter: a quarter-circle staircase with flat treads and smooth curved sides
 - [ ] Walk up it in Game Mode; Undo restores it in one step; `24s` while bending

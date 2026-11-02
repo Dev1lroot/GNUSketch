@@ -8,6 +8,7 @@
 #include "ModifyTools.h"
 #include "SolidTools.h"
 #include "TerrainTools.h"
+#include "TextureTool.h"
 #include "core/Components.h"
 #include "io/ImageUtil.h"
 
@@ -78,6 +79,7 @@ void Viewport::setTool(ToolId id) {
     case ToolId::SolidSubtract:
     case ToolId::SolidTrim:
     case ToolId::SolidSplit: tool_ = std::make_unique<SolidTool>(this, id); break;
+    case ToolId::TexturePosition: tool_ = std::make_unique<TextureTool>(this); break;
     case ToolId::Bend: tool_ = std::make_unique<BendTool>(this); break;
     case ToolId::PlaceCharacter: tool_ = std::make_unique<PlaceCharacterTool>(this); break;
     }
@@ -190,6 +192,7 @@ void Viewport::paintGL() {
         pv.polys = tmp.polys;
         pv.highlightFaces = tmp.highlightFaces;
         pv.highlightEdges = tmp.highlightEdges;
+        pv.hideFaceSelection = tmp.hideFaceSelection;
     }
     if (dropHoverFace_ >= 0) pv.highlightFaces.insert(dropHoverFace_);
     if (glOk_) renderer_.render(*doc_, camera_, pv, devicePixelRatioF());

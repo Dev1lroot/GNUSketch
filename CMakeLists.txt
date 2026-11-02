@@ -26,6 +26,7 @@ add_library(gs_core STATIC
   src/core/Solids.h src/core/Solids.cpp
   src/core/Effects.h src/core/Effects.cpp
   src/core/Walker.h src/core/Walker.cpp
+  src/core/TextureMapping.h src/core/TextureMapping.cpp
 )
 target_include_directories(gs_core PUBLIC src)
 target_compile_options(gs_core PRIVATE -Wall -Wextra)
@@ -56,6 +57,7 @@ add_executable(gnusketch
   src/app/SolidTools.h src/app/SolidTools.cpp
   src/app/GameMode.h src/app/GameMode.cpp
   src/app/BendTool.h src/app/BendTool.cpp
+  src/app/TextureTool.h src/app/TextureTool.cpp
   src/app/EffectsUi.h src/app/EffectsUi.cpp
   src/app/CameraTools.h src/app/CameraTools.cpp
   src/app/Viewport.h src/app/Viewport.cpp

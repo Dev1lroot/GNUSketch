@@ -1121,6 +1121,9 @@ void InstructorPanel::showTool(ToolId id) {
     case ToolId::Pan: i = {"Pan", "Moves the camera sideways.", "Drag in the viewport. Shift + middle mouse pans with any tool.", ""}; break;
     case ToolId::Zoom: i = {"Zoom", "Moves the camera closer or farther.", "Drag up/down, or use the mouse wheel with any tool. Type a field of view in degrees.", "Shift + drag: change field of view"}; break;
     case ToolId::ZoomWindow: i = {"Zoom Window", "Zooms to a rectangular area.", "Drag a window around the area of interest.", ""}; break;
+    case ToolId::TexturePosition: i = {"Position Texture", "Moves, resizes, rotates, skews and mirrors the texture of the selected faces on the model, in real time.",
+        "Select textured faces (or click one). The orange outline is one repeat of the image. Drag inside to move, a corner to resize (it snaps to the corners of the face), a side square to stretch, a diamond to skew, the circle to rotate. Drag a corner across to mirror. All selected faces change together. To type a value, click the handle instead of dragging it, then type.",
+        "Corner: Shift = free proportions, Ctrl = about the centre &nbsp; Rotate snaps every 15° &nbsp; Type: 45 (angle), 2 or 2,1 (factor), 0.5,0.2 (distance) &nbsp; Esc: cancel &nbsp; Texture: Fit / Reset in the right-click menu"}; break;
     case ToolId::Bend: i = {"Bend", "Bends any geometry around an axis, like a strip of soft metal. Before the bend nothing moves; after it everything follows rigidly.",
         "Select what to bend (or click it). Click the start of the bend, then its end. Move the mouse or type the angle, then click. Curves stay as flat pieces wherever they can, so stair treads stay one face each.",
         "Right / Left / Up arrow: bend around the red / green / blue axis (default blue) &nbsp; Type 90: angle in degrees, then Enter &nbsp; Type 24s: number of segments &nbsp; Esc: cancel"}; break;

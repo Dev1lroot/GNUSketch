@@ -30,6 +30,11 @@ bottom. Screenshots help.
 - [ ] Round Corners: rectangle corners, one cube edge, four top edges, all cube edges; live preview and too-large radius message
 - [ ] Components: select a box, right-click Make Component; Ctrl+Move copies; double-click a copy, push/pull and draw on it (rest fades, other copies change live); Esc / click outside closes; rotate and scale one copy (others unchanged); Make Unique then edit; Explode; undo/redo through all of it; save, reopen, copy/paste between windows
 
+## Bend
+- [ ] Open samples/stairs.gsketch, Ctrl+A, Ctrl+B, click the bottom front corner of the stairs, then a point along their run; move the mouse: the ghost follows both ways, snaps every 15°; type 90, Enter: a quarter-circle staircase with flat treads and smooth curved sides
+- [ ] Walk up it in Game Mode; Undo restores it in one step; `24s` while bending
+- [ ] Arrow keys change the axis; a box bent around the red axis; a selected component with copies; lines without faces; too sharp a bend is refused with a message
+
 ## Effects
 - [ ] Effects menu is greyed out with nothing selected; select a box, Noise: the dialog previews live, Cancel restores it, OK is one Undo
 - [ ] Noise: only the blue axis on a flat plane makes terrain; only red on a wall; Distance and Bump size feel right in meters; New Pattern

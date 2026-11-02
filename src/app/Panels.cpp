@@ -1121,6 +1121,9 @@ void InstructorPanel::showTool(ToolId id) {
     case ToolId::Pan: i = {"Pan", "Moves the camera sideways.", "Drag in the viewport. Shift + middle mouse pans with any tool.", ""}; break;
     case ToolId::Zoom: i = {"Zoom", "Moves the camera closer or farther.", "Drag up/down, or use the mouse wheel with any tool. Type a field of view in degrees.", "Shift + drag: change field of view"}; break;
     case ToolId::ZoomWindow: i = {"Zoom Window", "Zooms to a rectangular area.", "Drag a window around the area of interest.", ""}; break;
+    case ToolId::Bend: i = {"Bend", "Bends any geometry around an axis, like a strip of soft metal. Before the bend nothing moves; after it everything follows rigidly.",
+        "Select what to bend (or click it). Click the start of the bend, then its end. Move the mouse or type the angle, then click. Curves stay as flat pieces wherever they can, so stair treads stay one face each.",
+        "Right / Left / Up arrow: bend around the red / green / blue axis (default blue) &nbsp; Type 90: angle in degrees, then Enter &nbsp; Type 24s: number of segments &nbsp; Esc: cancel"}; break;
     case ToolId::PlaceCharacter: i = {"Game Mode", "Puts a character on the model and walks it around in a separate game window. It is 1.80 m tall and 0.30 m across, and collides with every visible face.",
         "Click the spot to stand on; the green capsule shows the character. In the game window click to capture the mouse, then walk. The game works on a copy of the model: to see later edits, close it and place the character again.",
         "WASD: walk &nbsp; Mouse or arrow keys: look &nbsp; Shift: run &nbsp; Space: jump &nbsp; R: back to the start &nbsp; Tab: edges &nbsp; F11: full screen &nbsp; Esc: free the mouse, then leave"}; break;

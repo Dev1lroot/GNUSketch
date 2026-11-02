@@ -79,6 +79,10 @@ struct Surface {
 
     bool extract(const Mesh& m, const std::set<Id>& selected);
     void refine(double maxEdge);
+    // Splits edges for as long as the rule gives a positive priority (highest
+    // first) and sets where along the edge to split.
+    using SplitRule = std::function<double(int a, int b, double& t)>;
+    void refineWith(const SplitRule& rule);
     // Longest edge allowed when subdividing to `wanted`, within the triangle limit.
     double limitedDetail(double wanted);
     bool write(Mesh& m, const std::vector<Poly>& polys, bool softenAll, bool visibleNew, bool smoothNew, EffectResult* out) const;
@@ -189,16 +193,15 @@ double Surface::limitedDetail(double wanted) {
     return std::max(wanted, byLimit);
 }
 
-void Surface::refine(double maxEdge) {
-    if (maxEdge <= 0) return;
+void Surface::refineWith(const SplitRule& rule) {
     std::unordered_map<uint64_t, std::vector<int>> edgeTris;
     edgeTris.reserve(tris.size() * 3);
     using Item = std::tuple<double, int, int>;
     std::priority_queue<Item> queue;
-    const double max2 = maxEdge * maxEdge;
     auto push = [&](int a, int b) {
-        double l2 = (verts[a].p - verts[b].p).length2();
-        if (l2 > max2) queue.emplace(l2, a, b);
+        double t = 0.5;
+        const double priority = rule(a, b, t);
+        if (priority > 0) queue.emplace(priority, a, b);
     };
     for (int t = 0; t < (int)tris.size(); ++t)
         for (int k = 0; k < 3; ++k) {
@@ -212,21 +215,21 @@ void Surface::refine(double maxEdge) {
         for (int& t : list)
             if (t == from) t = to;
     };
-    // Always splitting the globally longest edge: it is the longest of every
-    // triangle it belongs to, which keeps the triangles well shaped.
     while (!queue.empty() && (int)tris.size() < kEffectTriangleLimit) {
-        auto [l2, a, b] = queue.top();
+        auto [priority, a, b] = queue.top();
         queue.pop();
         auto it = edgeTris.find(edgeKey(a, b));
         if (it == edgeTris.end()) continue;
+        double at = 0.5;
+        if (rule(a, b, at) <= 0) continue;
         std::vector<int> onEdge = std::move(it->second);
         edgeTris.erase(it);
 
         V mid;
-        mid.p = lerp(verts[a].p, verts[b].p, 0.5);
+        mid.p = lerp(verts[a].p, verts[b].p, at);
         std::map<Id, float> mix;
-        for (const PaintWeight& w : verts[a].paint) mix[w.material] += w.weight * 0.5f;
-        for (const PaintWeight& w : verts[b].paint) mix[w.material] += w.weight * 0.5f;
+        for (const PaintWeight& w : verts[a].paint) mix[w.material] += w.weight * float(1 - at);
+        for (const PaintWeight& w : verts[b].paint) mix[w.material] += w.weight * float(at);
         for (const auto& [mat, weight] : mix) mid.paint.push_back({mat, weight});
         auto info = edges.find(edgeKey(a, b));
         const bool hasInfo = info != edges.end();
@@ -273,6 +276,18 @@ void Surface::refine(double maxEdge) {
         push(c, b);
     }
     if (!queue.empty()) limited = true;
+}
+
+void Surface::refine(double maxEdge) {
+    if (maxEdge <= 0) return;
+    const double max2 = maxEdge * maxEdge;
+    // Always splitting the globally longest edge: it is the longest of every
+    // triangle it belongs to, which keeps the triangles well shaped.
+    refineWith([&](int a, int b, double& t) {
+        t = 0.5;
+        const double l2 = (verts[a].p - verts[b].p).length2();
+        return l2 > max2 ? l2 : 0.0;
+    });
 }
 
 bool Surface::write(Mesh& m, const std::vector<Poly>& polys, bool softenAll, bool visibleNew, bool smoothNew,
@@ -1272,6 +1287,197 @@ bool effectRemesh(Mesh& m, const std::set<Id>& faces, const RemeshParams& p, Eff
     };
     std::vector<Surface::Poly> polys = s.clusterPolys(cluster, chartOf, snap);
     return s.write(m, polys, false, true, p.smooth, out);
+}
+
+int BendParams::segmentCount() const {
+    if (segments > 0) return segments;
+    return std::max(2, (int)std::ceil(std::fabs(angle) / (7.5 * kPi / 180) - 1e-9));
+}
+
+double BendParams::radius() const { return std::fabs(angle) < 1e-9 ? 1e12 : length / angle; }
+
+Vec3 BendParams::apply(const Vec3& p) const {
+    if (std::fabs(angle) < 1e-9 || length <= 0) return p;
+    const Vec3 side = axis.cross(dir);
+    const Vec3 d = p - origin;
+    const double s = d.dot(dir), w = d.dot(side), h = d.dot(axis);
+    if (s <= 0) return p;
+    const double R = length / angle;
+    const double phi = angle * std::min(s, length) / length;
+    const double r = R - w;
+    const Vec3 centre = origin + side * R;
+    Vec3 q = centre + (dir * std::sin(phi) - side * std::cos(phi)) * r + axis * h;
+    if (s > length) q += (dir * std::cos(angle) + side * std::sin(angle)) * (s - length);
+    return q;
+}
+
+bool BendParams::fits(const Vec3& p) const {
+    if (std::fabs(angle) < 1e-9) return true;
+    const Vec3 d = p - origin;
+    const double s = d.dot(dir);
+    // The ends of the stretch count: the arc starts or ends right there.
+    if (s < -1e-9 || s > length + 1e-9) return true;
+    return (radius() - d.dot(axis.cross(dir))) / radius() > 1e-6;
+}
+
+bool makeBend(const Vec3& a, const Vec3& b, const Vec3& axis, double angle, int segments, BendParams& out) {
+    out.axis = axis.normalized();
+    Vec3 along = b - a;
+    along -= out.axis * along.dot(out.axis);
+    if (along.length() < kTol * 10) return false;
+    out.origin = a;
+    out.dir = along.normalized();
+    out.length = along.length();
+    out.angle = angle;
+    out.segments = segments;
+    return true;
+}
+
+bool effectBend(Mesh& m, const std::set<Id>& faces, const std::set<Id>* edgesIn, const BendParams& p, EffectResult* out, std::string* error) {
+    // Loose edges: those bounding no face at all.
+    struct Loose {
+        Id a, b;
+        Vec3 pa, pb;
+    };
+    std::vector<Loose> loose;
+    auto addLoose = [&](Id e) {
+        if (e < 0 || e >= (Id)m.edges.size() || !m.edges[e].alive) return;
+        for (Id f : m.edgeFaces(e))
+            if (m.faces[f].alive) return;
+        const Edge& E = m.edges[e];
+        loose.push_back({E.v[0], E.v[1], m.pos(E.v[0]), m.pos(E.v[1])});
+    };
+    if (edgesIn) {
+        for (Id e : *edgesIn) addLoose(e);
+    } else {
+        for (Id e = 0; e < (Id)m.edges.size(); ++e) addLoose(e);
+    }
+
+    Surface s;
+    const bool hasFaces = s.extract(m, faces);
+    if (!hasFaces && loose.empty()) {
+        if (error) *error = "Select the geometry to bend first.";
+        return false;
+    }
+    const auto tooTight = [&] {
+        if (error) *error = "The bend is too tight for this geometry: it would turn inside out. Use a longer stretch or a smaller angle.";
+        return false;
+    };
+    const int n = p.segmentCount();
+    const double step = p.length / n;
+    // A segment boundary strictly between two positions along the bend, if any.
+    constexpr double kOnSlice = 1e-6;
+    auto boundaryBetween = [&](double lo, double hi, double& at) {
+        if (lo > hi) std::swap(lo, hi);
+        for (int k = std::max(0, (int)std::ceil((lo + kOnSlice) / step)); k <= n; ++k) {
+            const double x = k * step;
+            if (x >= hi - kOnSlice) return false;
+            if (x > lo + kOnSlice) {
+                at = x;
+                return true;
+            }
+        }
+        return false;
+    };
+    auto along = [&](const Vec3& q) { return (q - p.origin).dot(p.dir); };
+
+    // Checks every point that ends up on the arc, before anything is changed.
+    for (const Loose& l : loose) {
+        if (!p.fits(l.pa) || !p.fits(l.pb)) return tooTight();
+        const double sa = along(l.pa), sb = along(l.pb);
+        double lo = std::min(sa, sb), at;
+        while (boundaryBetween(lo, std::max(sa, sb), at)) {
+            if (!p.fits(lerp(l.pa, l.pb, (at - sa) / (sb - sa)))) return tooTight();
+            lo = at;
+        }
+    }
+    if (hasFaces) {
+        // Cuts every edge where a segment boundary crosses it, so the surface
+        // folds exactly along the arc's segments and each piece stays flat.
+        s.refineWith([&](int a, int b, double& t) {
+            const double sa = along(s.verts[a].p), sb = along(s.verts[b].p);
+            double at;
+            if (!boundaryBetween(sa, sb, at)) return 0.0;
+            t = (at - sa) / (sb - sa);
+            return std::fabs(sb - sa);
+        });
+        for (const Surface::V& v : s.verts)
+            if (!v.pinned && !p.fits(v.p)) return tooTight();
+        for (Surface::V& v : s.verts)
+            if (!v.pinned) v.p = p.apply(v.p);
+        s.write(m, flatPolys(s), false, false, false, out);
+    }
+    std::unordered_set<Id> moved;
+    for (const Surface::V& v : s.verts)
+        if (v.mesh != kNone) moved.insert(v.mesh);
+
+    auto hasFace = [&](Id v) {
+        for (Id e : m.vertexEdges(v))
+            if (m.edges[e].alive)
+                for (Id f : m.edgeFaces(e))
+                    if (m.faces[f].alive) return true;
+        return false;
+    };
+    static const std::vector<Id> kNoFaces;
+    std::vector<std::pair<Id, Vec3>> finalPos;
+    for (const Loose& l : loose) {
+        // Cut at the segment boundaries; new vertices land on the arc.
+        Id from = l.a;
+        const double sa = along(l.pa), sb = along(l.pb);
+        std::vector<double> cuts;
+        double lo = std::min(sa, sb), at;
+        while (boundaryBetween(lo, std::max(sa, sb), at)) {
+            cuts.push_back(at);
+            lo = at;
+        }
+        if (sa > sb) std::reverse(cuts.begin(), cuts.end());
+        for (double x : cuts) {
+            const Vec3 q = lerp(l.pa, l.pb, (x - sa) / (sb - sa));
+            const Id v = m.addVertexRaw(q);
+            Id e = m.findEdge(from, l.b);
+            if (e == kNone) break;
+            m.splitEdge(e, v, &kNoFaces);
+            finalPos.emplace_back(v, p.apply(q));
+            if (out) {
+                Id piece = m.findEdge(from, v);
+                if (piece != kNone) out->edges.insert(piece);
+            }
+            from = v;
+        }
+        if (out) {
+            Id piece = m.findEdge(from, l.b);
+            if (piece != kNone) out->edges.insert(piece);
+        }
+        // An end joined to faces outside the bend stays with them.
+        if (moved.insert(l.a).second && !hasFace(l.a)) finalPos.emplace_back(l.a, p.apply(l.pa));
+        if (moved.insert(l.b).second && !hasFace(l.b)) finalPos.emplace_back(l.b, p.apply(l.pb));
+    }
+    for (const auto& [v, q] : finalPos) m.vertices[v].p = q;
+    m.touch();
+    m.markGeometryMoved();
+    return true;
+}
+
+bool applyBend(ModelState& st, Selection& sel, const BendParams& p, std::string* error) {
+    bool any = false;
+    if (!sel.faces.empty() || !sel.edges.empty()) {
+        EffectResult r;
+        if (!effectBend(st.activeMesh(), sel.faces, &sel.edges, p, &r, error)) return false;
+        sel.faces = r.faces;
+        sel.edges = r.edges;
+        any = true;
+    }
+    if (!sel.instances.empty() && st.editing == kNone) {
+        Selection instances;
+        instances.instances = sel.instances;
+        if (!applyEffect(st, instances, [&](Mesh& m, const std::set<Id>& f, EffectResult* r, std::string* e) {
+                return effectBend(m, f, nullptr, p, r, e);
+            }, nullptr, error))
+            return false;
+        any = true;
+    }
+    if (!any && error) *error = "Select the geometry to bend first.";
+    return any;
 }
 
 int effectFaceCount(const ModelState& st, const Selection& sel) {

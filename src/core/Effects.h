@@ -24,6 +24,7 @@ namespace gs {
 struct EffectResult {
     std::set<Id> faces;    // the new faces
     bool limited = false;  // the detail was reduced to stay within the polygon limit
+    std::set<Id> edges;    // the new loose edges (effects that keep those)
 };
 
 // Largest number of triangles an effect subdivides the selection into.
@@ -79,6 +80,33 @@ struct RemeshParams {
 // the creases and the selection's outline.
 bool effectRemesh(Mesh& m, const std::set<Id>& faces, const RemeshParams& p, EffectResult* out = nullptr,
                   std::string* error = nullptr);
+
+// Bends space along a straight stretch, like a strip of soft metal around a
+// cylinder. Along `dir`, measured from `origin` and across `axis`: what lies
+// before 0 stays, 0..length curves into an arc of `angle` radians around `axis`
+// (keeping its length along the middle), and what lies past `length` follows
+// rigidly. Position along `axis` is unchanged, so stairs bent around the vertical
+// keep their height. Positive angles turn dir towards axis x dir.
+struct BendParams {
+    Vec3 origin, dir, axis; // dir and axis: unit, perpendicular
+    double length = 1;
+    double angle = 0;
+    int segments = 0;       // straight pieces of the arc (0 = one per 7.5 degrees)
+    int segmentCount() const;
+    // Radius of the arc along the middle line (signed; infinite-ish for no angle).
+    double radius() const;
+    Vec3 apply(const Vec3& p) const;
+    // False if p is inside the bend beyond its centre, where it would turn inside out.
+    bool fits(const Vec3& p) const;
+};
+// Bend from a to b: the stretch is the part of a-b across `axis`. False if a-b
+// runs along the axis (nothing to bend along).
+bool makeBend(const Vec3& a, const Vec3& b, const Vec3& axis, double angle, int segments, BendParams& out);
+// Bends the faces, and the given edges that bound no face (null: every such edge).
+bool effectBend(Mesh& m, const std::set<Id>& faces, const std::set<Id>* edges, const BendParams& p,
+                EffectResult* out = nullptr, std::string* error = nullptr);
+// Bends the selection: faces and loose edges, and whole components (see applyEffect).
+bool applyBend(ModelState& st, Selection& sel, const BendParams& p, std::string* error = nullptr);
 
 // Runs an effect on the selection: the selected faces of the active mesh, then
 // the whole geometry of each selected component in world coordinates. A component

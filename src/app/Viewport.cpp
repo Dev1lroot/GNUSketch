@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Viewport.h"
 
+#include "BendTool.h"
 #include "CameraTools.h"
 #include "DrawTools.h"
 #include "GameMode.h"
@@ -77,6 +78,7 @@ void Viewport::setTool(ToolId id) {
     case ToolId::SolidSubtract:
     case ToolId::SolidTrim:
     case ToolId::SolidSplit: tool_ = std::make_unique<SolidTool>(this, id); break;
+    case ToolId::Bend: tool_ = std::make_unique<BendTool>(this); break;
     case ToolId::PlaceCharacter: tool_ = std::make_unique<PlaceCharacterTool>(this); break;
     }
     inference_->resetMemory();

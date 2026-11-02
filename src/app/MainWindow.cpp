@@ -185,6 +185,7 @@ void MainWindow::buildActions() {
     toolAction(ToolId::SolidSubtract, QStringLiteral("Subtract"), QString());
     toolAction(ToolId::SolidTrim, QStringLiteral("Trim"), QString());
     toolAction(ToolId::SolidSplit, QStringLiteral("Split"), QString());
+    toolAction(ToolId::Bend, QStringLiteral("Bend"), QStringLiteral("Ctrl+B"));
     toolAction(ToolId::PlaceCharacter, QStringLiteral("Game Mode"), QStringLiteral("Ctrl+G"));
     toolActions_[ToolId::PlaceCharacter]->setObjectName(QStringLiteral("gamemode"));
     toolActions_[ToolId::PlaceCharacter]->setStatusTip(QStringLiteral("Place a character on the model and walk around it in a separate window."));
@@ -463,6 +464,7 @@ void MainWindow::buildMenus() {
     QMenu* solids = tools->addMenu(Icons::get("solid_union"), QStringLiteral("&Solid Tools"));
     for (ToolId id : kSolidTools) solids->addAction(toolActions_[id]);
     tools->addSeparator();
+    tools->addAction(toolActions_[ToolId::Bend]);
     tools->addAction(acts_["roundcorners"]);
     tools->addAction(acts_["traceimage"]);
     tools->addSeparator();
@@ -566,6 +568,7 @@ void MainWindow::buildToolbars() {
         {(int)ToolId::Rotate, (int)ToolId::Offset},
         {(int)ToolId::Scale, (int)ToolId::FollowMe},
         {-4, -5},
+        {(int)ToolId::Bend, -1},
         {-2, -2},
         {(int)ToolId::Mountain, (int)ToolId::Pit},
         {(int)ToolId::Flatten, (int)ToolId::TextureBrush},
@@ -1617,6 +1620,7 @@ void MainWindow::showShortcuts() {
                                             "<tr><td><b>Arrows</b></td><td>Lock axis / plane</td><td><b>Shift</b></td><td>Lock inference</td></tr>"
                                             "<tr><td><b>Ctrl+T</b></td><td>Select none</td><td><b>Esc</b></td><td>Cancel</td></tr>"
                                             "<tr><td><b>Ctrl+F</b></td><td>Repeat last effect</td><td><b>Ctrl+G</b></td><td>Game Mode</td></tr>"
+                                            "<tr><td><b>Ctrl+B</b></td><td>Bend</td><td></td><td></td></tr>"
                                             "</table><p>Type numbers at any time to enter exact values in the Measurements box.</p>"));
 }
 

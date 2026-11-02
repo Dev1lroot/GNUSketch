@@ -1425,6 +1425,64 @@ int runSelfTest(MainWindow& w) {
         d.check(!game.isVisible(), "Esc again closes the window");
     }
 
+    // Bend tool: straight stairs, the real clicks and typed angle.
+    {
+        doc.reset();
+        vp->setTool(ToolId::Select);
+        d.pump();
+        Mesh& m = d.mesh();
+        m.viewHint = Vec3(0, -10, 2);
+        m.groundFacesDown = false;
+        const int steps = 12;
+        std::vector<Vec3> profile{{0, 0, 0}};
+        for (int i = 0; i < steps; ++i) {
+            profile.push_back({i * 0.3, 0, (i + 1) * 0.18});
+            profile.push_back({(i + 1) * 0.3, 0, (i + 1) * 0.18});
+        }
+        profile.push_back({steps * 0.3, 0, 0});
+        m.drawPolyline(profile, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) { m.pushPull(f, m.faces[f].normal.y > 0 ? 1.2 : -1.2); break; }
+        vp->zoomExtents();
+        vp->setStandardView(Vec3(0, 0, -1)); // from above: every corner is in view
+        d.pump();
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) doc.selection.faces.insert(f);
+        doc.notifySelection();
+        const double volume = solidVolume(m);
+        const int facesBefore = m.aliveFaceCount();
+        vp->setTool(ToolId::Bend);
+        d.check(vp->toolId() == ToolId::Bend, "the Bend tool starts");
+        // The stairs' nosing at each end, in view from above.
+        const QPointF a = d.screen(Vec3(0, 0, 0.18)), b = d.screen(Vec3(steps * 0.3, 0, steps * 0.18));
+        d.move(a);
+        d.click(a);
+        d.pump();
+        d.move(b);
+        d.click(b);
+        d.pump();
+        // The cursor to one side: the ghost and the typed value follow.
+        d.move(b + QPointF(0, -80));
+        const QImage ghost = vp->grabFramebuffer();
+        d.check(!ghost.isNull() && m.aliveFaceCount() == facesBefore, "bending previews without touching the model");
+        d.type(QStringLiteral("90"));
+        d.pump();
+        d.check(doc.undoName() == "Bend", "typing the angle bends the stairs, as one undo step");
+        d.check(isSolid(d.mesh()) && std::fabs(solidVolume(d.mesh()) - volume * (1 - 0.6 / (steps * 0.3 / (kPi / 2)))) / volume < 0.02, "the bent stairs are closed, with the volume of their curved path");
+        int treads = 0;
+        for (const Face& F : d.mesh().faces)
+            if (F.alive && F.normal.z > 0.999) ++treads;
+        d.check(treads == steps, "each tread is still one flat face");
+        const double R = steps * 0.3 / (kPi / 2);
+        d.check(d.mesh().findVertex(Vec3(R, R, 0), 1e-3) != kNone && d.mesh().findVertex(Vec3(R, R, steps * 0.18), 1e-3) != kNone, "the stairs' run lies on a quarter circle");
+        d.check(!doc.selection.faces.empty(), "the bent stairs stay selected");
+        d.check(vp->toolId() == ToolId::Bend, "the tool is ready for another bend");
+        w.findChild<QAction*>(QStringLiteral("undo"))->trigger();
+        d.pump();
+        d.check(d.mesh().aliveFaceCount() == facesBefore, "undo brings the straight stairs back");
+        vp->setTool(ToolId::Select);
+    }
+
     std::printf("selftest: %d faces, %d edges, %zu materials, %d failures\n", d.mesh().aliveFaceCount(),
                 d.mesh().aliveEdgeCount(), doc.state.materials.size(), d.failures);
     doc.modified = false;

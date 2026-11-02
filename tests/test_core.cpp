@@ -2139,6 +2139,210 @@ int main() {
         CHECK(w.feet().z > 0.5 - 0.4 && w.feet().z < 0.5 + 0.4);
     });
 
+    // ---- bend -----------------------------------------------------------------
+    // Straight stairs along +X, 1 m wide along Y, as one closed solid.
+    auto stairs = [&](Mesh& m, int steps, double run, double rise, double width = 1.0) {
+        m.groundFacesDown = false;
+        m.viewHint = Vec3(0, -10, 2);
+        std::vector<Vec3> p{{0, 0, 0}};
+        for (int i = 0; i < steps; ++i) {
+            p.push_back({i * run, 0, (i + 1) * rise});
+            p.push_back({(i + 1) * run, 0, (i + 1) * rise});
+        }
+        p.push_back({steps * run, 0, 0});
+        m.drawPolyline(p, true);
+        Id f = onlyFace(m);
+        m.pushPull(f, width * (m.faces[f].normal.y > 0 ? 1 : -1));
+    };
+    test("bend: the mapping keeps length, stays put before, rigid after", [&] {
+        BendParams b;
+        CHECK(makeBend(Vec3(1, 0, 0), Vec3(5, 0, 7), Vec3(0, 0, 1), kPi / 2, 0, b));
+        CHECK(near(b.length, 4) && near(b.dir.x, 1) && near(b.dir.z, 0));
+        CHECK_EQ(b.segmentCount(), 12);
+        CHECK(b.apply(Vec3(0.5, 3, 2)).nearlyEquals(Vec3(0.5, 3, 2)));
+        // A quarter circle turning +X towards +Y, radius 4/(pi/2).
+        const double R = 8 / kPi;
+        CHECK(b.apply(Vec3(5, 0, 2)).nearlyEquals(Vec3(1 + R, R, 2), 1e-9));
+        CHECK(b.apply(Vec3(3, 0, 0)).nearlyEquals(Vec3(1 + R * std::sin(kPi / 4), R - R * std::cos(kPi / 4), 0), 1e-9));
+        // Past the end: straight on along +Y.
+        CHECK(b.apply(Vec3(6, 0, 0)).nearlyEquals(Vec3(1 + R, R + 1, 0), 1e-9));
+        // Across: the outside of the turn gets longer, the inside shorter.
+        CHECK(b.apply(Vec3(5, -1, 0)).nearlyEquals(Vec3(1 + R + 1, R, 0), 1e-9));
+        // Negative angles turn the other way; no angle changes nothing.
+        b.angle = -kPi / 2;
+        CHECK(b.apply(Vec3(5, 0, 0)).nearlyEquals(Vec3(1 + R, -R, 0), 1e-9));
+        b.angle = 0;
+        CHECK(b.apply(Vec3(5, 2, 9)).nearlyEquals(Vec3(5, 2, 9)));
+        CHECK(!makeBend(Vec3(0, 0, 0), Vec3(0, 0, 5), Vec3(0, 0, 1), 1, 0, b));
+    });
+    test("bend: straight stairs become a quarter-circle staircase", [&] {
+        Mesh m;
+        const int steps = 12;
+        const double run = 0.3, rise = 0.18;
+        stairs(m, steps, run, rise);
+        CHECK(isSolid(m));
+        const double v0 = solidVolume(m);
+        // The stretch is the stairs' run, slanting up with them; the arc is 3.6 m long.
+        BendParams b;
+        CHECK(makeBend(Vec3(0, 0, 0), Vec3(steps * run, 0, steps * rise), Vec3(0, 0, 1), kPi / 2, 0, b));
+        EffectResult r;
+        std::string why;
+        CHECK(effectBend(m, allFaces(m), nullptr, b, &r, &why));
+        CHECK(isSolid(m, &why));
+        // Pappus: the stairs lie on the inside of the turn, 0.5 m from the line
+        // bent, whose length is kept. Straight arc pieces take off a little more.
+        const double R0 = steps * run / (kPi / 2);
+        const double expected = v0 * (1 - 0.5 / R0);
+        CHECK(std::fabs(solidVolume(m) - expected) / expected < 0.01);
+        CHECK(!r.faces.empty());
+        // Every tread stays one single horizontal face at its own height.
+        std::map<int, int> treads;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+            if (!m.faces[f].alive || m.faces[f].normal.z < 0.999) continue;
+            ++treads[(int)std::lround(m.facePlane(f).d / rise)];
+        }
+        CHECK_EQ((int)treads.size(), steps);
+        for (const auto& [level, count] : treads) CHECK_EQ(count, 1);
+        CHECK(worstWarp(m) < 1e-6);
+        // Height is unchanged; the top end now faces along +Y, on the quarter circle.
+        Vec3 mn, mx;
+        bool any;
+        m.bounds(mn, mx, any);
+        CHECK(near(mx.z, steps * rise) && near(mn.z, 0));
+        const double R = steps * run / (kPi / 2);
+        CHECK(m.findVertex(Vec3(R, R, steps * rise), 1e-6) != kNone);
+        CHECK(m.findVertex(Vec3(R, R, 0), 1e-6) != kNone);
+        CHECK(m.findVertex(Vec3(0, 0, 0), 1e-6) != kNone);
+        // All vertices of the y = 0 side lie on the circle: radius R around (0, R),
+        // and those of the y = 1 side on the circle inside it.
+        for (const Vertex& v : m.vertices) {
+            if (!v.alive) continue;
+            const double fromCentre = (Vec3(v.p.x, v.p.y, 0) - Vec3(0, R, 0)).length();
+            CHECK(near(fromCentre, R, 1e-6) || near(fromCentre, R - 1, 1e-6));
+        }
+        // Sides curve smoothly: no hard edges between their strips, a tread's edges stay.
+        int softEdges = 0;
+        for (const Edge& E : m.edges)
+            if (E.alive && E.soft) ++softEdges;
+        CHECK(softEdges > 12);
+        // Far fewer polygons than triangles: flat pieces merged.
+        CHECK(m.aliveFaceCount() < 150);
+    });
+    test("bend: the bent stairs are walkable", [&] {
+        Mesh m;
+        const int steps = 12;
+        const double run = 0.3, rise = 0.18;
+        stairs(m, steps, run, rise, 1.5);
+        BendParams b;
+        CHECK(makeBend(Vec3(0, 0, 0), Vec3(steps * run, 0, 0), Vec3(0, 0, 1), kPi / 2, 0, b));
+        CHECK(effectBend(m, allFaces(m), nullptr, b));
+        CollisionWorld world;
+        ModelState st;
+        st.mesh = m;
+        world.buildFromModel(st);
+        // Starts in front of the stairs and walks the middle of the curve (y = 0.75 straight,
+        // the side of the turn away from the centre is -Y).
+        Walker w(world);
+        w.spawn(Vec3(-1, 0.75, 0));
+        w.setYaw(0);
+        const double R = b.radius() - 0.75;
+        WalkInput in;
+        in.forward = 1;
+        for (int i = 0; i < 500; ++i) {
+            const Vec3 q = w.feet();
+            // Tangent of the circle around (0, b.radius()) at this point.
+            if (q.x > 0) {
+                const double a = std::atan2(q.x, b.radius() - q.y);
+                if (a < kPi / 2) w.setYaw(a);
+                else w.setYaw(kPi / 2);
+            }
+            w.advance(0.01, in);
+            if (q.z > steps * rise - 0.01) break;
+        }
+        CHECK(w.feet().z > steps * rise - 0.05);
+        CHECK(R > 0);
+    });
+    test("bend: selection, neighbours, components, loose lines, limits", [&] {
+        // Only part of a box: the rest stays and all stays connected.
+        Mesh box;
+        solidBox(box, Vec3(0, 0, 0), Vec3(4, 1, 1));
+        std::set<Id> top;
+        for (Id f = 0; f < (Id)box.faces.size(); ++f)
+            if (box.faces[f].alive && box.faces[f].normal.z > 0.9) top.insert(f);
+        BendParams b;
+        CHECK(makeBend(Vec3(1, 0, 1), Vec3(3, 0, 1), Vec3(0, 1, 0), 0.3, 0, b));
+        CHECK(effectBend(box, top, nullptr, b));
+        CHECK(isSolid(box));
+
+        // Around a horizontal axis: a beam bent upwards stays closed, its end rises.
+        Mesh beam;
+        solidBox(beam, Vec3(0, 0, 0), Vec3(4, 1, 1));
+        BendParams up;
+        CHECK(makeBend(Vec3(1, 0, 0), Vec3(3, 0, 0), Vec3(0, 1, 0), kPi / 3, 0, up));
+        const Vec3 tip = up.apply(Vec3(4, 0, 0));
+        CHECK(effectBend(beam, allFaces(beam), nullptr, up));
+        CHECK(isSolid(beam));
+        CHECK(std::fabs(tip.z) > 1);
+        CHECK(beam.findVertex(tip, 1e-6) != kNone);
+        CHECK(worstWarp(beam) < 1e-6);
+
+        // Too tight: inside the arc's centre it would turn inside out, nothing changes.
+        Mesh tight;
+        solidBox(tight, Vec3(0, -5, 0), Vec3(1, 5, 1));
+        const int faces0 = tight.aliveFaceCount();
+        BendParams t;
+        CHECK(makeBend(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 0, 1), kPi, 0, t));
+        std::string err;
+        CHECK(!effectBend(tight, allFaces(tight), nullptr, t, nullptr, &err));
+        CHECK(!err.empty());
+        CHECK_EQ(tight.aliveFaceCount(), faces0);
+
+        // Loose line: cut into the arc's segments, ends on the arc.
+        Mesh line;
+        line.drawLine(Vec3(0, 0, 0), Vec3(4, 0, 0));
+        std::set<Id> edges;
+        for (Id e = 0; e < (Id)line.edges.size(); ++e)
+            if (line.edges[e].alive) edges.insert(e);
+        BendParams arc;
+        CHECK(makeBend(Vec3(0, 0, 0), Vec3(4, 0, 0), Vec3(0, 0, 1), kPi / 2, 8, arc));
+        EffectResult r;
+        CHECK(effectBend(line, {}, &edges, arc, &r));
+        CHECK_EQ(line.aliveEdgeCount(), 8);
+        CHECK_EQ((int)r.edges.size(), 8);
+        const double R = arc.radius();
+        CHECK(line.findVertex(Vec3(R, R, 0), 1e-6) != kNone);
+        for (const Vertex& v : line.vertices)
+            if (v.alive) CHECK(near((v.p - Vec3(0, R, 0)).length(), R, 1e-9));
+
+        // Materials stay.
+        Mesh mat;
+        solidBox(mat, Vec3(0, 0, 0), Vec3(4, 1, 1));
+        for (Face& F : mat.faces)
+            if (F.alive) F.front.material = 7;
+        CHECK(effectBend(mat, allFaces(mat), nullptr, up));
+        for (const Face& F : mat.faces)
+            if (F.alive) CHECK_EQ(F.front.material, 7);
+
+        // A component with a copy: only the selected one bends.
+        Document d;
+        stairs(d.mesh(), 4, 0.3, 0.18);
+        Selection all;
+        all.faces = allFaces(d.mesh());
+        Id a = makeComponent(d.state, all, "Stairs");
+        Id c = cloneInstance(d.state, a);
+        d.state.instances[c].xf = Mat4::translation(Vec3(10, 0, 0));
+        const Id shared = d.state.instances[c].def;
+        const int defFaces = d.state.defs[shared].mesh.aliveFaceCount();
+        Selection sel;
+        sel.instances.insert(a);
+        BendParams s;
+        CHECK(makeBend(Vec3(0, 0, 0), Vec3(1.2, 0, 0), Vec3(0, 0, 1), kPi / 4, 0, s));
+        CHECK(applyBend(d.state, sel, s));
+        CHECK(d.state.instances[a].def != shared);
+        CHECK_EQ(d.state.defs[shared].mesh.aliveFaceCount(), defFaces);
+        CHECK(isSolid(d.state.defs[d.state.instances[a].def].mesh));
+    });
+
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

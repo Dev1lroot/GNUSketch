@@ -55,6 +55,7 @@ add_executable(gnusketch
   src/app/TerrainTools.h src/app/TerrainTools.cpp
   src/app/SolidTools.h src/app/SolidTools.cpp
   src/app/GameMode.h src/app/GameMode.cpp
+  src/app/BendTool.h src/app/BendTool.cpp
   src/app/EffectsUi.h src/app/EffectsUi.cpp
   src/app/CameraTools.h src/app/CameraTools.cpp
   src/app/Viewport.h src/app/Viewport.cpp

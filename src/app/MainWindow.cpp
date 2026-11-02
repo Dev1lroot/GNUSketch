@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "MainWindow.h"
 
+#include "Browsers.h"
+#include "MaterialEditor.h"
+#include "SceneTools.h"
+#include "io/AssetLibrary.h"
+#include "render/OffscreenRenderer.h"
+
 #include "EffectsUi.h"
 #include "GameMode.h"
 #include "Icons.h"
@@ -108,6 +114,15 @@ MainWindow::MainWindow() {
     connect(materials_, &MaterialsPanel::materialChosen, this, [this] { entityInfo_->refresh(); });
     connect(styles_, &StylesPanel::styleChanged, this, [this] { syncStyleActions(); });
     connect(sun_, &SunPanel::styleChanged, this, [this] { syncStyleActions(); });
+    connect(materials_, &MaterialsPanel::browserRequested, this, [this] {
+        materialBrowser()->show();
+        materialBrowser()->raise();
+    });
+    connect(materials_, &MaterialsPanel::editorRequested, this, [this] {
+        materialEditor()->show();
+        materialEditor()->raise();
+        materialEditor()->refresh();
+    });
     connect(viewport_, &Viewport::characterPlaced, this, [this](const Vec3& feet, double yaw) { launchGame(feet, yaw); });
 
     QSettings s;
@@ -188,6 +203,10 @@ void MainWindow::buildActions() {
     toolAction(ToolId::Bend, QStringLiteral("Bend"), QStringLiteral("Ctrl+B"));
     toolAction(ToolId::TexturePosition, QStringLiteral("Position Texture"), QStringLiteral("Ctrl+U"));
     toolActions_[ToolId::TexturePosition]->setObjectName(QStringLiteral("textureposition"));
+    toolAction(ToolId::PlacePointLight, QStringLiteral("Point Light"), QString());
+    toolAction(ToolId::PlaceSpotLight, QStringLiteral("Spot Light"), QString());
+    toolAction(ToolId::PlaceDirectionalLight, QStringLiteral("Directional Light"), QString());
+    toolAction(ToolId::PlaceCamera, QStringLiteral("Place Camera"), QString());
     toolAction(ToolId::PlaceCharacter, QStringLiteral("Game Mode"), QStringLiteral("Ctrl+G"));
     toolActions_[ToolId::PlaceCharacter]->setObjectName(QStringLiteral("gamemode"));
     toolActions_[ToolId::PlaceCharacter]->setStatusTip(QStringLiteral("Place a character on the model and walk around it in a separate window."));
@@ -247,6 +266,23 @@ void MainWindow::buildActions() {
     act("texreset", "", QStringLiteral("Texture: &Reset Position"), QKeySequence(), [this] { textureFitSelection(false); });
     act("makecomponent", "", QStringLiteral("Make &Component…"), QKeySequence(), [this] { makeComponent(); })
         ->setStatusTip(QStringLiteral("Turn the selected geometry into a component; copies of it share their geometry."));
+    act("saveprefab", "", QStringLiteral("Save as &Prefab…"), QKeySequence(), [this] { saveAsPrefab(); })
+        ->setStatusTip(QStringLiteral("Save the selected component as a file in the prefab library, to drop into any model."));
+    act("addcamera", "camera_place", QStringLiteral("Add Camera From &View"), QKeySequence(), [this] { addCameraFromView(); })
+        ->setStatusTip(QStringLiteral("Put a camera in the world that sees what the view sees now."));
+    act("materialbrowser", "paint", QStringLiteral("&Material Browser…"), QKeySequence(), [this] {
+        materialBrowser()->show();
+        materialBrowser()->raise();
+    });
+    act("materialeditor", "", QStringLiteral("Material &Editor…"), QKeySequence(), [this] {
+        materialEditor()->show();
+        materialEditor()->raise();
+        materialEditor()->refresh();
+    });
+    act("prefabbrowser", "", QStringLiteral("&Prefab Browser…"), QKeySequence(), [this] {
+        prefabBrowser()->show();
+        prefabBrowser()->raise();
+    });
     act("editcomponent", "", QStringLiteral("&Edit Component"), QKeySequence(), [this] { editComponent(); })
         ->setStatusTip(QStringLiteral("Edit the selected component in place (or double-click it); every copy changes too."));
     act("closecomponent", "", QStringLiteral("C&lose Component"), QKeySequence(), [this] {
@@ -312,6 +348,7 @@ void MainWindow::buildActions() {
     profilesAct_ = styleToggle("profiles", "", QStringLiteral("&Profiles"), &RenderStyle::profiles);
     axesAct_ = styleToggle("axes", "", QStringLiteral("&Axes"), &RenderStyle::showAxes);
     guidesAct_ = styleToggle("guides", "", QStringLiteral("&Guides"), &RenderStyle::showGuides);
+    objectsAct_ = styleToggle("objects", "", QStringLiteral("&Lights and Cameras"), &RenderStyle::showObjects);
     hiddenAct_ = styleToggle("hiddengeom", "", QStringLiteral("&Hidden Geometry"), &RenderStyle::showHidden);
     shadowsAct_ = styleToggle("shadows", "", QStringLiteral("&Shadows"), &RenderStyle::shadows);
     aoAct_ = styleToggle("ambientocclusion", "", QStringLiteral("Ambient &Occlusion"), &RenderStyle::ambientOcclusion);
@@ -407,6 +444,7 @@ void MainWindow::buildMenus() {
     QMenu* view = menuBar()->addMenu(QStringLiteral("&View"));
     view->addAction(axesAct_);
     view->addAction(guidesAct_);
+    view->addAction(objectsAct_);
     view->addAction(hiddenAct_);
     view->addSeparator();
     QMenu* edgeStyle = view->addMenu(QStringLiteral("Edge St&yle"));
@@ -441,6 +479,18 @@ void MainWindow::buildMenus() {
     cam->addAction(toolActions_[ToolId::Zoom]);
     cam->addAction(toolActions_[ToolId::ZoomWindow]);
     cam->addAction(acts_["zoomext"]);
+    cam->addSeparator();
+    cam->addAction(acts_["addcamera"]);
+    cam->addAction(toolActions_[ToolId::PlaceCamera]);
+    QMenu* placed = cam->addMenu(QStringLiteral("Look &Through"));
+    connect(placed, &QMenu::aboutToShow, this, [this, placed] {
+        placed->clear();
+        const auto& objs = doc_.state.objects;
+        for (Id i = 0; i < (Id)objs.size(); ++i)
+            if (objs[i].alive && objs[i].kind == SceneObject::ViewCamera)
+                placed->addAction(QString::fromStdString(objs[i].name), this, [this, i] { viewport_->lookThrough(i); });
+        if (placed->isEmpty()) placed->addAction(QStringLiteral("No cameras in the model"))->setEnabled(false);
+    });
 
     QMenu* draw = menuBar()->addMenu(QStringLiteral("&Draw"));
     QMenu* lines = draw->addMenu(QStringLiteral("&Lines"));
@@ -448,6 +498,8 @@ void MainWindow::buildMenus() {
     lines->addAction(toolActions_[ToolId::Freehand]);
     QMenu* arcs = draw->addMenu(QStringLiteral("&Arcs"));
     arcs->addAction(toolActions_[ToolId::Arc]);
+    QMenu* lightsMenu = draw->addMenu(Icons::get("light_point"), QStringLiteral("L&ights"));
+    for (ToolId id : {ToolId::PlacePointLight, ToolId::PlaceSpotLight, ToolId::PlaceDirectionalLight}) lightsMenu->addAction(toolActions_[id]);
     QMenu* shapes = draw->addMenu(QStringLiteral("&Shapes"));
     shapes->addAction(toolActions_[ToolId::Rectangle]);
     shapes->addAction(toolActions_[ToolId::Circle]);
@@ -485,12 +537,16 @@ void MainWindow::buildMenus() {
 
     QMenu* win = menuBar()->addMenu(QStringLiteral("&Window"));
     win->addAction(acts_["modelinfo"]);
+    win->addAction(acts_["materialbrowser"]);
+    win->addAction(acts_["materialeditor"]);
+    win->addAction(acts_["prefabbrowser"]);
+    win->addSeparator();
     QAction* trayAct = win->addAction(QStringLiteral("Default &Tray"));
     trayAct->setCheckable(true);
     trayAct->setChecked(true);
     connect(trayAct, &QAction::toggled, this, [this](bool on) { trayDock_->setVisible(on); });
     connect(win, &QMenu::aboutToShow, this, [this, trayAct] { trayAct->setChecked(trayDock_->isVisible()); });
-    for (const char* name : {"Entity Info", "Terraform", "Materials", "Styles", "Sun", "Instructor"}) {
+    for (const char* name : {"Entity Info", "Terraform", "Materials", "Scene", "Styles", "Sun", "Instructor"}) {
         QAction* a = win->addAction(QString::fromUtf8(name));
         QString key = QString::fromUtf8(name);
         connect(a, &QAction::triggered, this, [this, key] {
@@ -619,6 +675,7 @@ void MainWindow::buildTray() {
     materials_ = new MaterialsPanel(&doc_, viewport_, tray);
     styles_ = new StylesPanel(&doc_, viewport_, tray);
     sun_ = new SunPanel(&doc_, viewport_, tray);
+    scene_ = new ScenePanel(&doc_, viewport_, tray);
     instructor_ = new InstructorPanel(tray);
     terrain_ = new TerrainPanel(&doc_, viewport_,
                                 {toolActions_[ToolId::Mountain], toolActions_[ToolId::Pit], toolActions_[ToolId::Flatten],
@@ -627,6 +684,7 @@ void MainWindow::buildTray() {
     sections_["Entity Info"] = tray->addSection(QStringLiteral("Entity Info"), entityInfo_, true);
     sections_["Terraform"] = tray->addSection(QStringLiteral("Terraform"), terrain_, false);
     sections_["Materials"] = tray->addSection(QStringLiteral("Materials"), materials_, true);
+    sections_["Scene"] = tray->addSection(QStringLiteral("Scene"), scene_, false);
     sections_["Styles"] = tray->addSection(QStringLiteral("Styles"), styles_, false);
     sections_["Sun"] = tray->addSection(QStringLiteral("Sun"), sun_, false);
     sections_["Instructor"] = tray->addSection(QStringLiteral("Instructor"), instructor_, false);
@@ -677,11 +735,17 @@ void MainWindow::onDocChanged() {
     updateUndoActions();
     entityInfo_->refresh();
     materials_->refresh();
+    scene_->refresh();
+    if (materialEditor_ && materialEditor_->isVisible()) materialEditor_->refresh();
+    if (materialBrowser_) materialBrowser_->refreshFromModel();
     viewport_->update();
 }
 
 void MainWindow::onSelectionChanged() {
     entityInfo_->refresh();
+    scene_->refresh();
+    if (doc_.selection.objects.size() == 1 && !doc_.selection.faces.size() && !doc_.selection.edges.size() && !doc_.selection.instances.size())
+        sections_["Scene"]->setExpanded(true);
     bool any = !doc_.selection.empty();
     for (const char* k : {"cut", "copy", "delete", "hide", "roundcorners"}) acts_[k]->setEnabled(any);
     acts_["traceimage"]->setEnabled(!doc_.selection.faces.empty());
@@ -691,6 +755,7 @@ void MainWindow::onSelectionChanged() {
     const bool geometry = !doc_.selection.faces.empty() || !doc_.selection.edges.empty();
     const bool instances = !doc_.selection.instances.empty();
     acts_["makecomponent"]->setEnabled(geometry && !doc_.editingComponent());
+    acts_["saveprefab"]->setEnabled((geometry || instances) && !doc_.editingComponent());
     acts_["editcomponent"]->setEnabled(doc_.selection.instances.size() == 1);
     acts_["closecomponent"]->setEnabled(doc_.editingComponent());
     acts_["explode"]->setEnabled(instances);
@@ -714,20 +779,21 @@ void MainWindow::updateUndoActions() {
 
 void MainWindow::syncStyleActions() {
     const RenderStyle& s = doc_.style;
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_, sunAct_, cullAct_}) a->blockSignals(true);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_}) a->blockSignals(true);
     xrayAct_->setChecked(s.xray);
     backEdgesAct_->setChecked(s.backEdges);
     edgesAct_->setChecked(s.edges);
     profilesAct_->setChecked(s.profiles);
     axesAct_->setChecked(s.showAxes);
     guidesAct_->setChecked(s.showGuides);
+    objectsAct_->setChecked(s.showObjects);
     hiddenAct_->setChecked(s.showHidden);
     shadowsAct_->setChecked(s.shadows);
     aoAct_->setChecked(s.ambientOcclusion);
     antialiasAct_->setChecked(s.antialiasing);
     sunAct_->setChecked(s.sun);
     cullAct_->setChecked(s.backfaceCulling);
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_, sunAct_, cullAct_}) a->blockSignals(false);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_}) a->blockSignals(false);
     auto it = faceStyleActs_.find((int)s.faceStyle);
     if (it != faceStyleActs_.end()) it->second->setChecked(true);
     perspectiveAct_->setChecked(viewport_->camera().perspective);
@@ -920,6 +986,7 @@ void MainWindow::copySelection(bool cut) {
         c.def = (Id)clip.defs.size() - 1;
         clip.instances.push_back(c);
     }
+    for (Id o : doc_.selection.objects) clip.objects.push_back(doc_.state.objects[o]);
     clip.mesh = doc_.mesh();
     Mesh& m = clip.mesh;
     std::set<Id> keepEdges = doc_.selection.edges;
@@ -997,15 +1064,12 @@ void MainWindow::paste() {
     viewport_->setTool(ToolId::Move);
     Mesh& m = doc_.mesh();
     doc_.beginOp("Paste");
-    // Map clipboard materials onto document materials (by name + image).
+    // Map clipboard materials onto document materials (when they look the same).
     std::vector<Id> matMap(c.materials.size(), kNone);
     for (size_t i = 0; i < c.materials.size(); ++i) {
         const Material& cm = c.materials[i];
         for (Id j = 0; j < (Id)doc_.state.materials.size(); ++j) {
-            const Material& dm = doc_.state.materials[j];
-            bool sameImage = dm.hasTexture() == cm.hasTexture() &&
-                             (!cm.hasTexture() || *dm.texture.data == *cm.texture.data);
-            if (dm.name == cm.name && sameImage) matMap[i] = j;
+            if (sameMaterial(doc_.state.materials[j], cm)) matMap[i] = j;
         }
     }
     auto mapMat = [&](Id id) -> Id {
@@ -1089,6 +1153,8 @@ void MainWindow::paste() {
         doc_.state.instances.push_back(ni);
         sel.instances.insert((Id)doc_.state.instances.size() - 1);
     }
+    if (!doc_.editingComponent())
+        for (const SceneObject& o : c.objects) sel.objects.insert(doc_.addObject(o));
     doc_.selection = sel;
     doc_.validateSelection();
     doc_.notifySelection();
@@ -1105,6 +1171,7 @@ void MainWindow::paste() {
         Vec3 a, b;
         if (instanceBounds(doc_.state, i, a, b)) grow(a);
     }
+    for (Id o : sel.objects) grow(doc_.state.objects[o].pos);
     QPoint local = viewport_->mapFromGlobal(QCursor::pos());
     if (!viewport_->rect().contains(local)) local = viewport_->rect().center();
     auto* move = dynamic_cast<MoveTool*>(viewport_->tool());
@@ -1125,6 +1192,7 @@ void MainWindow::deleteSelection() {
     for (Id f : doc_.selection.faces) m.eraseFace(f);
     for (Id e : doc_.selection.edges) m.eraseEdge(e, false);
     for (Id i : doc_.selection.instances) doc_.state.instances[i].alive = false;
+    for (Id o : doc_.selection.objects) doc_.state.objects[o].alive = false;
     m.removeOrphanVertices();
     m.touch();
     doc_.selection.clear();
@@ -1142,6 +1210,9 @@ void MainWindow::selectAll() {
     const auto& insts = doc_.state.instances;
     for (Id i = 0; i < (Id)insts.size() && !doc_.editingComponent(); ++i)
         if (insts[i].alive && !insts[i].hidden) doc_.selection.instances.insert(i);
+    const auto& objs = doc_.state.objects;
+    for (Id i = 0; i < (Id)objs.size() && !doc_.editingComponent() && doc_.style.showObjects; ++i)
+        if (objs[i].alive) doc_.selection.objects.insert(i);
     doc_.notifySelection();
 }
 
@@ -1450,6 +1521,157 @@ void MainWindow::makeComponent() {
                               .arg(QString::fromStdString(doc_.state.defs[doc_.state.instances[inst].def].name)));
 }
 
+QString MainWindow::savePrefabOf(Id instance, const QString& name) {
+    if (instance < 0 || instance >= (Id)doc_.state.instances.size() || !doc_.state.instances[instance].alive) return {};
+    const Id def = doc_.state.instances[instance].def;
+    const QImage thumb = OffscreenRenderer::instance().modelThumbnail(extractDefinition(doc_.state, def), 256);
+    QString err;
+    const QString path = savePrefab(doc_.state, def, name, thumb, &err);
+    if (path.isEmpty()) {
+        statusLabel_->setText(QStringLiteral("Could not save the prefab: %1").arg(err));
+        return {};
+    }
+    statusLabel_->setText(QStringLiteral("Saved prefab to %1").arg(path));
+    if (prefabBrowser_ && prefabBrowser_->isVisible()) prefabBrowser_->rebuildNow();
+    return path;
+}
+
+void MainWindow::saveAsPrefab() {
+    if (doc_.editingComponent()) return;
+    viewport_->cancelTool();
+    Selection s = doc_.selection;
+    QString suggested = QStringLiteral("Prefab");
+    std::set<Id> defs;
+    for (Id i : s.instances) defs.insert(doc_.state.instances[i].def);
+    if (defs.size() == 1) suggested = QString::fromStdString(doc_.state.defs[*defs.begin()].name);
+    bool ok = true;
+    // Several components: each becomes a prefab under its own name.
+    QString name = suggested;
+    if (defs.size() <= 1) {
+        name = QInputDialog::getText(this, QStringLiteral("Save as Prefab"), QStringLiteral("Name:"), QLineEdit::Normal, suggested, &ok).trimmed();
+        if (!ok || name.isEmpty()) return;
+    }
+    // Loose geometry becomes a component first, like Make Component.
+    if (!s.faces.empty() || !s.edges.empty()) {
+        doc_.beginOp("Make Component");
+        Selection loose = s;
+        loose.instances.clear();
+        loose.objects.clear();
+        const Id inst = gs::makeComponent(doc_.state, loose, name.toStdString());
+        if (inst == kNone) {
+            doc_.cancelOp();
+            return;
+        }
+        doc_.selection.clear();
+        doc_.selection.instances = s.instances;
+        doc_.selection.instances.insert(inst);
+        doc_.commitOp();
+        doc_.notifySelection();
+        s = doc_.selection;
+    }
+    std::set<Id> done;
+    QStringList saved;
+    for (Id i : s.instances) {
+        const Id d = doc_.state.instances[i].def;
+        if (!done.insert(d).second) continue;
+        const QString path = savePrefabOf(i, done.size() == 1 && s.instances.size() == 1 ? name : QString::fromStdString(doc_.state.defs[d].name));
+        if (!path.isEmpty()) saved << path;
+    }
+    if (saved.size() > 1) statusLabel_->setText(QStringLiteral("Saved %1 prefabs to %2").arg(saved.size()).arg(assetDir(QStringLiteral("prefabs"))));
+}
+
+bool MainWindow::startPrefabPlacement(const QString& path) {
+    if (doc_.editingComponent()) {
+        statusLabel_->setText(QStringLiteral("Close the open component first: components cannot hold other components."));
+        return false;
+    }
+    ModelState prefab;
+    QString err;
+    if (!loadPrefab(path, prefab, nullptr, nullptr, &err)) {
+        statusLabel_->setText(err);
+        return false;
+    }
+    viewport_->cancelTool();
+    viewport_->setTool(ToolId::Move);
+    doc_.beginOp("Place Prefab");
+    const Id def = importDefinition(doc_, prefab, 0);
+    Instance in;
+    in.def = def;
+    doc_.state.instances.push_back(in);
+    const Id inst = (Id)doc_.state.instances.size() - 1;
+    doc_.selection.clear();
+    doc_.selection.instances.insert(inst);
+    doc_.notifySelection();
+    Vec3 mn, mx;
+    if (!instanceBounds(doc_.state, inst, mn, mx)) {
+        doc_.cancelOp();
+        return false;
+    }
+    QPoint local = viewport_->mapFromGlobal(QCursor::pos());
+    if (!viewport_->rect().contains(local)) local = viewport_->rect().center();
+    auto* move = dynamic_cast<MoveTool*>(viewport_->tool());
+    if (!move || !move->startPlacement(Vec3((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mn.z), local.x(), local.y())) {
+        doc_.commitOp();
+        return true;
+    }
+    activateWindow();
+    viewport_->setFocus();
+    viewport_->update();
+    return true;
+}
+
+void MainWindow::addCameraFromView() {
+    if (doc_.editingComponent()) {
+        statusLabel_->setText(QStringLiteral("Close the open component first."));
+        return;
+    }
+    viewport_->cancelTool();
+    doc_.beginOp("Add Camera");
+    const Id id = doc_.addObject(viewport_->objectFromView(SceneObject::ViewCamera));
+    doc_.selection.clear();
+    doc_.selection.objects.insert(id);
+    doc_.commitOp();
+    doc_.notifySelection();
+}
+
+MaterialEditor* MainWindow::materialEditor() {
+    if (!materialEditor_) {
+        materialEditor_ = new MaterialEditor(&doc_, viewport_, MaterialEditor::InWindow, this);
+        connect(materialEditor_, &MaterialEditor::saved, this, [this] {
+            if (materialBrowser_ && materialBrowser_->isVisible()) materialBrowser_->rebuildNow();
+        });
+    }
+    return materialEditor_;
+}
+
+MaterialBrowser* MainWindow::materialBrowser() {
+    if (!materialBrowser_) {
+        materialBrowser_ = new MaterialBrowser(&doc_, viewport_, materials_, this);
+        connect(materialBrowser_, &MaterialBrowser::chosen, this, [this] {
+            materials_->refresh();
+            entityInfo_->refresh();
+            if (materialEditor_ && materialEditor_->isVisible()) materialEditor_->refresh();
+        });
+        connect(materialBrowser_, &MaterialBrowser::editRequested, this, [this] {
+            materialEditor()->show();
+            materialEditor()->raise();
+            materialEditor()->refresh();
+        });
+    }
+    return materialBrowser_;
+}
+
+PrefabBrowser* MainWindow::prefabBrowser() {
+    if (!prefabBrowser_) {
+        prefabBrowser_ = new PrefabBrowser(this);
+        connect(prefabBrowser_, &PrefabBrowser::placeRequested, this, [this](const QString& p) { startPrefabPlacement(p); });
+        connect(prefabBrowser_, &PrefabBrowser::openRequested, this, [this](const QString& p) {
+            if (maybeSave()) openFile(p);
+        });
+    }
+    return prefabBrowser_;
+}
+
 void MainWindow::makeUnique() {
     if (doc_.selection.instances.empty()) return;
     viewport_->cancelTool();
@@ -1629,12 +1851,15 @@ void MainWindow::showShortcuts() {
 
 void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
     Selection& s = doc_.selection;
-    bool picked = pick.face != kNone || pick.edge != kNone || pick.instance != kNone;
-    bool inSel = (pick.face != kNone && s.faces.count(pick.face)) || (pick.edge != kNone && s.edges.count(pick.edge)) ||
-                 (pick.instance != kNone && s.instances.count(pick.instance));
+    bool picked = pick.face != kNone || pick.edge != kNone || pick.instance != kNone || pick.object != kNone;
+    bool inSel = pick.object != kNone ? s.objects.count(pick.object) > 0
+                                      : (pick.face != kNone && s.faces.count(pick.face)) || (pick.edge != kNone && s.edges.count(pick.edge)) ||
+                                            (pick.instance != kNone && s.instances.count(pick.instance));
     if (picked && !inSel) {
         s.clear();
-        if (pick.instance != kNone) {
+        if (pick.object != kNone) {
+            s.objects.insert(pick.object);
+        } else if (pick.instance != kNone) {
             s.instances.insert(pick.instance);
         } else if (pick.edge != kNone) {
             s.edges.insert(pick.edge);
@@ -1652,10 +1877,19 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
             menu.addSection(QStringLiteral("Component: %1").arg(QString::fromStdString(d.name)));
             menu.addAction(acts_["editcomponent"]);
         }
+        menu.addAction(acts_["saveprefab"]);
         menu.addAction(acts_["makeunique"]);
         menu.addAction(acts_["explode"]);
         QMenu* solids = menu.addMenu(Icons::get("solid_union"), QStringLiteral("Solid Tools"));
         for (ToolId id : kSolidTools) solids->addAction(toolActions_[id]);
+        menu.addSeparator();
+    }
+    if (s.objects.size() == 1) {
+        const Id id = *s.objects.begin();
+        const SceneObject& o = doc_.state.objects[id];
+        menu.addSection(QStringLiteral("%1: %2").arg(QString::fromLatin1(sceneObjectTypeName(o.kind)), QString::fromStdString(o.name)));
+        if (o.kind == SceneObject::ViewCamera)
+            menu.addAction(QStringLiteral("Look Through"), this, [this, id] { viewport_->lookThrough(id); });
         menu.addSeparator();
     }
     if (doc_.editingComponent()) {
@@ -1665,6 +1899,7 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
     if (!s.empty()) {
         if (geometry && !doc_.editingComponent()) {
             menu.addAction(acts_["makecomponent"]);
+            menu.addAction(acts_["saveprefab"]);
             menu.addSeparator();
         }
         menu.addAction(acts_["delete"]);
@@ -1717,6 +1952,7 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
                 grow(a);
                 grow(b);
             }
+            for (Id o : doc_.selection.objects) grow(doc_.state.objects[o].pos);
             if (!any) return;
             viewport_->camera().zoomExtents(mn, mx);
             viewport_->update();

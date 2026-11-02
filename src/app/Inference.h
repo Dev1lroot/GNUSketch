@@ -42,6 +42,7 @@ struct InferenceResult {
 struct PickResult {
     Id face = kNone, edge = kNone, vertex = kNone;
     Id instance = kNone; // component instance (top level only)
+    Id object = kNone;   // light or camera marker (only from the tools that select)
     Vec3 p;
     double t = 1e300;
 };
@@ -68,6 +69,8 @@ public:
     // Closest component instance under the cursor (none while one is open);
     // normalOut receives the world normal of the face hit (zero for an edge).
     Id pickInstance(double px, double py, double* tOut = nullptr, Vec3* normalOut = nullptr) const;
+    // Light or camera whose marker is under the cursor (none while a component is open).
+    Id pickObject(double px, double py, double tolPx = 14.0) const;
     // Instances being moved by a tool: not picked, snapped to or occluding.
     std::set<Id> ignoredInstances;
     void addPreview(const InferenceResult& r, Preview& pv) const;

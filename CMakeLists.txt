@@ -13,7 +13,7 @@ option(GNUSKETCH_BUILD_TESTS "Build kernel unit tests" ON)
 # ---- geometry kernel (no Qt dependency) -------------------------------------
 add_library(gs_core STATIC
   src/core/Math.h
-  src/core/Material.h
+  src/core/Material.h src/core/Material.cpp
   src/core/Triangulate.h src/core/Triangulate.cpp
   src/core/Mesh.h src/core/Mesh.cpp
   src/core/RoundCorners.h src/core/RoundCorners.cpp
@@ -41,6 +41,8 @@ add_library(gs_io STATIC
   src/io/GltfExport.h src/io/GltfExport.cpp
   src/io/StlExport.h src/io/StlExport.cpp
   src/io/ImageUtil.h src/io/ImageUtil.cpp
+  src/io/AssetLibrary.h src/io/AssetLibrary.cpp
+  src/io/ArchMaterials.h src/io/ArchMaterials.cpp
 )
 target_link_libraries(gs_io PUBLIC gs_core Qt6::Core Qt6::Gui)
 target_compile_options(gs_io PRIVATE -Wall -Wextra)
@@ -49,6 +51,7 @@ add_executable(gnusketch
   src/main.cpp
   src/render/Camera.h src/render/Camera.cpp
   src/render/Renderer.h src/render/Renderer.cpp
+  src/render/OffscreenRenderer.h src/render/OffscreenRenderer.cpp
   src/app/Inference.h src/app/Inference.cpp
   src/app/Tool.h src/app/Tool.cpp
   src/app/DrawTools.h src/app/DrawTools.cpp
@@ -59,6 +62,9 @@ add_executable(gnusketch
   src/app/BendTool.h src/app/BendTool.cpp
   src/app/TextureTool.h src/app/TextureTool.cpp
   src/app/EffectsUi.h src/app/EffectsUi.cpp
+  src/app/SceneTools.h src/app/SceneTools.cpp
+  src/app/MaterialEditor.h src/app/MaterialEditor.cpp
+  src/app/Browsers.h src/app/Browsers.cpp
   src/app/CameraTools.h src/app/CameraTools.cpp
   src/app/Viewport.h src/app/Viewport.cpp
   src/app/Icons.h src/app/Icons.cpp

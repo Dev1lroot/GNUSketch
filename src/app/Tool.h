@@ -23,7 +23,8 @@ enum class ToolId {
     PushPull, Move, Rotate, Scale, Offset, FollowMe, Tape, Orbit, Pan, Zoom, ZoomWindow,
     Mountain, Pit, Flatten, TextureBrush,
     SolidUnion, SolidIntersect, SolidSubtract, SolidTrim, SolidSplit,
-    PlaceCharacter, Bend, TexturePosition
+    PlaceCharacter, Bend, TexturePosition,
+    PlacePointLight, PlaceSpotLight, PlaceDirectionalLight, PlaceCamera
 };
 
 struct MouseEvent {

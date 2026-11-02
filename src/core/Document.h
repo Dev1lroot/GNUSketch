@@ -23,9 +23,10 @@ struct Guide {
 struct Selection {
     std::set<Id> faces, edges; // in the active mesh
     std::set<Id> instances;    // component instances (top level only)
-    bool empty() const { return faces.empty() && edges.empty() && instances.empty(); }
-    size_t count() const { return faces.size() + edges.size() + instances.size(); }
-    void clear() { faces.clear(); edges.clear(); instances.clear(); }
+    std::set<Id> objects;      // lights and cameras in the world
+    bool empty() const { return faces.empty() && edges.empty() && instances.empty() && objects.empty(); }
+    size_t count() const { return faces.size() + edges.size() + instances.size() + objects.size(); }
+    void clear() { faces.clear(); edges.clear(); instances.clear(); objects.clear(); }
     bool operator==(const Selection&) const = default;
 };
 
@@ -45,6 +46,27 @@ struct Instance {
     bool hidden = false;
 };
 
+// A light source or camera placed in the world.
+struct SceneObject {
+    enum Kind { PointLight, SpotLight, DirectionalLight, ViewCamera };
+    Kind kind = PointLight;
+    std::string name;
+    Vec3 pos;
+    Vec3 target;            // where spot lights, directional lights and cameras aim
+    bool alive = true;
+    bool enabled = true;    // lights: switched on
+    Color color = Color(1.0f, 0.95f, 0.85f);
+    double intensity = 3;   // lights; point and spot lights at 1 m
+    double range = 15;      // point and spot: meters until the light has faded out
+    double coneAngle = 50;  // spot: full angle in degrees
+    double softness = 0.3;  // spot: 0 hard edge .. 1 fades from the centre
+    double fov = 35;        // camera: vertical field of view in degrees
+    bool perspective = true;
+    bool isLight() const { return kind != ViewCamera; }
+    bool aims() const { return kind != PointLight; }
+};
+const char* sceneObjectTypeName(SceneObject::Kind k);
+
 // Everything that participates in undo/redo.
 struct ModelState {
     Mesh mesh; // top-level loose geometry
@@ -52,6 +74,7 @@ struct ModelState {
     std::vector<Guide> guides;
     std::vector<ComponentDef> defs;
     std::vector<Instance> instances;
+    std::vector<SceneObject> objects;
     // Instance open for editing (kNone = top level). While open, its
     // definition mesh holds world coordinates (the instance transform is
     // baked in) so every tool edits it in place; see Components.h.
@@ -71,6 +94,7 @@ struct RenderStyle {
     float profileWidth = 2.5f;
     bool showAxes = true;
     bool showGuides = true;
+    bool showObjects = true;   // light and camera markers
     bool showHidden = false;
     bool sky = true;
     bool ground = true;
@@ -139,6 +163,8 @@ public:
 
     Id addMaterial(const Material& m);
     std::string uniqueMaterialName(const std::string& base) const;
+    // Adds a light or camera with a unique name; returns its id.
+    Id addObject(SceneObject o);
     void validateSelection();
 
     // Change notification hooks (set by the UI).

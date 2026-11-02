@@ -1428,10 +1428,7 @@ Vec2 projectedTexCoord(const Face& f, bool frontSide, const Vec3& p, const Mater
     Vec3 u, v;
     planeBasis(n, u, v);
     double w = 1, h = 1;
-    if (m && m->hasTexture()) {
-        w = m->texture.worldWidth > 1e-9 ? m->texture.worldWidth : 1;
-        h = m->texture.worldHeight > 1e-9 ? m->texture.worldHeight : 1;
-    }
+    if (m) m->tileSize(w, h);
     return {p.dot(u) / w, p.dot(v) / h};
 }
 

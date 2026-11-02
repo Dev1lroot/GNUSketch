@@ -31,6 +31,10 @@ class StylesPanel;
 class InstructorPanel;
 class TerrainPanel;
 class SunPanel;
+class ScenePanel;
+class MaterialEditor;
+class MaterialBrowser;
+class PrefabBrowser;
 struct EffectDef;
 class TraySection;
 
@@ -40,6 +44,14 @@ public:
     MainWindow();
     ~MainWindow() override;
     bool openFile(const QString& path);
+    // Writes a prefab file of the instance's component; returns its path, or
+    // empty with a message in the status bar.
+    QString savePrefabOf(Id instance, const QString& name);
+    // Attaches a prefab to the cursor; the next click places it.
+    bool startPrefabPlacement(const QString& path);
+    MaterialBrowser* materialBrowser();
+    PrefabBrowser* prefabBrowser();
+    MaterialEditor* materialEditor();
 
 protected:
     void closeEvent(QCloseEvent* e) override;
@@ -82,6 +94,8 @@ private:
     void modelInfo();
     void roundCorners();
     void makeComponent();
+    void saveAsPrefab();
+    void addCameraFromView();
     void makeUnique();
     void explode();
     void editComponent();
@@ -102,6 +116,10 @@ private:
     InstructorPanel* instructor_ = nullptr;
     TerrainPanel* terrain_ = nullptr;
     SunPanel* sun_ = nullptr;
+    ScenePanel* scene_ = nullptr;
+    MaterialEditor* materialEditor_ = nullptr;
+    MaterialBrowser* materialBrowser_ = nullptr;
+    PrefabBrowser* prefabBrowser_ = nullptr;
     const EffectDef* lastEffect_ = nullptr;
     QProcess* game_ = nullptr;
     std::unique_ptr<QTemporaryDir> gameDir_;
@@ -118,7 +136,7 @@ private:
     QAction *perspectiveAct_ = nullptr, *parallelAct_ = nullptr;
     QAction *xrayAct_ = nullptr, *backEdgesAct_ = nullptr, *axesAct_ = nullptr, *guidesAct_ = nullptr,
             *hiddenAct_ = nullptr, *edgesAct_ = nullptr, *profilesAct_ = nullptr, *shadowsAct_ = nullptr, *aoAct_ = nullptr,
-            *antialiasAct_ = nullptr, *sunAct_ = nullptr, *cullAct_ = nullptr;
+            *antialiasAct_ = nullptr, *sunAct_ = nullptr, *cullAct_ = nullptr, *objectsAct_ = nullptr;
     std::map<int, QAction*> faceStyleActs_;
     std::map<QString, QAction*> acts_;
 

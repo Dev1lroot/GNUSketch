@@ -122,6 +122,23 @@ include its output in the bug report.
   **Make Unique** gives the selected copies their own definition, and **Explode**
   turns a component back into loose geometry. Exporters write components as
   ordinary geometry.
+* **Prefabs**: right-click a component (or selected geometry) and choose **Save as
+  Prefab**. It becomes its own `.gsketch` file in `~/.local/share/GNUSketch/prefabs`
+  (with its materials and a picture). **Window → Prefab Browser** lists them with
+  search: **drag one into the model**, where it lands with its base on the surface
+  under the cursor, or double-click it to carry it on the mouse. Everything placed
+  from one prefab shares one definition, as copies of a component do. A prefab holds
+  the component's own geometry, without the scale or rotation of the copy it was saved
+  from. Right-click **Open to Edit** opens the file like any model; any model saved
+  into the folder also works as a prefab.
+* **Lights and cameras in the world** (Draw → Lights, Camera → Place Camera, Window →
+  Scene): click a surface to put a **point light** above it (type a value for the
+  height), click twice to place and aim a **spot** or **directional light** or a
+  **camera**. Camera → **Add Camera From View** keeps the current view. Their markers
+  select, move, rotate, copy and erase like geometry; the Scene panel sets colour,
+  brightness, range, cone angle and field of view. Double-click a camera to look
+  through it. Lights shine on every material, in Game Mode too, and are exported to
+  glTF with the cameras. Only the sun casts shadows; these lights do not, yet.
 * **Solid Tools** (Tools → Solid Tools, Solid Tools toolbar, right-click a
   component): boolean operations on closed components ("solids"). Click the
   first solid, then the second:
@@ -249,6 +266,47 @@ material. Right-click → Texture → Fit to Face / Reset Position
 re-maps selected faces. The Materials panel also ships generated textures (brick,
 wood, tiles, grass, concrete, gravel, water, stone) and a colour palette.
 
+## PBR materials and custom shaders
+
+The **Materials** panel starts on **Architectural**: glass (clear, frosted, tinted),
+brick, concrete, plaster, oak, marble, tile, stone, asphalt, slate, corrugated metal
+and steel, all with generated maps, shown as globes. Choosing a material only makes it
+current; the active tool stays (the Paint button takes the Paint Bucket). **Create
+Material** starts a new one and opens the **Edit** tab, right in the sidebar; its
+Window button (or Window → Material Editor) opens a larger editor. A material becomes
+physically based as soon as you change anything here:
+
+* **Maps:** Base Color, Normal, Metallic, Roughness, Ambient Occlusion, Height, Emission
+  and Opacity, each with its own **strength** slider. Without an image, Metallic and
+  Roughness are plain values. **Add Maps** (or dropping files on the editor)
+  takes a whole set at once and sorts it by file name (`oak_Normal.png`,
+  `oak_Roughness.jpg`, ...); dropping on a row sets that map. Tick *DirectX style* for
+  normal maps whose green channel points down.
+* **Custom shaders**, like Unity's surface shaders: the Shader tab holds GLSL with a
+  `surface` function that sets albedo, metallic, roughness, normal, emission, ao and
+  alpha; lighting and shadows stay automatic. An ordinary `uniform` becomes a slider or
+  colour in the editor:
+
+  ```glsl
+  uniform float _Speed; // range(0, 10) default(1)
+  uniform vec3 _Tint;   // color default(1, 0.5, 0.2)
+  void surface(inout Surface s) {
+      s.albedo = texture(_BaseMap, s.uv).rgb * _Tint;
+      s.emission = _Tint * (0.5 + 0.5 * sin(_Time * _Speed));
+  }
+  ```
+
+  Compile errors show their line number and leave the material unchanged. Only surface
+  code is customisable, not the vertex stage. glTF and OBJ carry the maps and values,
+  but other programs cannot run the shader code.
+
+PBR shading shows in the *Shaded With Textures* style. **Window → Material Browser**
+is a large window with search and adjustable picture size for the model's materials,
+ready-made PBR materials, your library, generated and folder textures and colours:
+click to paint with one, **drag one onto a face**. Save to Library (right-click) keeps a
+material in `~/.local/share/GNUSketch/materials`; images in
+`~/.local/share/GNUSketch/textures` or an added folder are listed as textures.
+
 **Images as planes:** drop an image file from the desktop or Dolphin onto **empty
 space** and it becomes a flat rectangle showing the image, at 1 pixel = 1 mm. It lies
 on the axis plane that faces the camera most: the ground in a top view, a vertical
@@ -297,13 +355,13 @@ the image is traced, so on a tiled texture fit the image to the face first.
 
 * **`.gsketch` (native)** is plain, documented JSON (see `src/io/NativeFormat.h`). It
   stores vertices, edges (soft/smooth/hidden/curve flags), n-gon faces with holes,
-  per-side materials and planar UV mappings, guides, camera and style. Textures are
-  embedded as their original PNG/JPEG bytes (base64).
+  per-side materials (with PBR maps and shader code) and planar UV mappings, guides,
+  lights and cameras, view camera and style. Textures are embedded as their original PNG/JPEG bytes (base64).
 * **OBJ + MTL** (export/import) keeps n-gon faces; only faces with holes are
   triangulated, because OBJ cannot express holes. Loose edges are written as `l`.
   Y-up on disk.
 * **glTF 2.0** (export) produces a single self-contained `.gltf`, Y-up, with PBR
-  materials and textures.
+  materials, their maps and textures, lights (`KHR_lights_punctual`) and cameras.
 * **STL** (export) is binary, in millimetres.
 
 **To get FBX:** export OBJ or glTF, then convert with Blender (File → Import, then

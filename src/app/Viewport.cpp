@@ -6,14 +6,19 @@
 #include "DrawTools.h"
 #include "GameMode.h"
 #include "ModifyTools.h"
+#include "SceneTools.h"
 #include "SolidTools.h"
 #include "TerrainTools.h"
 #include "TextureTool.h"
 #include "core/Components.h"
+#include "io/AssetLibrary.h"
 #include "io/ImageUtil.h"
+#include "io/NativeFormat.h"
 
 #include <QApplication>
 #include <QDragEnterEvent>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFileInfo>
 #include <QKeyEvent>
 #include <QMimeData>
@@ -39,6 +44,12 @@ Viewport::Viewport(Document* doc, QWidget* parent) : QOpenGLWidget(parent), doc_
     setFormat(fmt);
     inference_ = std::make_unique<InferenceEngine>(*doc_, camera_);
     setTool(ToolId::Select);
+    animTimer_ = new QTimer(this);
+    animTimer_->setInterval(33);
+    connect(animTimer_, &QTimer::timeout, this, [this] {
+        if (renderer_.animated()) update();
+    });
+    animTimer_->start();
 }
 
 Viewport::~Viewport() {
@@ -82,6 +93,10 @@ void Viewport::setTool(ToolId id) {
     case ToolId::TexturePosition: tool_ = std::make_unique<TextureTool>(this); break;
     case ToolId::Bend: tool_ = std::make_unique<BendTool>(this); break;
     case ToolId::PlaceCharacter: tool_ = std::make_unique<PlaceCharacterTool>(this); break;
+    case ToolId::PlacePointLight:
+    case ToolId::PlaceSpotLight:
+    case ToolId::PlaceDirectionalLight:
+    case ToolId::PlaceCamera: tool_ = std::make_unique<PlaceObjectTool>(this, id); break;
     }
     inference_->resetMemory();
     vcbLabel_ = tool_->vcbLabel();
@@ -195,6 +210,19 @@ void Viewport::paintGL() {
         pv.hideFaceSelection = tmp.hideFaceSelection;
     }
     if (dropHoverFace_ >= 0) pv.highlightFaces.insert(dropHoverFace_);
+    if (dragPrefab_ && dragPrefabHit_ && !dragPrefab_->defs.empty()) {
+        // The box the prefab would take up, standing where it would land.
+        Vec3 mn, mx;
+        bool any = false;
+        dragPrefab_->defs[0].mesh.bounds(mn, mx, any);
+        if (any) {
+            const Vec3 off = dragPrefabAt_ - Vec3((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mn.z);
+            Vec3 k[8];
+            for (int i = 0; i < 8; ++i) k[i] = off + Vec3((i & 1) ? mx.x : mn.x, (i & 2) ? mx.y : mn.y, (i & 4) ? mx.z : mn.z);
+            static const int E[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+            for (const auto& ed : E) pv.line(k[ed[0]], k[ed[1]], Color::rgb8(0, 110, 230), 1.5f);
+        }
+    }
     if (glOk_) renderer_.render(*doc_, camera_, pv, devicePixelRatioF());
 
     QPainter p(this);
@@ -379,6 +407,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
             return;
         }
         PickResult pr = inference_->pick(e->position().x(), e->position().y());
+        pr.object = inference_->pickObject(e->position().x(), e->position().y());
         emit contextMenuAt(e->globalPosition().toPoint(), pr);
         return;
     }
@@ -516,12 +545,34 @@ static QStringList imagePaths(const QMimeData* md) {
 }
 
 void Viewport::dragEnterEvent(QDragEnterEvent* e) {
-    if (!imagePaths(e->mimeData()).isEmpty()) e->acceptProposedAction();
+    const QMimeData* md = e->mimeData();
+    if (md->hasFormat(prefabMime())) {
+        const QString path = QString::fromUtf8(md->data(prefabMime()));
+        auto prefab = std::make_unique<ModelState>();
+        QString err;
+        if (!loadPrefab(path, *prefab, nullptr, nullptr, &err)) {
+            emit statusText(err);
+            e->ignore();
+            return;
+        }
+        dragPrefabPath_ = path;
+        dragPrefab_ = std::move(prefab);
+        e->acceptProposedAction();
+        return;
+    }
+    if (md->hasFormat(materialMime()) || !imagePaths(md).isEmpty()) e->acceptProposedAction();
     else e->ignore();
 }
 
 void Viewport::dragMoveEvent(QDragMoveEvent* e) {
-    if (imagePaths(e->mimeData()).isEmpty()) {
+    const QMimeData* md = e->mimeData();
+    if (md->hasFormat(prefabMime())) {
+        e->acceptProposedAction();
+        dragPrefabHit_ = surfacePointAt(e->position().x(), e->position().y(), dragPrefabAt_);
+        update();
+        return;
+    }
+    if (!md->hasFormat(materialMime()) && imagePaths(md).isEmpty()) {
         e->ignore();
         return;
     }
@@ -530,8 +581,41 @@ void Viewport::dragMoveEvent(QDragMoveEvent* e) {
     update();
 }
 
+void Viewport::dragLeaveEvent(QDragLeaveEvent* e) {
+    dropHoverFace_ = -1;
+    dragPrefab_.reset();
+    dragPrefabHit_ = false;
+    update();
+    QOpenGLWidget::dragLeaveEvent(e);
+}
+
 void Viewport::dropEvent(QDropEvent* e) {
-    QStringList paths = imagePaths(e->mimeData());
+    const QMimeData* md = e->mimeData();
+    const double x = e->position().x(), y = e->position().y();
+    if (md->hasFormat(prefabMime())) {
+        ModelState prefab;
+        const QString path = QString::fromUtf8(md->data(prefabMime()));
+        QString err;
+        Vec3 at;
+        if (dragPrefab_ && dragPrefabPath_ == path) prefab = std::move(*dragPrefab_);
+        else if (!loadPrefab(path, prefab, nullptr, nullptr, &err)) emit statusText(err);
+        dragPrefab_.reset();
+        dragPrefabHit_ = false;
+        if (!prefab.defs.empty() && surfacePointAt(x, y, at) && placePrefab(prefab, at) != kNone) e->acceptProposedAction();
+        else e->ignore();
+        setFocus();
+        update();
+        return;
+    }
+    if (md->hasFormat(materialMime())) {
+        dropHoverFace_ = -1;
+        const QJsonDocument d = QJsonDocument::fromJson(md->data(materialMime()));
+        if (d.isObject() && dropMaterial(materialFromJson(d.object()), x, y, e->modifiers())) e->acceptProposedAction();
+        else e->ignore();
+        update();
+        return;
+    }
+    QStringList paths = imagePaths(md);
     dropHoverFace_ = -1;
     if (paths.isEmpty()) {
         e->ignore();
@@ -539,10 +623,101 @@ void Viewport::dropEvent(QDropEvent* e) {
     }
     e->acceptProposedAction();
     bool tile = e->modifiers() & Qt::ControlModifier;
-    if (!dropImage(paths.first(), e->position().x(), e->position().y(), tile))
-        addImagePlane(paths.first(), e->position().x(), e->position().y());
+    if (!dropImage(paths.first(), x, y, tile)) addImagePlane(paths.first(), x, y);
     for (int i = 1; i < paths.size(); ++i) emit imageDropped(paths[i]);
     update();
+}
+
+bool Viewport::surfacePointAt(double x, double y, Vec3& out) {
+    double t = std::numeric_limits<double>::infinity();
+    inference_->pickFace(x, y, &t); // also hits components
+    const Ray r = camera_.ray(x, y);
+    if (std::isfinite(t)) {
+        out = r.at(t);
+        return true;
+    }
+    if (intersectRayPlane(r, Plane(Vec3(0, 0, 1), Vec3()), t) && t > 0) {
+        out = r.at(t);
+        return true;
+    }
+    return false;
+}
+
+Id Viewport::placePrefab(const ModelState& prefab, const Vec3& at) {
+    if (doc_->editingComponent()) {
+        emit statusText(QStringLiteral("Close the open component first: components cannot hold other components."));
+        return kNone;
+    }
+    if (prefab.defs.empty()) return kNone;
+    if (tool_) tool_->reset();
+    doc_->beginOp("Place Prefab");
+    const Id def = importDefinition(*doc_, prefab, 0);
+    Vec3 mn, mx;
+    bool any = false;
+    doc_->state.defs[def].mesh.bounds(mn, mx, any);
+    Instance in;
+    in.def = def;
+    in.xf = Mat4::translation(at - (any ? Vec3((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mn.z) : Vec3()));
+    doc_->state.instances.push_back(in);
+    const Id inst = (Id)doc_->state.instances.size() - 1;
+    doc_->selection.clear();
+    doc_->selection.instances.insert(inst);
+    doc_->commitOp();
+    doc_->notifySelection();
+    emit statusText(QStringLiteral("Placed prefab \"%1\". Everything placed from it shares its geometry.")
+                        .arg(QString::fromStdString(doc_->state.defs[def].name)));
+    return inst;
+}
+
+bool Viewport::dropMaterial(const Material& m, double x, double y, Qt::KeyboardModifiers mods) {
+    if (inference_->pickFace(x, y) == kNone) {
+        emit statusText(inference_->pickInstance(x, y) != kNone
+                            ? QStringLiteral("To paint a component, open it first (double-click), then drop the material on its face.")
+                            : QStringLiteral("Drop the material on a face."));
+        return false;
+    }
+    if (tool_) tool_->reset();
+    // Adding the material and painting with it are one undo step.
+    doc_->beginOp("Paint");
+    Id id = kNone;
+    for (Id i = 0; i < (Id)doc_->materials().size() && id == kNone; ++i)
+        if (sameMaterial(doc_->materials()[i], m)) id = i;
+    if (id == kNone) id = doc_->addMaterial(m);
+    doc_->currentMaterial = id;
+    MouseEvent ev;
+    ev.x = x;
+    ev.y = y;
+    ev.button = Qt::LeftButton;
+    ev.buttons = Qt::LeftButton;
+    ev.mods = mods & ~Qt::KeyboardModifiers(Qt::AltModifier); // Alt would sample
+    PaintTool(this).mousePress(ev); // the active tool stays what it is
+    doc_->commitOp();
+    emit materialPicked();
+    update();
+    return true;
+}
+
+void Viewport::lookThrough(Id object) {
+    if (object < 0 || object >= (Id)doc_->state.objects.size()) return;
+    const SceneObject& o = doc_->state.objects[object];
+    if (o.kind != SceneObject::ViewCamera || !o.alive) return;
+    camera_.eye = o.pos;
+    camera_.target = o.target;
+    camera_.up = Vec3(0, 0, 1);
+    camera_.fovY = o.fov;
+    camera_.perspective = o.perspective;
+    emit statusText(QStringLiteral("Looking through \"%1\".").arg(QString::fromStdString(o.name)));
+    update();
+}
+
+SceneObject Viewport::objectFromView(SceneObject::Kind kind) const {
+    SceneObject o;
+    o.kind = kind;
+    o.pos = camera_.eye;
+    o.target = camera_.target;
+    o.fov = camera_.fovY;
+    o.perspective = camera_.perspective;
+    return o;
 }
 
 bool Viewport::addImagePlane(const QString& path, double x, double y) {

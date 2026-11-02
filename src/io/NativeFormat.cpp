@@ -61,6 +61,144 @@ FaceSide sideFromJson(const QJsonObject& o) {
 
 } // namespace
 
+namespace {
+
+QJsonObject textureToJson(const Texture& tex) {
+    QJsonObject t;
+    t["mime"] = QString::fromStdString(tex.mime);
+    t["width"] = tex.worldWidth;
+    t["height"] = tex.worldHeight;
+    QByteArray bytes(reinterpret_cast<const char*>(tex.data->data()), (qsizetype)tex.data->size());
+    t["data"] = QString::fromLatin1(bytes.toBase64());
+    return t;
+}
+
+bool textureFromJson(const QJsonObject& t, Texture& out) {
+    Texture tex;
+    if (!textureFromBytes(QByteArray::fromBase64(t["data"].toString().toLatin1()), tex)) return false;
+    tex.worldWidth = t.value("width").toDouble(1.0);
+    tex.worldHeight = t.value("height").toDouble(1.0);
+    out = tex;
+    return true;
+}
+
+const char* objectKindKey(SceneObject::Kind k) {
+    switch (k) {
+    case SceneObject::SpotLight: return "spot";
+    case SceneObject::DirectionalLight: return "directional";
+    case SceneObject::ViewCamera: return "camera";
+    default: return "point";
+    }
+}
+
+QJsonObject objectToJson(const SceneObject& o) {
+    QJsonObject j;
+    j["kind"] = objectKindKey(o.kind);
+    j["name"] = QString::fromStdString(o.name);
+    j["pos"] = vec(o.pos);
+    if (o.aims()) j["target"] = vec(o.target);
+    if (o.isLight()) {
+        j["enabled"] = o.enabled;
+        j["color"] = QJsonArray{o.color.r, o.color.g, o.color.b, o.color.a};
+        j["intensity"] = o.intensity;
+        if (o.kind != SceneObject::DirectionalLight) j["range"] = o.range;
+        if (o.kind == SceneObject::SpotLight) {
+            j["coneAngle"] = o.coneAngle;
+            j["softness"] = o.softness;
+        }
+    } else {
+        j["fov"] = o.fov;
+        j["perspective"] = o.perspective;
+    }
+    return j;
+}
+
+SceneObject objectFromJson(const QJsonObject& j) {
+    SceneObject o;
+    const QString k = j["kind"].toString();
+    o.kind = k == "spot" ? SceneObject::SpotLight : k == "directional" ? SceneObject::DirectionalLight
+           : k == "camera" ? SceneObject::ViewCamera : SceneObject::PointLight;
+    o.name = j["name"].toString().toStdString();
+    o.pos = vec(j["pos"]);
+    o.target = j.contains("target") ? vec(j["target"]) : o.pos;
+    o.enabled = j["enabled"].toBool(true);
+    QJsonArray c = j["color"].toArray();
+    if (c.size() >= 3) o.color = Color((float)c[0].toDouble(), (float)c[1].toDouble(), (float)c[2].toDouble());
+    o.intensity = j["intensity"].toDouble(o.intensity);
+    o.range = j["range"].toDouble(o.range);
+    o.coneAngle = j["coneAngle"].toDouble(o.coneAngle);
+    o.softness = j["softness"].toDouble(o.softness);
+    o.fov = j["fov"].toDouble(o.fov);
+    o.perspective = j["perspective"].toBool(true);
+    return o;
+}
+
+} // namespace
+
+QJsonObject materialToJson(const Material& m) {
+    QJsonObject o;
+    o["name"] = QString::fromStdString(m.name);
+    o["color"] = QJsonArray{m.color.r, m.color.g, m.color.b, m.color.a};
+    o["opacity"] = m.opacity;
+    if (m.hasTexture()) o["texture"] = textureToJson(m.texture);
+    if (m.pbr) o["pbr"] = true;
+    if (m.advanced()) {
+        o["baseStrength"] = m.baseStrength;
+        o["emission"] = QJsonArray{m.emission.r, m.emission.g, m.emission.b, m.emission.a};
+        if (m.flipNormalY) o["flipNormalY"] = true;
+        if (m.blend) o["blend"] = true;
+        QJsonObject maps;
+        for (int i = 0; i < MapSlotCount; ++i) {
+            QJsonObject e;
+            e["strength"] = m.maps[i].strength;
+            if (m.maps[i].tex.valid()) e["texture"] = textureToJson(m.maps[i].tex);
+            maps[QString::fromLatin1(mapSlotKey((MapSlot)i))] = e;
+        }
+        o["maps"] = maps;
+    }
+    if (!m.shader.empty()) {
+        o["shaderOn"] = m.shaderOn;
+        o["shader"] = QString::fromStdString(m.shader);
+        QJsonObject props;
+        for (const auto& [name, v] : m.shaderProps) props[QString::fromStdString(name)] = QJsonArray{v[0], v[1], v[2], v[3]};
+        if (!props.isEmpty()) o["shaderProps"] = props;
+    }
+    return o;
+}
+
+Material materialFromJson(const QJsonObject& o) {
+    Material m;
+    m.name = o["name"].toString().toStdString();
+    QJsonArray c = o["color"].toArray();
+    if (c.size() >= 3)
+        m.color = Color((float)c[0].toDouble(), (float)c[1].toDouble(), (float)c[2].toDouble(),
+                        c.size() > 3 ? (float)c[3].toDouble() : 1.0f);
+    m.opacity = (float)o.value("opacity").toDouble(1.0);
+    if (o.contains("texture")) textureFromJson(o["texture"].toObject(), m.texture);
+    m.pbr = o["pbr"].toBool();
+    m.baseStrength = (float)o.value("baseStrength").toDouble(1.0);
+    QJsonArray em = o["emission"].toArray();
+    if (em.size() >= 3) m.emission = Color((float)em[0].toDouble(), (float)em[1].toDouble(), (float)em[2].toDouble());
+    m.flipNormalY = o["flipNormalY"].toBool();
+    m.blend = o["blend"].toBool();
+    const QJsonObject maps = o["maps"].toObject();
+    for (int i = 0; i < MapSlotCount; ++i) {
+        const QJsonObject e = maps[QString::fromLatin1(mapSlotKey((MapSlot)i))].toObject();
+        m.maps[i].strength = (float)e.value("strength").toDouble(m.maps[i].strength);
+        if (e.contains("texture")) textureFromJson(e["texture"].toObject(), m.maps[i].tex);
+    }
+    m.shaderOn = o["shaderOn"].toBool();
+    m.shader = o["shader"].toString().toStdString();
+    const QJsonObject props = o["shaderProps"].toObject();
+    for (auto it = props.begin(); it != props.end(); ++it) {
+        const QJsonArray a = it.value().toArray();
+        std::array<float, 4> v{0, 0, 0, 1};
+        for (int i = 0; i < 4 && i < a.size(); ++i) v[i] = (float)a[i].toDouble();
+        m.shaderProps[it.key().toStdString()] = v;
+    }
+    return m;
+}
+
 QJsonObject meshToJson(const Mesh& meshIn) {
     Mesh mesh = meshIn;
     mesh.compact();
@@ -176,22 +314,7 @@ QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
     root["up"] = "Z";
 
     QJsonArray mats;
-    for (const Material& m : state.materials) {
-        QJsonObject o;
-        o["name"] = QString::fromStdString(m.name);
-        o["color"] = QJsonArray{m.color.r, m.color.g, m.color.b, m.color.a};
-        o["opacity"] = m.opacity;
-        if (m.hasTexture()) {
-            QJsonObject t;
-            t["mime"] = QString::fromStdString(m.texture.mime);
-            t["width"] = m.texture.worldWidth;
-            t["height"] = m.texture.worldHeight;
-            QByteArray bytes(reinterpret_cast<const char*>(m.texture.data->data()), (qsizetype)m.texture.data->size());
-            t["data"] = QString::fromLatin1(bytes.toBase64());
-            o["texture"] = t;
-        }
-        mats.append(o);
-    }
+    for (const Material& m : state.materials) mats.append(materialToJson(m));
     root["materials"] = mats;
 
     QJsonArray guides;
@@ -230,6 +353,10 @@ QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
         root["components"] = comps;
         root["instances"] = insts;
     }
+    QJsonArray objects;
+    for (const SceneObject& o : state.objects)
+        if (o.alive) objects.append(objectToJson(o));
+    if (!objects.isEmpty()) root["objects"] = objects;
     root["view"] = view;
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
@@ -262,27 +389,7 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
     }
     st = ModelState();
     meshFromJson(root, st.mesh);
-    for (const auto& mj : root["materials"].toArray()) {
-        QJsonObject o = mj.toObject();
-        Material m;
-        m.name = o["name"].toString().toStdString();
-        QJsonArray c = o["color"].toArray();
-        if (c.size() >= 3)
-            m.color = Color((float)c[0].toDouble(), (float)c[1].toDouble(), (float)c[2].toDouble(),
-                            c.size() > 3 ? (float)c[3].toDouble() : 1.0f);
-        m.opacity = (float)o.value("opacity").toDouble(1.0);
-        if (o.contains("texture")) {
-            QJsonObject t = o["texture"].toObject();
-            QByteArray bytes = QByteArray::fromBase64(t["data"].toString().toLatin1());
-            Texture tex;
-            if (textureFromBytes(bytes, tex)) {
-                tex.worldWidth = t.value("width").toDouble(1.0);
-                tex.worldHeight = t.value("height").toDouble(1.0);
-                m.texture = tex;
-            }
-        }
-        st.materials.push_back(m);
-    }
+    for (const auto& mj : root["materials"].toArray()) st.materials.push_back(materialFromJson(mj.toObject()));
     // Drop dangling material references.
     for (Face& fc : st.mesh.faces) {
         if (fc.front.material >= (Id)st.materials.size()) fc.front.material = kNone;
@@ -320,6 +427,7 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
         g.dir = vec(o["dir"]).normalized();
         st.guides.push_back(g);
     }
+    for (const auto& oj : root["objects"].toArray()) st.objects.push_back(objectFromJson(oj.toObject()));
     if (view) *view = root["view"].toObject();
     return true;
 }
@@ -360,6 +468,7 @@ QJsonObject styleToJson(const RenderStyle& s) {
     st["profileWidth"] = s.profileWidth;
     st["axes"] = s.showAxes;
     st["guides"] = s.showGuides;
+    st["objects"] = s.showObjects;
     st["sky"] = s.sky;
     st["ground"] = s.ground;
     st["shadows"] = s.shadows;
@@ -387,6 +496,7 @@ void styleFromJson(const QJsonObject& st, RenderStyle& s) {
     s.profileWidth = (float)st["profileWidth"].toDouble(s.profileWidth);
     s.showAxes = st["axes"].toBool(s.showAxes);
     s.showGuides = st["guides"].toBool(s.showGuides);
+    s.showObjects = st["objects"].toBool(s.showObjects);
     s.sky = st["sky"].toBool(s.sky);
     s.ground = st["ground"].toBool(s.ground);
     s.shadows = st["shadows"].toBool(s.shadows);

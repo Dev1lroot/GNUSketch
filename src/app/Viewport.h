@@ -13,6 +13,8 @@
 
 #include <memory>
 
+class QTimer;
+
 namespace gs {
 
 class Viewport : public QOpenGLWidget {
@@ -52,6 +54,20 @@ public:
     // plane that faces the camera most, centred under (x, y).
     bool addImagePlane(const QString& path, double x, double y);
     bool addImagePlane(Texture tex, const QString& name, double x, double y);
+    // Moves the view to a camera placed in the world.
+    void lookThrough(Id object);
+    // A light or camera where the view looks from, aimed at what it looks at.
+    SceneObject objectFromView(SceneObject::Kind kind) const;
+    // Point on a surface under (x, y), or on the ground; false if neither is hit.
+    bool surfacePointAt(double x, double y, Vec3& out);
+    // Puts an instance of a prefab with its base centre at `at`, as one undo
+    // step, and selects it. Returns the instance, kNone when it cannot be placed.
+    Id placePrefab(const ModelState& prefab, const Vec3& at);
+    // Applies a material (as if with the Paint Bucket) to what is under (x, y).
+    bool dropMaterial(const Material& m, double x, double y, Qt::KeyboardModifiers mods);
+    // What the browsers drag: a material as JSON, a prefab as its file path.
+    static const char* materialMime() { return "application/x-gnusketch-material"; }
+    static const char* prefabMime() { return "application/x-gnusketch-prefab"; }
 
 signals:
     void statusText(const QString& text);
@@ -79,6 +95,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent* e) override;
     void dragMoveEvent(QDragMoveEvent* e) override;
     void dropEvent(QDropEvent* e) override;
+    void dragLeaveEvent(QDragLeaveEvent* e) override;
     void leaveEvent(QEvent* e) override;
 
 private:
@@ -104,6 +121,12 @@ private:
     QPointF mousePos_;
     bool mouseInside_ = false;
     int dropHoverFace_ = -1;
+    // Prefab being dragged over the view: its file and where it would land.
+    QString dragPrefabPath_;
+    std::unique_ptr<ModelState> dragPrefab_;
+    bool dragPrefabHit_ = false;
+    Vec3 dragPrefabAt_;
+    QTimer* animTimer_ = nullptr; // repaints while a custom shader uses _Time
     QString vcbLabel_;
     QString vcbTyped_; // characters typed into the Measurements box from the viewport
 };

@@ -2425,6 +2425,127 @@ int main() {
         CHECK(near(plane.angleOf(c, Vec3(2, 5, 0)), kPi / 2, 1e-9));
     });
 
+    test("materials: map names", [] {
+        CHECK(guessMapSlot("oak_Roughness_2k.png") == MapRoughness);
+        CHECK(guessMapSlot("/tmp/wood_floor/Wood-Normal.jpg") == MapNormal);
+        CHECK(guessMapSlot("woodNormalGL.png") == MapNormal);
+        CHECK(guessMapSlot("brick_albedo.png") == MapSlotCount);
+        CHECK(guessMapSlot("rock_AO.tga") == MapOcclusion);
+        CHECK(guessMapSlot("metal_plate_Metalness.png") == MapMetallic);
+        CHECK(guessMapSlot("x_disp.png") == MapHeight);
+        CHECK(guessMapSlot("holiday.jpg") == -1);
+        CHECK(guessMapSlot("broadcast.png") == -1); // "ao" and "col" only count as whole words
+    });
+
+    test("materials: shader properties", [] {
+        const auto p = parseShaderProps(
+            "uniform float _Speed;  // range(0, 10) default(2.5)\n"
+            "  uniform vec3 _Tint; // color default(1, 0.5, 0.25)\r\n"
+            "uniform vec2 _Offset;\n"
+            "uniform sampler2D _Mask;\n"
+            "uniform float _Bad; // range(a,b) default(zz)\n"
+            "void surface(inout Surface s) { float uniform_like = 1.0; }\n");
+        CHECK(p.size() == 4);
+        CHECK(p[0].name == "_Speed" && p[0].components == 1 && p[0].max == 10 && p[0].def[0] == 2.5f);
+        CHECK(p[1].name == "_Tint" && p[1].isColor && p[1].components == 3 && p[1].def[1] == 0.5f);
+        CHECK(p[2].name == "_Offset" && p[2].components == 2 && !p[2].isColor);
+        CHECK(p[3].name == "_Bad" && p[3].max > p[3].min);
+    });
+
+    test("materials: advanced flag, tile size, comparison", [] {
+        Material m;
+        CHECK(!m.advanced() && !m.blended());
+        double w, h;
+        m.tileSize(w, h);
+        CHECK(w == 1 && h == 1);
+        auto bytes = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3});
+        m.maps[MapNormal].tex.data = bytes;
+        m.maps[MapNormal].tex.worldWidth = 2;
+        m.maps[MapNormal].tex.worldHeight = 3;
+        CHECK(m.advanced());
+        m.tileSize(w, h);
+        CHECK(w == 2 && h == 3); // no base image: the map decides
+        m.setTileSize(4, 5);
+        m.tileSize(w, h);
+        CHECK(w == 4 && h == 5);
+        Material a = m;
+        a.maps[MapNormal].tex.data = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3});
+        CHECK(sameMaterial(a, m)); // equal bytes in another buffer
+        a.maps[MapNormal].strength = 0.5f;
+        CHECK(!sameMaterial(a, m));
+        Material b = m;
+        b.maps[MapOpacity].tex.data = bytes;
+        CHECK(b.blended() && !sameMaterial(b, m));
+        Material sh;
+        sh.shader = "x";
+        CHECK(!sh.advanced() && !sh.customShader()); // written but switched off
+        sh.shaderOn = true;
+        CHECK(sh.advanced() && sh.customShader());
+    });
+
+    test("scene objects: names and selection", [] {
+        Document d;
+        SceneObject o;
+        Id a = d.addObject(o), b = d.addObject(o);
+        CHECK(d.state.objects[a].name == "Point Light" && d.state.objects[b].name == "Point Light 2");
+        o.kind = SceneObject::ViewCamera;
+        CHECK(d.state.objects[d.addObject(o)].name == "Camera");
+        d.selection.objects = {a, b, 99};
+        CHECK(d.selection.count() == 3 && !d.selection.empty());
+        d.beginOp("Erase");
+        d.state.objects[a].alive = false;
+        d.commitOp();
+        CHECK(d.selection.objects == std::set<Id>{b}); // the deleted and the invalid are gone
+        d.undo();
+        CHECK(d.state.objects[a].alive);
+    });
+
+    test("components: extract and import a definition", [] {
+        Document d;
+        Mesh& m = d.mesh();
+        m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        Material unused, used;
+        unused.name = "Unused";
+        used.name = "Used";
+        used.pbr = true;
+        d.addMaterial(unused);
+        const Id mid = d.addMaterial(used);
+        Selection s;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) {
+                m.faces[f].front.material = mid;
+                s.faces.insert(f);
+            }
+        const Id inst = makeComponent(d.state, s, "Tile");
+        const Id def = d.state.instances[inst].def;
+        ModelState pre = extractDefinition(d.state, def);
+        CHECK(pre.defs.size() == 1 && pre.instances.size() == 1 && pre.materials.size() == 1);
+        CHECK(pre.materials[0].name == "Used");
+        bool mapped = false;
+        for (const Face& f : pre.defs[0].mesh.faces) mapped = mapped || (f.alive && f.front.material == 0);
+        CHECK(mapped);
+        CHECK(pre.instances[0].xf.isIdentity());
+
+        Document other;
+        Material first;
+        first.name = "Something else";
+        other.addMaterial(first);
+        const Id d0 = importDefinition(other, pre, 0);
+        CHECK(d0 == 0 && other.state.materials.size() == 2);
+        bool remapped = false;
+        for (const Face& f : other.state.defs[0].mesh.faces) remapped = remapped || (f.alive && f.front.material == 1);
+        CHECK(remapped);
+        // Placing it again reuses the definition and its materials.
+        CHECK(importDefinition(other, pre, 0) == d0);
+        CHECK(other.state.defs.size() == 1 && other.state.materials.size() == 2);
+        // With a different identity the equal material is still merged.
+        ModelState variant = pre;
+        variant.defs[0].uid = "another";
+        CHECK(importDefinition(other, variant, 0) == 1);
+        CHECK(other.state.materials.size() == 2);
+        CHECK(importDefinition(other, pre, 5) == kNone);
+    });
+
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

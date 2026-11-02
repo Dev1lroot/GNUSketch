@@ -21,10 +21,12 @@ class QTextBrowser;
 class QDoubleSpinBox;
 class QVBoxLayout;
 class QButtonGroup;
+class QTimer;
 
 namespace gs {
 
 class Viewport;
+class MaterialEditor;
 
 // Collapsible section with a SketchUp-tray-like header.
 class TraySection : public QWidget {
@@ -81,9 +83,22 @@ public:
     void refresh();
     // Adds a texture material from an image file. Returns its id or kNone.
     Id addImageMaterial(const QString& path);
+    // Makes a new PBR material the current one and opens it for editing.
+    Id createMaterial();
+    MaterialEditor* editor() const { return editor_; }
+    QListWidget* list() const { return list_; }
+    void chooseRow(int row);
+    void showLibrary(int index);
+    // The categories of the Select page.
+    enum Library { InModel, Architectural, Colors, Textures };
+
+    const std::vector<Material>& colorLibrary() const { return colorLib_; }
+    const std::vector<Material>& textureLibrary() const { return textureLib_; }
 
 signals:
     void materialChosen();
+    void browserRequested();
+    void editorRequested();
 
 protected:
     void dragEnterEvent(QDragEnterEvent* e) override;
@@ -91,12 +106,9 @@ protected:
 
 private:
     void rebuildList();
-    void refreshEditor();
     void chooseItem(QListWidgetItem* item);
-    void createMaterial();
-    void setColorFromDialog();
-    void browseTexture();
-    void applyTextureSize(bool fromWidth);
+    void showTab(int page);
+    void fillGlobes();
     QPixmap swatch(const Material* m, int size) const;
     Id ensureInModel(const Material& m);
 
@@ -109,13 +121,8 @@ private:
     QStackedWidget* pages_;
     QToolButton* selectTab_;
     QToolButton* editTab_;
-    QPushButton* colorBtn_;
-    QSlider* opacity_;
-    QCheckBox* useTexture_;
-    QPushButton* browse_;
-    QLineEdit* texW_;
-    QLineEdit* texH_;
-    QCheckBox* lockAspect_;
+    MaterialEditor* editor_;
+    QTimer* globeTimer_;
     std::vector<Material> colorLib_, textureLib_;
     uint64_t listRevision_ = 0;
     bool updating_ = false;

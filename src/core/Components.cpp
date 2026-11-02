@@ -258,6 +258,74 @@ void makeUnique(ModelState& st, const std::set<Id>& insts) {
     }
 }
 
+ModelState extractDefinition(const ModelState& stIn, Id def) {
+    ModelState out;
+    const ModelState st = closedState(stIn);
+    if (def < 0 || def >= (Id)st.defs.size()) return out;
+    ComponentDef d = st.defs[def];
+    std::map<Id, Id> matMap;
+    auto mapMat = [&](Id& mat) {
+        if (mat < 0 || mat >= (Id)st.materials.size()) {
+            mat = kNone;
+            return;
+        }
+        auto it = matMap.find(mat);
+        if (it == matMap.end()) {
+            it = matMap.emplace(mat, (Id)out.materials.size()).first;
+            out.materials.push_back(st.materials[mat]);
+        }
+        mat = it->second;
+    };
+    for (Face& f : d.mesh.faces) {
+        mapMat(f.front.material);
+        mapMat(f.back.material);
+    }
+    for (Vertex& v : d.mesh.vertices) {
+        for (PaintWeight& w : v.paint) mapMat(w.material);
+        std::erase_if(v.paint, [](const PaintWeight& w) { return w.material == kNone; });
+    }
+    d.mesh.touch();
+    out.defs.push_back(std::move(d));
+    Instance in;
+    in.def = 0;
+    out.instances.push_back(in);
+    return out;
+}
+
+Id importDefinition(Document& doc, const ModelState& src, Id def) {
+    if (def < 0 || def >= (Id)src.defs.size()) return kNone;
+    const ComponentDef& sd = src.defs[def];
+    if (!sd.uid.empty())
+        for (Id d = 0; d < (Id)doc.state.defs.size(); ++d)
+            if (doc.state.defs[d].uid == sd.uid) return d;
+    std::map<Id, Id> matMap;
+    auto mapMat = [&](Id id) -> Id {
+        if (id < 0 || id >= (Id)src.materials.size()) return kNone;
+        auto it = matMap.find(id);
+        if (it != matMap.end()) return it->second;
+        Id found = kNone;
+        for (Id j = 0; j < (Id)doc.state.materials.size() && found == kNone; ++j)
+            if (sameMaterial(doc.state.materials[j], src.materials[id])) found = j;
+        if (found == kNone) found = doc.addMaterial(src.materials[id]);
+        matMap[id] = found;
+        return found;
+    };
+    ComponentDef nd = sd;
+    for (Face& f : nd.mesh.faces) {
+        f.front.material = mapMat(f.front.material);
+        f.back.material = mapMat(f.back.material);
+    }
+    for (Vertex& v : nd.mesh.vertices) {
+        for (PaintWeight& w : v.paint) w.material = mapMat(w.material);
+        std::erase_if(v.paint, [](const PaintWeight& w) { return w.material == kNone; });
+    }
+    nd.name = uniqueComponentName(doc.state, sd.name);
+    if (nd.uid.empty()) nd.uid = newComponentUid();
+    nd.mesh.touch();
+    doc.state.defs.push_back(std::move(nd));
+    return (Id)doc.state.defs.size() - 1;
+}
+
 void openComponent(ModelState& st, Id inst) {
     if (st.editing == inst) return;
     if (st.editing != kNone) closeComponent(st);

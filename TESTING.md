@@ -72,6 +72,28 @@ bottom. Screenshots help.
 - [ ] Drop an image from the desktop/Dolphin onto empty space: plane in top view (ground) and front/side view (vertical, on the ground), correct orientation, 1 px = 1 mm
 - [ ] Trace Image: alpha cutout of a transparent PNG logo, dark shapes of a black-on-white scan, light shapes; threshold/smoothing/specks live preview; remove background on/off; push/pull the result
 
+## PBR materials
+- [ ] Materials panel shows the Architectural globes from the start; click one: it becomes current and the tool does not change; the Paint button takes the Paint Bucket
+- [ ] Create Material: opens the Edit tab in the sidebar; click a `+` square to load an image, ✕ removes it, sliders and typed values agree
+- [ ] Window > Material Editor: pick a material, change Metallic and Roughness: the ball and the model follow live; one Undo per drag
+- [ ] Add Maps with a real set (albedo, normal, roughness, ...): each lands on the right row; drop a file on one row; Clear; strength sliders
+- [ ] A normal map on a flat wall: lit bumps move with the Sun; DirectX tick flips them; Height shifts with the view; Opacity map cuts holes
+- [ ] Position Texture on a PBR material, also one with only a normal map; save, reopen, Game Mode; export glTF to Blender: maps connected
+- [ ] Shader tab: Use custom shader gives the template; type an error: red line number, the model unchanged; fix it; `_Time` animates; properties give sliders and colours
+- [ ] Texture Brush with a PBR material
+
+## Browsers (separate windows)
+- [ ] Window > Material Browser: resize, Size slider, search, categories; pictures appear without freezing; click paints; **real mouse drag onto a face**; drag onto a component says to open it; double-click opens the editor; Save to Library, Add Texture Folder
+- [ ] Right-click a component > Save as Prefab; Window > Prefab Browser lists it; **real mouse drag into the model**: blue box follows, lands on the surface; double-click carries it on the mouse, Esc cancels; Delete; Open to Edit
+- [ ] A prefab in another window or a new model comes with its materials; two placed copies edit together
+
+## Lights and cameras
+- [ ] Draw > Lights: point light above the clicked point; `3` before clicking changes the height; spot and directional aim with a second click; Sun at night shows them best
+- [ ] Window > Scene: colour, brightness, range, cone, softness; list follows the selection; Delete; Undo
+- [ ] Move, Rotate, Ctrl+Move copy and Eraser on markers; window selection takes them; View > Lights and Cameras hides markers
+- [ ] Camera > Add Camera From View, orbit away, double-click its marker: same view; Camera > Look Through; Set From View
+- [ ] Copy/paste a light into another window; save and reopen; Game Mode shows the light without the marker
+
 ## Files
 - [ ] Save/Open `.gsketch`; Export OBJ/glTF/STL and open them in Blender; Import OBJ
 - [ ] Ctrl+V of geometry/components: it follows the cursor at once (grabbed by its bottom corner, snaps to points/axes), click places it, typed distance works, Esc or Ctrl+Z cancels the whole paste, one Undo removes a placed paste

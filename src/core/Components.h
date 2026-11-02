@@ -45,6 +45,14 @@ void explodeInstance(ModelState& st, Id inst, Selection* out = nullptr);
 // already are the only users of their definition are left alone.
 void makeUnique(ModelState& st, const std::set<Id>& insts);
 
+// A model holding only this definition (with the materials it uses, renumbered)
+// and one instance of it at the origin: what a prefab file contains.
+ModelState extractDefinition(const ModelState& st, Id def);
+// Brings a definition of another model into the document, merging equal
+// materials. A definition with the same uid already there is reused, so
+// everything placed from one prefab stays linked. Returns the definition id.
+Id importDefinition(Document& doc, const ModelState& src, Id def);
+
 void openComponent(ModelState& st, Id inst);
 void closeComponent(ModelState& st);
 // A copy of the state with any open component closed (for saving/exporting).

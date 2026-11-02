@@ -101,10 +101,12 @@ void SelectTool::applyPick(const Selection& picked, Qt::KeyboardModifiers mods) 
         for (Id f : picked.faces) s.faces.erase(f);
         for (Id e : picked.edges) s.edges.erase(e);
         for (Id i : picked.instances) s.instances.erase(i);
+        for (Id o : picked.objects) s.objects.erase(o);
     } else if (ctrl) {
         s.faces.insert(picked.faces.begin(), picked.faces.end());
         s.edges.insert(picked.edges.begin(), picked.edges.end());
         s.instances.insert(picked.instances.begin(), picked.instances.end());
+        s.objects.insert(picked.objects.begin(), picked.objects.end());
     } else if (shift) {
         for (Id f : picked.faces)
             if (!s.faces.erase(f)) s.faces.insert(f);
@@ -112,6 +114,8 @@ void SelectTool::applyPick(const Selection& picked, Qt::KeyboardModifiers mods) 
             if (!s.edges.erase(e)) s.edges.insert(e);
         for (Id i : picked.instances)
             if (!s.instances.erase(i)) s.instances.insert(i);
+        for (Id o : picked.objects)
+            if (!s.objects.erase(o)) s.objects.insert(o);
     } else {
         s = picked;
     }
@@ -159,7 +163,10 @@ void SelectTool::mouseRelease(const MouseEvent& e) {
     }
     PickResult pr = engine().pick(e.x, e.y);
     Selection s;
-    if (pr.instance != kNone) {
+    const Id object = engine().pickObject(e.x, e.y);
+    if (object != kNone) {
+        s.objects.insert(object);
+    } else if (pr.instance != kNone) {
         s.instances.insert(pr.instance);
     } else if (pr.edge != kNone) {
         s.edges.insert(pr.edge);
@@ -181,6 +188,13 @@ void SelectTool::mouseRelease(const MouseEvent& e) {
 void SelectTool::mouseDoubleClick(const MouseEvent& e) {
     dblTimer_.start();
     dblPos_ = QPointF(e.x, e.y);
+    const Id object = engine().pickObject(e.x, e.y);
+    if (object != kNone) {
+        // Double-clicking a camera looks through it.
+        dblTimer_.invalidate();
+        vp_->lookThrough(object);
+        return;
+    }
     PickResult pr = engine().pick(e.x, e.y);
     if (pr.instance != kNone) {
         // Edit the component in place.
@@ -273,6 +287,10 @@ void SelectTool::rectSelect(Qt::KeyboardModifiers mods) {
         }
         if (ok && (crossing ? r.intersects(box) : all)) s.instances.insert(i);
     }
+    for (Id i = 0; i < (Id)st.objects.size() && st.editing == kNone && doc().style.showObjects; ++i) {
+        double x, y;
+        if (st.objects[i].alive && cam().project(st.objects[i].pos, x, y) && r.contains(QPointF(x, y))) s.objects.insert(i);
+    }
     applyPick(s, mods);
 }
 
@@ -320,6 +338,14 @@ void EraserTool::markAt(const MouseEvent& e) {
 
 void EraserTool::mousePress(const MouseEvent& e) {
     if (e.button != Qt::LeftButton) return;
+    const Id object = engine().pickObject(e.x, e.y);
+    if (object != kNone) {
+        doc().beginOp("Erase");
+        doc().state.objects[object].alive = false;
+        doc().commitOp();
+        update();
+        return;
+    }
     erasing_ = true;
     marked_.clear();
     markedInstances_.clear();
@@ -726,7 +752,10 @@ bool TransformTool::ensureSelection(const MouseEvent& e) {
     if (!doc().selection.empty()) return true;
     PickResult pr = engine().pick(e.x, e.y);
     Selection s;
-    if (pr.instance != kNone) {
+    const Id object = engine().pickObject(e.x, e.y);
+    if (object != kNone) {
+        s.objects.insert(object);
+    } else if (pr.instance != kNone) {
         s.instances.insert(pr.instance);
     } else if (pr.edge != kNone) {
         s.edges.insert(pr.edge);
@@ -759,6 +788,9 @@ bool TransformTool::begin(const char* opName, bool copy) {
             if (c != kNone) ni.insert(c);
         }
         doc().selection.instances = ni;
+        std::set<Id> no;
+        for (Id o : doc().selection.objects) no.insert(doc().addObject(doc().state.objects[o]));
+        doc().selection.objects = no;
         doc().notifySelection();
     } else {
         verts_ = selectionVertices(m, doc().selection);
@@ -767,6 +799,8 @@ bool TransformTool::begin(const char* opName, bool copy) {
     for (Id v : verts_) orig_[v] = m.pos(v);
     instOrig_.clear();
     for (Id i : doc().selection.instances) instOrig_[i] = doc().state.instances[i].xf;
+    objOrig_.clear();
+    for (Id o : doc().selection.objects) objOrig_[o] = {doc().state.objects[o].pos, doc().state.objects[o].target};
     engine().ignoredInstances = doc().selection.instances;
     affectedFaces_.clear();
     for (Id f = 0; f < (Id)m.faces.size(); ++f) {
@@ -774,7 +808,7 @@ bool TransformTool::begin(const char* opName, bool copy) {
         for (Id v : m.faceVertices(f))
             if (verts_.count(v)) { affectedFaces_.push_back(f); break; }
     }
-    active_ = !verts_.empty() || !instOrig_.empty();
+    active_ = !verts_.empty() || !instOrig_.empty() || !objOrig_.empty();
     if (!active_) {
         doc().cancelOp();
         engine().ignoredInstances.clear();
@@ -787,6 +821,10 @@ void TransformTool::applyLive(const Mat4& mt) {
     for (auto& [v, p] : orig_) m.vertices[v].p = mt.transformPoint(p);
     for (Id f : affectedFaces_) m.recomputeNormal(f);
     for (auto& [i, xf] : instOrig_) doc().state.instances[i].xf = mt * xf;
+    for (auto& [o, pt] : objOrig_) {
+        doc().state.objects[o].pos = mt.transformPoint(pt.first);
+        doc().state.objects[o].target = mt.transformPoint(pt.second);
+    }
     m.markGeometryMoved();
 }
 
@@ -796,6 +834,10 @@ void TransformTool::finish(const Mat4& mt) {
     m.markGeometryMoved();
     m.transformVertices(verts_, mt, true);
     for (auto& [i, xf] : instOrig_) doc().state.instances[i].xf = mt * xf;
+    for (auto& [o, pt] : objOrig_) {
+        doc().state.objects[o].pos = mt.transformPoint(pt.first);
+        doc().state.objects[o].target = mt.transformPoint(pt.second);
+    }
     engine().ignoredInstances.clear();
     doc().commitOp();
     if (placing_) doc().commitOp(); // the paste itself

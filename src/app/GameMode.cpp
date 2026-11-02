@@ -120,7 +120,7 @@ bool GameWindow::load(const QString& path, const Vec3& feet, double yaw, QString
     if (view.contains("style")) styleFromJson(view["style"].toObject(), doc_.style);
     // Only the world shows: no modelling aids, and a style one can walk around in.
     RenderStyle& s = doc_.style;
-    s.showAxes = s.showGuides = s.showHidden = false;
+    s.showAxes = s.showGuides = s.showHidden = s.showObjects = false;
     s.xray = s.backEdges = false;
     s.edges = false;
     if (s.faceStyle == RenderStyle::Wireframe || s.faceStyle == RenderStyle::HiddenLine) s.faceStyle = RenderStyle::ShadedTextures;

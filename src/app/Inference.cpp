@@ -231,6 +231,24 @@ int InferenceEngine::pickGuide(double px, double py, double tolPx) const {
     return best;
 }
 
+Id InferenceEngine::pickObject(double px, double py, double tolPx) const {
+    if (!doc_.style.showObjects || doc_.editingComponent()) return kNone;
+    Id best = kNone;
+    double bestD = tolPx;
+    const auto& objs = doc_.state.objects;
+    for (Id i = 0; i < (Id)objs.size(); ++i) {
+        if (!objs[i].alive) continue;
+        double x, y;
+        if (!cam_.project(objs[i].pos, x, y)) continue;
+        const double d = std::hypot(x - px, y - py);
+        if (d < bestD) {
+            bestD = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
 PickResult InferenceEngine::pick(double px, double py, double edgeTolPx, const std::set<Id>* ex) const {
     PickResult pr;
     Ray r = cam_.ray(px, py);

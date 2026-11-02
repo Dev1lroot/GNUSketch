@@ -14,6 +14,10 @@ namespace {
 // All icons use a 24x24 view box. Drawn from scratch for GNUSketch.
 const char* svgFor(const QString& n) {
     static const QHash<QString, const char*> map = {
+        {"light_point", R"svg(<circle cx="12" cy="12" r="5" fill="#f7cd46" stroke="#7d5e0c" stroke-width="1"/><path d="M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 M5 5 L7 7 M17 17 L19 19 M19 5 L17 7 M7 17 L5 19" stroke="#b78a10" stroke-width="1.6" stroke-linecap="round"/>)svg"},
+        {"light_spot", R"svg(<path d="M8 2.5 L16 2.5 L14.5 8 L9.5 8 Z" fill="#556" stroke="#223" stroke-width="1"/><path d="M9.5 8 L14.5 8 L21 21.5 L3 21.5 Z" fill="#f7e08a" stroke="#b78a10" stroke-width="1" stroke-linejoin="round"/>)svg"},
+        {"light_directional", R"svg(<circle cx="5.5" cy="5.5" r="3.5" fill="#f7cd46" stroke="#7d5e0c" stroke-width="1"/><path d="M9 11 L19 21 M13 7 L21 15 M7 13 L15 21" stroke="#b78a10" stroke-width="1.5" stroke-linecap="round"/>)svg"},
+        {"camera_place", R"svg(<rect x="2.5" y="7" width="13" height="10" rx="1.5" fill="#6d7c8e" stroke="#223" stroke-width="1"/><path d="M15.5 10.5 L21.5 7.5 L21.5 16.5 L15.5 13.5 Z" fill="#b9c4d1" stroke="#223" stroke-width="1" stroke-linejoin="round"/><circle cx="6" cy="4.5" r="2.2" fill="none" stroke="#223" stroke-width="1"/><circle cx="11.5" cy="4.5" r="2.2" fill="none" stroke="#223" stroke-width="1"/>)svg"},
         {"select", R"svg(<path d="M6 2.5 L6 19 L10 15.2 L12.8 21.5 L15.6 20.3 L12.9 14.2 L18.2 14.2 Z" fill="#111" stroke="#fff" stroke-width="1.1" stroke-linejoin="round"/>)svg"},
         {"eraser", R"svg(<g transform="rotate(-38 12 12)"><rect x="3" y="8" width="18" height="8.5" rx="1.6" fill="#f08a96" stroke="#7a2a33" stroke-width="1"/><rect x="3" y="8" width="6.5" height="8.5" rx="1.4" fill="#f4f1ec" stroke="#7a2a33" stroke-width="1"/><path d="M11 9.2 L19.5 9.2" stroke="#fbd0d6" stroke-width="1.2"/></g>)svg"},
         {"paint", R"svg(<path d="M4.5 10.5 L11 4 L18.5 11.5 L12 18 Z" fill="#cfd8e3" stroke="#334" stroke-width="1"/><path d="M4.5 10.5 L11 4 L13 6 L6.5 12.5 Z" fill="#9fb2c8"/><path d="M11 4 C9 1.5 6 2 5.5 4" fill="none" stroke="#334" stroke-width="1"/><path d="M18.5 11.5 C21 14.5 21.5 17 19.8 18.4 C18.2 19.6 16.8 17.6 17.5 15.5 Z" fill="#2f7de1" stroke="#1a4f96" stroke-width=".8"/><rect x="3" y="19.5" width="10" height="2.5" rx="1" fill="#2f7de1"/>)svg"},
@@ -150,6 +154,10 @@ QString toolIconName(ToolId id) {
     case ToolId::PlaceCharacter: return "character";
     case ToolId::Bend: return "bend";
     case ToolId::TexturePosition: return "textureposition";
+    case ToolId::PlacePointLight: return "light_point";
+    case ToolId::PlaceSpotLight: return "light_spot";
+    case ToolId::PlaceDirectionalLight: return "light_directional";
+    case ToolId::PlaceCamera: return "camera_place";
     }
     return "select";
 }

@@ -14,7 +14,9 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QFontDatabase>
+#include <QCheckBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
@@ -73,11 +75,45 @@ EntityProperties::EntityProperties(Document* doc, Viewport* vp, QWidget* parent)
     class_->setToolTip(QStringLiteral("func_door opens by itself or by what targets it, func_button fires its target, func_actor runs its own script."));
     form->addRow(QStringLiteral("Class:"), class_);
     name_ = new QLineEdit(this);
-    name_->setPlaceholderText(QStringLiteral("targetname: what a button's target refers to"));
+    name_->setPlaceholderText(QStringLiteral("what targets call it; a group's name is a namespace"));
+    name_->setToolTip(QStringLiteral("A target finds the nearest of this name: inside the same group or component first, then in the whole model. \"front/door\" means the door inside the component named front."));
     form->addRow(QStringLiteral("Name:"), name_);
     start_ = new QComboBox(this);
     form->addRow(QStringLiteral("Starts in:"), start_);
     generalLay->addLayout(form);
+
+    auto* physicsLabel = new QLabel(QStringLiteral("Physics"), this);
+    physicsLabel->setFont(bold);
+    generalLay->addWidget(physicsLabel);
+    auto* phys = new QGridLayout();
+    physics_ = new QCheckBox(QStringLiteral("Falls and slides in Game Mode"), this);
+    physics_->setToolTip(QStringLiteral("A rigid body: it falls, slides, tumbles, and the character can push it. Plain geometry can have it too."));
+    auto number = [this](double lo, double hi, double step, const QString& suffix) {
+        auto* b = new QDoubleSpinBox(this);
+        b->setRange(lo, hi);
+        b->setSingleStep(step);
+        b->setDecimals(2);
+        b->setSuffix(suffix);
+        b->setKeyboardTracking(false);
+        return b;
+    };
+    mass_ = number(0.01, 1000000, 5, QStringLiteral(" kg"));
+    mass_->setToolTip(QStringLiteral("Heavy things resist being pushed and shove light ones aside; what they fall like does not change."));
+    friction_ = number(0, 2, 0.05, QString());
+    friction_->setToolTip(QStringLiteral("0 slides like ice; 1 grips like rubber"));
+    bounce_ = number(0, 1, 0.05, QString());
+    phys->addWidget(physics_, 0, 0, 1, 6);
+    phys->addWidget(new QLabel(QStringLiteral("Mass:"), this), 1, 0);
+    phys->addWidget(mass_, 1, 1);
+    phys->addWidget(new QLabel(QStringLiteral("Friction:"), this), 1, 2);
+    phys->addWidget(friction_, 1, 3);
+    phys->addWidget(new QLabel(QStringLiteral("Bounce:"), this), 1, 4);
+    phys->addWidget(bounce_, 1, 5);
+    generalLay->addLayout(phys);
+    connect(physics_, &QCheckBox::toggled, this, [this](bool on) { edit("Physics", [&](EntityProps& e) { e.physics = on; }); });
+    connect(mass_, &QDoubleSpinBox::valueChanged, this, [this](double v) { edit("Mass", [&](EntityProps& e) { e.mass = v; }); });
+    connect(friction_, &QDoubleSpinBox::valueChanged, this, [this](double v) { edit("Friction", [&](EntityProps& e) { e.friction = v; }); });
+    connect(bounce_, &QDoubleSpinBox::valueChanged, this, [this](double v) { edit("Bounce", [&](EntityProps& e) { e.bounce = v; }); });
 
     auto* statesLabel = new QLabel(QStringLiteral("Animation states"), this);
     statesLabel->setFont(bold);
@@ -120,7 +156,7 @@ EntityProperties::EntityProperties(Document* doc, Viewport* vp, QWidget* parent)
     auto* targetsPage = new QWidget(tabs_);
     auto* tl = new QVBoxLayout(targetsPage);
     tl->setContentsMargins(0, 8, 0, 0);
-    auto* targetsHint = new QLabel(QStringLiteral("self.fire() triggers each of these, after its delay. A door a target names opens only that way, not by touch."), targetsPage);
+    auto* targetsHint = new QLabel(QStringLiteral("self.fire() triggers each of these, after its delay. A name means the nearest: in the same group first, then the whole model; \"front/door\" reaches into the component named front. A door a target names opens only that way."), targetsPage);
     targetsHint->setWordWrap(true);
     tl->addWidget(targetsHint);
     targets_ = new QTableWidget(0, 3, targetsPage);
@@ -271,6 +307,13 @@ void EntityProperties::setClass(const QString& classname) {
     });
 }
 
+void EntityProperties::setPhysics(bool on, double mass) {
+    edit("Physics", [&](EntityProps& e) {
+        e.physics = on;
+        e.mass = mass;
+    });
+}
+
 void EntityProperties::choosePreset(const QString& name) {
     for (const ScriptPreset& p : scriptPresets())
         if (p.name == name) {
@@ -303,7 +346,12 @@ void EntityProperties::refresh() {
     class_->setCurrentIndex(std::max(0, class_->findData(QString::fromStdString(e.classname))));
     if (!name_->hasFocus()) name_->setText(QString::fromStdString(e.targetname));
     const bool isEntity = e.isEntity();
-    for (QWidget* w : std::initializer_list<QWidget*>{name_, start_, preset_, script_}) w->setEnabled(isEntity);
+    for (QWidget* w : std::initializer_list<QWidget*>{start_, preset_, script_}) w->setEnabled(isEntity);
+    physics_->setChecked(e.physics);
+    mass_->setValue(e.mass);
+    friction_->setValue(e.friction);
+    bounce_->setValue(e.bounce);
+    for (QWidget* w : std::initializer_list<QWidget*>{mass_, friction_, bounce_}) w->setEnabled(e.physics);
 
     refreshTargets();
     refreshSources();

@@ -22,6 +22,7 @@
 //                     4x4 component -> model or parent], "hidden",
 //                     "parent": index of the component it is inside (always before "component"),
 //                     "entity": { "classname", "targetname", "targets": [ { "name", "delay" } ], "startState",
+//                                 "physics", "mass", "friction", "bounce",
 //                                 "script": JavaScript, see io/EntityScript.h } } ],
 //   "objects":  [ { "kind": "point"|"spot"|"directional"|"camera", "name", "pos", "target",
 //                   "enabled", "color", "intensity", "range", "coneAngle", "softness",

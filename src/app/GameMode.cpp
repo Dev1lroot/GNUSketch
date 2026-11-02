@@ -160,11 +160,20 @@ void GameWindow::simulate(double seconds) {
     walker_.advance(seconds, in);
     if (entities_) {
         entities_->update(seconds);
+        // Which way the character is trying to go, whether or not it gets there.
+        const Vec3 facing(std::cos(walker_.yaw()), std::sin(walker_.yaw()), 0);
+        const Vec3 side(std::sin(walker_.yaw()), -std::cos(walker_.yaw()), 0);
+        Vec3 wish = facing * in.forward + side * in.strafe;
         for (int i = 0; i < entities_->count(); ++i) {
             bool touching = false;
             for (const AnimPart& p : entities_->entity(i).parts)
                 touching = touching || (p.body >= 0 && walker_.touches(p.body, 0.08));
             entities_->setTouching(i, touching);
+            if (touching && entities_->isPhysical(i) && wish.length2() > 0.01) {
+                // A person's shove, about 400 N at waist height: heavy things stay put.
+                const Vec3 force = wish.normalized() * (in.run ? 600.0 : 400.0);
+                entities_->pushBy(i, force, walker_.feet() + Vec3(0, 0, 1.0) + wish.normalized() * walker_.params().radius, seconds);
+            }
         }
     }
 }

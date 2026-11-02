@@ -837,6 +837,130 @@ on("trigger", function (arg) {
             CHECK(evil.instances.empty());
         }
     }
+    {
+        // One group with a button and a door, placed twice: each button its own door.
+        ModelState st;
+        auto plate = [&](ModelState& m, const char* name, const Vec3& o) {
+            ComponentDef d;
+            d.name = name;
+            d.mesh.drawPolyline({o, o + Vec3(1, 0, 0), o + Vec3(1, 0, 1), o + Vec3(0, 0, 1)}, true);
+            AnimState a, b;
+            a.name = "A";
+            b.name = "B";
+            for (Id v = 0; v < (Id)d.mesh.vertices.size(); ++v) {
+                a.verts.push_back(v);
+                a.pos.push_back(d.mesh.vertices[v].p);
+                b.verts.push_back(v);
+                b.pos.push_back(d.mesh.vertices[v].p + Vec3(0, 0, 3));
+            }
+            d.states = {a, b};
+            m.defs.push_back(d);
+            return (Id)m.defs.size() - 1;
+        };
+        ComponentDef groupDef;
+        groupDef.name = "Room";
+        st.defs.push_back(groupDef);
+        const Id doorDef = plate(st, "Door", Vec3()), buttonDef = plate(st, "Button", Vec3(2, 0, 0));
+        Instance door;
+        door.def = doorDef;
+        door.parent = 0;
+        door.entity.classname = "func_door";
+        door.entity.targetname = "door";
+        st.instances.push_back(door);
+        Instance button;
+        button.def = buttonDef;
+        button.parent = 0;
+        button.entity.classname = "func_button";
+        button.entity.targetname = "button";
+        button.entity.targets = {{"door", 0}};
+        st.instances.push_back(button);
+        Instance roomA, roomB;
+        roomA.def = roomB.def = 0;
+        roomA.entity.targetname = "front";
+        roomB.entity.targetname = "back";
+        roomB.xf = Mat4::translation(Vec3(0, 20, 0));
+        st.instances.push_back(roomA);
+        st.instances.push_back(roomB);
+        // And one outside, reaching into a named group.
+        const Id m = plate(st, "Master", Vec3(50, 0, 0));
+        Instance master;
+        master.def = m;
+        master.entity.classname = "func_button";
+        master.entity.targets = {{"back/door", 0}};
+        st.instances.push_back(master);
+        ModelState game;
+        CHECK(modelFromJson(modelToJson(st), game));
+        EntityWorld world(game);
+        CollisionWorld col;
+        col.buildFromModel(game);
+        world.start(col);
+        CHECK(world.count() == 5);
+        CHECK(world.errors().isEmpty());
+        std::vector<int> doors, buttons;
+        int masterE = -1;
+        for (int i = 0; i < world.count(); ++i) {
+            const AnimEntity& e = world.entity(i);
+            if (e.props.classname == "func_door") doors.push_back(i);
+            else if (e.props.targetname == "button") buttons.push_back(i);
+            else masterE = i;
+        }
+        CHECK(doors.size() == 2 && buttons.size() == 2 && masterE >= 0);
+        auto y = [&](int e) { return game.instances[world.entity(e).parts[0].instance].xf.at(1, 3); };
+        auto z = [&](int e) { return game.instances[world.entity(e).parts[0].instance].xf.transformPoint(Vec3()).z; };
+        const int front = y(doors[0]) < 10 ? doors[0] : doors[1], back = front == doors[0] ? doors[1] : doors[0];
+        const int frontBtn = y(buttons[0]) < 10 ? buttons[0] : buttons[1];
+        auto run = [&](double s) { for (double t = 0; t < s; t += 0.02) world.update(0.02); };
+        world.use(frontBtn);
+        run(1.3);
+        CHECK(z(front) > 2.9);
+        CHECK(z(back) < 0.1); // the other room's door did not move
+        run(5);
+        CHECK(z(front) < 0.1);
+        world.use(masterE);
+        run(1.3);
+        CHECK(z(back) > 2.9);
+        CHECK(z(front) < 0.1);
+        std::printf("[ ok ] names are namespaced by their group\n");
+    }
+    {
+        // Physics through the whole path: saved, loaded, falling in the game world.
+        ModelState st;
+        ComponentDef crate;
+        crate.name = "Crate";
+        const Vec3 o(0, 0, 5);
+        crate.mesh.drawPolyline({o, o + Vec3(1, 0, 0), o + Vec3(1, 1, 0), o + Vec3(0, 1, 0)}, true);
+        for (Face& f : crate.mesh.faces)
+            if (f.alive && f.normal.z < 0) crate.mesh.reverseFace((Id)(&f - crate.mesh.faces.data()));
+        crate.mesh.touch();
+        st.defs.push_back(crate);
+        Instance in;
+        in.def = 0;
+        in.entity.physics = true;
+        in.entity.mass = 42;
+        in.entity.friction = 0.3;
+        in.entity.bounce = 0.2;
+        st.instances.push_back(in);
+        Instance still;
+        still.def = 0;
+        still.xf = Mat4::translation(Vec3(5, 0, 0));
+        st.instances.push_back(still);
+        ModelState game;
+        CHECK(modelFromJson(modelToJson(st), game));
+        CHECK(game.instances[0].entity.physics && game.instances[0].entity.mass == 42 && game.instances[0].entity.friction == 0.3);
+        EntityWorld world(game);
+        CollisionWorld col;
+        col.buildFromModel(game);
+        world.start(col);
+        CHECK(world.count() == 1 && world.isPhysical(0) && !world.usable(0));
+        CHECK(world.physics().count() == 1 && world.physics().mass(0) == 42);
+        CHECK(col.triangles().size() == 2); // only the other one stays static
+        for (int i = 0; i < 180; ++i) world.update(1.0 / 60);
+        Vec3 mn, mx;
+        col.bodyBounds(world.entity(0).parts[0].body, mn, mx);
+        CHECK(near(mn.z, 0, 0.1)); // fell to the ground
+        CHECK(world.errors().isEmpty());
+        std::printf("[ ok ] physics in the game world\n");
+    }
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

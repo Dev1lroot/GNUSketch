@@ -33,6 +33,7 @@ class TerrainPanel;
 class SunPanel;
 class ScenePanel;
 class EntityProperties;
+class HierarchyPanel;
 class MaterialEditor;
 class MaterialBrowser;
 class PrefabBrowser;
@@ -124,6 +125,8 @@ private:
     SunPanel* sun_ = nullptr;
     ScenePanel* scene_ = nullptr;
     EntityProperties* entityProps_ = nullptr;
+    HierarchyPanel* hierarchy_ = nullptr;
+    QDockWidget* hierarchyDock_ = nullptr;
     MaterialEditor* materialEditor_ = nullptr;
     MaterialBrowser* materialBrowser_ = nullptr;
     PrefabBrowser* prefabBrowser_ = nullptr;

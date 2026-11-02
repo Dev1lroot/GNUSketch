@@ -14,12 +14,16 @@
 //     .play([states], opts, done)       one after another; opts also { loop: true }
 //     .stop()                           stay where it is now
 //     .fire(arg)                        send "trigger" to all its targets, each after its delay
+//     .find(name)                       as find() below
 //     .send(event, arg)                 send an event to this entity
 //   on(event, fn)   "start", "use" (the player presses it), "touch" (walks into it),
 //                   "trigger" (fired by another entity), "tick" (fn receives dt),
 //                   or any name used with send()
 //   after(seconds, fn), every(seconds, fn), cancel(id)
-//   find(name)      array of the entities with that name
+//   find(name)      the entities a name means from here: those in the innermost
+//                   component around this one that has any by that name, or else any
+//                   in the model. "front/door" only counts those inside a component
+//                   named front. Targets are looked up the same way.
 //   log(...)        prints to the terminal
 //   game.time       seconds since the start
 //   Easing names: linear, inQuad, outQuad, inOutQuad, inCubic, outCubic, inOutCubic,
@@ -30,11 +34,13 @@
 #pragma once
 
 #include "core/Animation.h"
+#include "core/Physics.h"
 #include "core/Walker.h"
 
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 
 #include <memory>
 #include <string>
@@ -69,6 +75,7 @@ class ScriptBridge : public QObject {
 public:
     explicit ScriptBridge(EntityWorld* w) : world_(w) {}
     Q_INVOKABLE void setPose(int i, int a, int b, double t);
+    Q_INVOKABLE QVariantList resolve(int from, const QString& name);
     Q_INVOKABLE void print(const QString& text);
     Q_INVOKABLE void error(const QString& text);
 
@@ -98,10 +105,22 @@ public:
     void setTouching(int i, bool touching);
     QStringList errors() const { return errors_; }
     void setPose(int i, int a, int b, double t);
+    std::vector<int> resolve(int from, const std::string& name) const;
+    // Rigid bodies.
+    const PhysicsWorld& physics() const { return physics_; }
+    bool isPhysical(int i) const;
+    // Pushes it for that long with a force in N at a world point. It stops
+    // gaining once it moves at a fifth of a m/s per 40 N: a walker pushes, no more.
+    void pushBy(int i, const Vec3& force, const Vec3& at, double seconds);
     void addError(const QString& text);
 
 private:
     bool call(const QString& function, int entity, const QString& event);
+    void startPhysics();
+    void stepPhysics(double dt);
+    PhysicsWorld physics_;
+    bool inPhysics_ = false;
+    int lastA_ = -1;
     ModelState& state_;
     CollisionWorld* world_ = nullptr;
     std::vector<AnimEntity> entities_;

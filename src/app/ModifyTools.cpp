@@ -289,7 +289,7 @@ void SelectTool::rectSelect(Qt::KeyboardModifiers mods) {
     }
     for (Id i = 0; i < (Id)st.objects.size() && st.editing == kNone && doc().style.showObjects; ++i) {
         double x, y;
-        if (st.objects[i].alive && cam().project(st.objects[i].pos, x, y) && r.contains(QPointF(x, y))) s.objects.insert(i);
+        if (st.objects[i].alive && !st.objects[i].hidden && cam().project(st.objects[i].pos, x, y) && r.contains(QPointF(x, y))) s.objects.insert(i);
     }
     applyPick(s, mods);
 }

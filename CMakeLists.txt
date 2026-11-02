@@ -23,6 +23,7 @@ add_library(gs_core STATIC
   src/core/Document.h src/core/Document.cpp
   src/core/Components.h src/core/Components.cpp
   src/core/Animation.h src/core/Animation.cpp
+  src/core/Physics.h src/core/Physics.cpp
   src/core/Terrain.h src/core/Terrain.cpp
   src/core/Solids.h src/core/Solids.cpp
   src/core/Effects.h src/core/Effects.cpp
@@ -65,6 +66,7 @@ add_executable(gnusketch
   src/app/TextureTool.h src/app/TextureTool.cpp
   src/app/EffectsUi.h src/app/EffectsUi.cpp
   src/app/SceneTools.h src/app/SceneTools.cpp
+  src/app/Hierarchy.h src/app/Hierarchy.cpp
   src/app/EntityProperties.h src/app/EntityProperties.cpp
   src/app/MaterialEditor.h src/app/MaterialEditor.cpp
   src/app/Browsers.h src/app/Browsers.cpp

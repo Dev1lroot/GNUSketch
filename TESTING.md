@@ -51,6 +51,7 @@ bottom. Screenshots help.
 - [ ] Blur on a box: corners and edges round off; Keep volume on and off; on a noisy terrain it calms the bumps
 - [ ] Decimate a noisy terrain by percentage and by polygons per m²: the outline stays, the "Polygons: a → b" line is right
 - [ ] Quads / Hexagons / Triangles on a plane, a box, a terrain; Rotation; textures and materials stay on
+- [ ] Voxelate a box (exact size with a fitting cube size), a sphere, a terrain, a textured face: live preview with the size slider, materials stay; Merge flat sides; very small size says the detail was reduced; result works with Push/Pull and Solid Tools
 - [ ] Subdivide, Triangulate, Merge Flat Faces; Ctrl+F repeats; effects on a component with copies change only the selected one
 
 ## Sun and culling
@@ -103,6 +104,14 @@ bottom. Screenshots help.
 - [ ] Select two components, Make Component; click selects the whole; double-click opens it, click and move a part; double-click again goes a level deeper; Esc comes out one level at a time; other copies follow
 - [ ] A door with a handle inside (states recorded with the handle moving along), placed in a frame component, Save as Prefab, drop it twice: both open, with handles, and the frames stay; open it from the Prefab Browser and it still edits
 - [ ] Dropping a prefab onto an open component puts it inside; dropping it into itself is refused; undo at each step; save, reopen, export glTF and STL: everything inside is there
+
+## Hierarchy, physics, namespaces
+- [ ] Hierarchy panel on the left lists geometry, components (nested), lights, cameras; search; click selects both ways; a nested row opens the way to it, the fading follows
+- [ ] Ticks hide and show, undoable; a hidden parent hides what is inside; F2 renames; Delete; Group several rows, Ungroup; right-click menu; Show Everything
+- [ ] A crate with physics, mass 20, up in the air: in Game Mode it falls and rests flat; on a slope with low friction it slides, with high friction it stays; walking into it pushes it; mass 5000 does not move
+- [ ] Crates stacked; one knocked off a ledge tumbles; a door with physics falls while its script still works; a crate resting on a door falls when the door opens
+- [ ] A group with a button and a door targeting `door`, copied twice: each button opens only its own door. Names on the groups, a button outside with target `front/door`
+- [ ] Save, reopen, prefab: physics settings and names stay
 
 ## Lights and cameras
 - [ ] Draw > Lights: point light above the clicked point; `3` before clicking changes the height; spot and directional aim with a second click; Sun at night shows them best

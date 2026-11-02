@@ -11,6 +11,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -129,6 +130,10 @@ __Entity.prototype = {
         next();
         return this;
     },
+    find: function (name) {
+        if (!name) return [];
+        return __native.resolve(this._i, name).map(function (k) { return __E[k]; });
+    },
     stop: function () { this._a = null; this._seq = null; return this; },
     send: function (event, arg) {
         var h = this._h[event];
@@ -136,18 +141,15 @@ __Entity.prototype = {
         return this;
     },
     fire: function (arg) {
+        var self = this;
         this.targets.forEach(function (t) {
-            function go() { find(t.name).forEach(function (e) { e.send("trigger", arg); }); }
+            function go() { self.find(t.name).forEach(function (e) { e.send("trigger", arg); }); }
             if (t.delay > 0) after(t.delay, go);
             else go();
         });
         return this;
     }
 };
-function find(name) {
-    if (!name) return [];
-    return __E.filter(function (e) { return e.name === name; });
-}
 function log() { __native.print(Array.prototype.join.call(arguments, " ")); }
 function after(seconds, fn) {
     var id = __nextTimer++;
@@ -167,6 +169,7 @@ function __add(i, info) { __E[i] = new __Entity(i, info); }
 function __load(i, body) {
     var self = __E[i];
     function on(event, fn) { (self._h[event] = self._h[event] || []).push(fn); }
+    function find(name) { return self.find(name); }
     __guard(function () { body(self, on, after, every, cancel, find, log, game); });
 }
 function __event(i, event) { __guard(function () { __E[i].send(event); }); }
@@ -340,6 +343,11 @@ bool checkEntityScript(const QString& code, QString* error) {
 }
 
 void ScriptBridge::setPose(int i, int a, int b, double t) { world_->setPose(i, a, b, t); }
+QVariantList ScriptBridge::resolve(int from, const QString& name) {
+    QVariantList out;
+    for (int k : world_->resolve(from, name.toStdString())) out << k;
+    return out;
+}
 void ScriptBridge::print(const QString& text) {
     std::printf("script: %s\n", qPrintable(text));
     std::fflush(stdout);
@@ -381,8 +389,10 @@ EntityWorld::EntityWorld(ModelState& state) : state_(state) {
     touching_.assign(entities_.size(), 0);
     for (size_t i = 0; i < entities_.size(); ++i)
         for (size_t j = 0; j < entities_.size(); ++j)
-            for (const EntityTarget& t : entities_[j].props.targets)
-                if (i != j && !t.name.empty() && t.name == entities_[i].props.targetname) linked_[i] = 1;
+            for (const EntityTarget& t : entities_[j].props.targets) {
+                const std::vector<int> hit = resolveEntityName(entities_, (int)j, t.name);
+                if (i != j && std::find(hit.begin(), hit.end(), (int)i) != hit.end()) linked_[i] = 1;
+            }
 }
 
 EntityWorld::~EntityWorld() {
@@ -414,7 +424,65 @@ void EntityWorld::setPose(int i, int a, int b, double t) {
     syncBodies(e, shape);
     // What is inside it rides along.
     poseMounted(state_, entities_, i, [&](int j) { syncBodies(entities_[j], false); });
+    // Something scripted moved: what rests on it may have to follow.
+    if (!inPhysics_ && (a != b || lastA_ != a)) physics_.wakeAll();
+    lastA_ = a;
 }
+
+std::vector<int> EntityWorld::resolve(int from, const std::string& name) const { return resolveEntityName(entities_, from, name); }
+
+void EntityWorld::startPhysics() {
+    if (!world_) return;
+    std::vector<int> owner(entities_.size());
+    for (int i = 0; i < count(); ++i) {
+        AnimEntity& e = entities_[i];
+        if (!e.props.physics || e.parts.empty()) continue;
+        // Its own parts and everything riding on it move as one.
+        std::vector<int> cols;
+        std::function<void(int)> gather = [&](int k) {
+            for (const AnimPart& p : entities_[k].parts)
+                if (p.body >= 0) cols.push_back(p.body);
+            for (int j = 0; j < count(); ++j)
+                if (entities_[j].owner == k) gather(j);
+        };
+        gather(i);
+        PhysicsParams params;
+        params.mass = e.props.mass;
+        params.friction = e.props.friction;
+        params.bounce = e.props.bounce;
+        e.body = physics_.addBody(params, cols, *world_);
+        e.restBases.clear();
+        for (const AnimPart& p : e.parts) e.restBases.push_back(p.base);
+    }
+}
+
+void EntityWorld::stepPhysics(double dt) {
+    if (!world_ || physics_.count() == 0) return;
+    inPhysics_ = true;
+    std::vector<int> ofBody(physics_.count(), -1);
+    for (int i = 0; i < count(); ++i)
+        if (entities_[i].body >= 0) ofBody[entities_[i].body] = i;
+    physics_.step(dt, *world_, [&](int body) {
+        const int i = ofBody[body];
+        AnimEntity& e = entities_[i];
+        const Mat4 motion = physics_.transform(body);
+        for (size_t k = 0; k < e.parts.size(); ++k) e.parts[k].base = motion * e.restBases[k];
+        setPose(i, e.poseA, e.poseB, e.poseT);
+    });
+    inPhysics_ = false;
+}
+
+void EntityWorld::pushBy(int i, const Vec3& push, const Vec3& at, double seconds) {
+    if (i < 0 || i >= count() || entities_[i].body < 0) return;
+    const int body = entities_[i].body;
+    // Not past the speed of what pushes it.
+    const Vec3 dir = push.normalized();
+    const double speed = physics_.velocity(body).dot(dir);
+    if (speed >= push.length() / 200.0) return;
+    physics_.applyImpulse(body, push * seconds, at);
+}
+
+bool EntityWorld::isPhysical(int i) const { return i >= 0 && i < count() && entities_[i].body >= 0; }
 
 int EntityWorld::entityOfBody(int body) const {
     for (int i = 0; i < (int)entities_.size(); ++i)
@@ -425,6 +493,7 @@ int EntityWorld::entityOfBody(int body) const {
 
 bool EntityWorld::usable(int i) const {
     if (i < 0 || i >= count()) return false;
+    if (entities_[i].props.classname.empty()) return false; // only physics, nothing to press
     return !linked_[i] || entities_[i].props.classname == "func_button";
 }
 
@@ -477,7 +546,7 @@ void EntityWorld::start(CollisionWorld& world) {
         const AnimEntity& e = entities_[i];
         const QString label = QStringLiteral("%1 %2").arg(QString::fromStdString(e.props.classname), QString::fromStdString(e.props.targetname)).trimmed();
         Watchdog::Scope scope(*watchdog_);
-        const QString code = e.props.script.empty() ? defaultScript(e.props.classname) : QString::fromStdString(e.props.script);
+        const QString code = !e.props.isEntity() ? QString() : e.props.script.empty() ? defaultScript(e.props.classname) : QString::fromStdString(e.props.script);
         const QJSValue body = engine_->evaluate(wrap(code), label);
         if (body.isError()) {
             addError(QStringLiteral("%1, line %2: %3").arg(label).arg(body.property(QStringLiteral("lineNumber")).toInt()).arg(body.toString()));
@@ -487,6 +556,7 @@ void EntityWorld::start(CollisionWorld& world) {
         engine_->setInterrupted(false);
         if (r.isError()) addError(QStringLiteral("%1: %2").arg(label, r.toString()));
     }
+    startPhysics();
     for (int i = 0; i < count(); ++i) call(QStringLiteral("__event"), i, QStringLiteral("start"));
 }
 
@@ -497,6 +567,7 @@ void EntityWorld::update(double dt) {
     const QJSValue r = fn.call({dt});
     engine_->setInterrupted(false);
     if (r.isError()) addError(r.toString());
+    stepPhysics(dt);
 }
 
 void EntityWorld::use(int i) {

@@ -55,7 +55,14 @@ struct EntityProps {
     std::vector<EntityTarget> targets; // which entities fire() triggers, and when
     std::string startState; // empty = the first state
     std::string script;     // JavaScript; see core/Animation.h and io/EntityScript.h
+    // Game Mode: it falls, slides and tumbles as a rigid body.
+    bool physics = false;
+    double mass = 10;     // kg
+    double friction = 0.5;
+    double bounce = 0.1;
     bool isEntity() const { return !classname.empty(); }
+    // Anything that gets moving parts in Game Mode.
+    bool isLive() const { return isEntity() || physics; }
     bool operator==(const EntityProps&) const = default;
 };
 
@@ -66,6 +73,7 @@ struct ComponentDef {
     std::string uid; // stable identity (lets pasted copies stay linked)
     Mesh mesh;
     std::vector<AnimState> states;
+    std::string prefab; // the prefab it was placed from, for showing that
 };
 
 // One placement of a component definition.
@@ -88,6 +96,7 @@ struct SceneObject {
     Vec3 target;            // where spot lights, directional lights and cameras aim
     bool alive = true;
     bool enabled = true;    // lights: switched on
+    bool hidden = false;    // not shown; a hidden light does not shine
     Color color = Color(1.0f, 0.95f, 0.85f);
     double intensity = 3;   // lights; point and spot lights at 1 m
     double range = 15;      // point and spot: meters until the light has faded out

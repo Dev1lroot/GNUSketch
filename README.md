@@ -95,6 +95,10 @@ include its output in the bug report.
     farthest distance, plus bump size, roughness and pattern.
   * **Soften > Blur**: softens edges and corners, by a distance in meters, optionally
     keeping the volume.
+  * **Polygons > Voxelate**: rebuilds the geometry out of cubes of a chosen size, on a
+    world-aligned grid, as one closed mesh. A shape that fits the grid keeps its exact
+    size; *Solid inside* fills closed shapes; *Merge flat sides* removes the grid lines.
+    It replaces the surface, so it does not stay joined to unselected faces around it.
   * **Polygons**: **Decimate** (a percentage, or polygons per m²), **Subdivide**
     (edges per meter), **Quads / Hexagons / Triangles** (rebuild as a regular pattern,
     in cells per meter), **Triangulate** and **Merge Flat Faces**. Pattern cells are
@@ -129,6 +133,19 @@ include its output in the bug report.
   goes with its door. Scripted components stay alive wherever they are nested: a door
   with a handle, inside a frame, saved together, is one prefab that still opens. A
   component cannot go inside itself.
+* **Hierarchy** (Window → Hierarchy, a panel on the left): everything in the model as a
+  tree, with search: loose geometry, groups and components with what is inside them,
+  lights and cameras. Click a row to select it (a row inside a group opens the way to it);
+  the tick shows or hides it; F2 renames; Delete erases; **Group** puts the selected things
+  in a new group, **Ungroup** takes one apart; double-click opens a component or looks
+  through a camera. It stays in step with what you select in the model.
+* **Physics**: in a component's **Properties**, tick *Falls and slides in Game Mode* and set
+  its **mass**, friction and bounce. In Game Mode it falls, slides down slopes, tumbles and
+  lands on other things, and the character pushes it by walking into it: a person's shove
+  moves a light crate, not a five-ton block. It works on plain components and on doors or
+  buttons alike, which then keep their scripts as they fall. Only vertices against
+  triangles collide (edge against edge does not), good for crates and blocks, less so for
+  long thin bars crossing.
 * **Prefabs**: right-click a component (or selected geometry) and choose **Save as
   Prefab**. It becomes its own `.gsketch` file in `~/.local/share/GNUSketch/prefabs`
   (with its materials and a picture). **Window → Prefab Browser** lists them with
@@ -153,6 +170,12 @@ include its output in the bug report.
   geometry inside is recorded, so a frame can stay while a panel swings; separate pieces
   move on their own, along true arcs. Properties also lists the states (Go To, Rename,
   Delete) and picks the one it starts in.
+
+  **Names are namespaced by the group or component around them.** A target means the
+  nearest of that name: in the same group first, then further out, then the whole model.
+  So a room holding a button and a door can be copied freely, and each button opens its
+  own door. From outside, `door` means every door of that name; give the groups a Name
+  and `front/door` picks the one inside the group called front.
 
   To link them as in Hammer, give the door a **Name** and list that name in the button's
   **Targets** tab. A button can have any number of targets, each with its own **delay**

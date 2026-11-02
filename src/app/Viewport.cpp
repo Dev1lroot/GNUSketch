@@ -599,6 +599,7 @@ void Viewport::dropEvent(QDropEvent* e) {
         Vec3 at;
         if (dragPrefab_ && dragPrefabPath_ == path) prefab = std::move(*dragPrefab_);
         else if (!loadPrefab(path, prefab, nullptr, nullptr, &err)) emit statusText(err);
+        if (!prefab.defs.empty()) prefab.defs[0].prefab = QFileInfo(path).completeBaseName().toStdString();
         dragPrefab_.reset();
         dragPrefabHit_ = false;
         if (!prefab.defs.empty() && surfacePointAt(x, y, at) && placePrefab(prefab, at) != kNone) e->acceptProposedAction();

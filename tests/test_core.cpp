@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Headless tests for the geometry kernel.
 #include "core/Animation.h"
+#include "core/Physics.h"
 #include "core/Components.h"
 #include "core/Document.h"
 #include "core/Effects.h"
@@ -2898,6 +2899,324 @@ int main() {
         CHECK(st.instances[ents[le].parts[0].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 3), 1e-9)); // the lock rides along
         setPose(0, 1, 0.5);
         CHECK(st.instances[ents[le].parts[0].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 1.5), 1e-9));
+    });
+
+    test("physics: falling, resting, sliding", [&] {
+        // A cube as a mesh, its lowest corner at `o`.
+        auto cube = [](const Vec3& o, double a) {
+            Mesh m;
+            const Vec3 p[8] = {o, o + Vec3(a, 0, 0), o + Vec3(a, a, 0), o + Vec3(0, a, 0),
+                               o + Vec3(0, 0, a), o + Vec3(a, 0, a), o + Vec3(a, a, a), o + Vec3(0, a, a)};
+            Id v[8];
+            for (int i = 0; i < 8; ++i) v[i] = m.addVertexRaw(p[i]);
+            const int F[6][4] = {{3, 2, 1, 0}, {4, 5, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}};
+            for (const auto& f : F) {
+                std::vector<Id> loop;
+                for (int k : f) loop.push_back(v[k]);
+                for (int k = 0; k < 4; ++k) m.addEdgeRaw(loop[k], loop[(k + 1) % 4]);
+                const Vec3 n = (p[f[1]] - p[f[0]]).cross(p[f[2]] - p[f[0]]).normalized();
+                m.addFaceRaw(loop, {}, n);
+            }
+            m.touch();
+            return m;
+        };
+        auto addCube = [&](PhysicsWorld& pw, CollisionWorld& w, const Vec3& o, double a, PhysicsParams params = {}) {
+            const int c = w.addBody(cube(o, a), Mat4());
+            return pw.addBody(params, {c}, w);
+        };
+        auto run = [](PhysicsWorld& pw, CollisionWorld& w, double seconds) {
+            // Each body's triangles were added in world coordinates.
+            for (double t = 0; t < seconds; t += 1.0 / 60)
+                pw.step(1.0 / 60, w, [&](int b) {
+                    for (int c : pw.collisionBodies(b)) w.setBodyTransform(c, pw.transform(b));
+                });
+        };
+        auto lowest = [](const CollisionWorld& w, int c) {
+            Vec3 mn, mx;
+            w.bodyBounds(c, mn, mx);
+            return mn;
+        };
+        {
+            // It falls by the book, lands flat on the ground and comes to rest.
+            CollisionWorld w;
+            w.build();
+            PhysicsWorld pw;
+            const int b = addCube(pw, w, Vec3(0, 0, 20), 1);
+            run(pw, w, 1.0);
+            CHECK(near(lowest(w, 0).z, 20 - 0.5 * 9.81, 0.2));
+            run(pw, w, 3.0);
+            CHECK(near(lowest(w, 0).z, 0, 0.02));
+            run(pw, w, 2.0);
+            CHECK(pw.asleep(b));
+            const Mat4 xf = pw.transform(b);
+            CHECK(near(xf.at(0, 0), 1, 0.01) && near(xf.at(2, 2), 1, 0.01)); // not tipped over
+            CHECK(near(lowest(w, 0).x, 0, 0.05));
+            // Pushed, it wakes up and moves on the ground.
+            pw.applyImpulse(b, Vec3(40, 0, 0), pw.centre(b));
+            CHECK(!pw.asleep(b));
+            run(pw, w, 0.3);
+            CHECK(lowest(w, 0).x > 0.1);
+            CHECK(near(lowest(w, 0).z, 0, 0.1));
+        }
+        auto slope = [](CollisionWorld& w, double degrees) {
+            const double a = degrees * kPi / 180, L = 40;
+            const Vec3 d(std::cos(a) * L, 0, -std::sin(a) * L);
+            const Vec3 o(-5, -5, std::sin(a) * L + 2), s(0, 10, 0);
+            w.addTriangle(o, o + d, o + d + s);
+            w.addTriangle(o, o + d + s, o + s);
+            w.build();
+        };
+        {
+            // Steep and slippery: it slides down.
+            CollisionWorld w;
+            slope(w, 25);
+            PhysicsWorld pw;
+            PhysicsParams slick;
+            slick.friction = 0.1;
+            addCube(pw, w, Vec3(0, -0.5, 18), 1, slick);
+            run(pw, w, 1.0); // lands
+            const double v1 = pw.velocity(0).length();
+            run(pw, w, 2.0);
+            const double v3 = pw.velocity(0).length();
+            // g (sin a - mu cos a) along the slope.
+            const double expected = 9.81 * (std::sin(25 * kPi / 180) - 0.1 * std::cos(25 * kPi / 180));
+            CHECK(near((v3 - v1) / 2, expected, 0.1));
+            const double slid = lowest(w, 0).x;
+            CHECK(slid > 3.0);
+            CHECK(std::fabs(lowest(w, 0).y + 0.5) < 0.5); // straight down the slope
+        }
+        {
+            // Same slope with grip: it stays where it lands.
+            CollisionWorld w;
+            slope(w, 25);
+            PhysicsWorld pw;
+            PhysicsParams grip;
+            grip.friction = 0.9;
+            // Set down gently: its base just above the slope where that is highest, at x = 0.
+            addCube(pw, w, Vec3(0, -0.5, std::sin(25 * kPi / 180) * 40 + 2 - 5 * std::tan(25 * kPi / 180) + 0.03), 1, grip);
+            run(pw, w, 2.5); // tips onto its base
+            const double x1 = lowest(w, 0).x;
+            CHECK(pw.transform(0).at(2, 2) > 0.85); // lying on its side's base, not rolled over
+            run(pw, w, 3.0);
+            CHECK(std::fabs(lowest(w, 0).x - x1) < 0.03);
+            CHECK(pw.asleep(0));
+        }
+        {
+            // Placed sunk into a floor by half its height, it comes out on top.
+            CollisionWorld w;
+            const Vec3 q[4] = {{-5, -5, 3}, {5, -5, 3}, {5, 5, 3}, {-5, 5, 3}};
+            w.addTriangle(q[0], q[1], q[2]);
+            w.addTriangle(q[0], q[2], q[3]);
+            w.build();
+            PhysicsWorld pw;
+            addCube(pw, w, Vec3(0, 0, 2.6), 1); // centre above the floor by 0.1
+            run(pw, w, 3.0);
+            CHECK(near(lowest(w, 0).z, 3, 0.05));
+        }
+        {
+            // It rests on a static block instead of falling through.
+            CollisionWorld w;
+            const Vec3 q[4] = {{-5, -5, 3}, {5, -5, 3}, {5, 5, 3}, {-5, 5, 3}};
+            w.addTriangle(q[0], q[1], q[2]);
+            w.addTriangle(q[0], q[2], q[3]);
+            w.build();
+            PhysicsWorld pw;
+            addCube(pw, w, Vec3(0, 0, 6), 1);
+            run(pw, w, 3.0);
+            CHECK(near(lowest(w, 0).z, 3, 0.03));
+        }
+        {
+            // A corner of the world poking at a flat side: the post test.
+            CollisionWorld w;
+            w.addTriangle(Vec3(0.4, 0.4, 2), Vec3(0.6, 0.4, 0), Vec3(0.4, 0.6, 0));
+            w.build();
+            PhysicsWorld pw;
+            addCube(pw, w, Vec3(0, 0, 4), 1);
+            run(pw, w, 0.8);
+            CHECK(lowest(w, 0).z > 1.5); // stopped by the tip, or tilted off it, not through it at once
+        }
+        {
+            // Mass: a heavy box shoves a light one aside; the other way round it hardly does.
+            auto knock = [&](double hitter, double target) {
+                CollisionWorld w;
+                w.build();
+                PhysicsWorld pw;
+                PhysicsParams a, b;
+                a.mass = hitter;
+                b.mass = target;
+                a.friction = b.friction = 0.05;
+                a.bounce = b.bounce = 0;
+                const int A = addCube(pw, w, Vec3(0, 0, 0), 1, a);
+                addCube(pw, w, Vec3(1.5, 0, 0), 1, b);
+                pw.applyImpulse(A, Vec3(hitter * 4, 0, 0), pw.centre(A));
+                run(pw, w, 0.8);
+                return lowest(w, 1).x - 1.5;
+            };
+            CHECK(knock(100, 5) > knock(5, 100) + 0.5);
+        }
+        {
+            // A stack settles.
+            CollisionWorld w;
+            w.build();
+            PhysicsWorld pw;
+            addCube(pw, w, Vec3(0, 0, 0.5), 1);
+            addCube(pw, w, Vec3(0, 0, 2), 1);
+            run(pw, w, 4.0);
+            CHECK(near(lowest(w, 0).z, 0, 0.05));
+            CHECK(near(lowest(w, 1).z, 1, 0.08));
+        }
+    });
+
+    test("names look in their own group first", [&] {
+        auto entity = [](const char* name, std::vector<std::pair<int, std::string>> scope, int occ) {
+            AnimEntity e;
+            e.props.targetname = name;
+            e.props.classname = "func_door";
+            e.scope = std::move(scope);
+            e.occurrence = occ;
+            return e;
+        };
+        std::vector<AnimEntity> all;
+        all.push_back(entity("button", {{1, "front"}}, 10));
+        all.push_back(entity("door", {{1, "front"}}, 11));
+        all.push_back(entity("button", {{2, "back"}}, 12));
+        all.push_back(entity("door", {{2, "back"}}, 13));
+        all.push_back(entity("master", {}, 14));
+        all.push_back(entity("lamp", {}, 15));
+        using V = std::vector<int>;
+        CHECK(resolveEntityName(all, 0, "door") == V{1});
+        CHECK(resolveEntityName(all, 2, "door") == V{3});
+        CHECK((resolveEntityName(all, 4, "door") == V{1, 3})); // from outside: all of them
+        CHECK(resolveEntityName(all, 4, "front/door") == V{1});
+        CHECK(resolveEntityName(all, 0, "back/door") == V{3}); // reaching across
+        CHECK(resolveEntityName(all, 0, "lamp") == V{5});      // not in the group: further out
+        CHECK(resolveEntityName(all, 0, "nothing").empty());
+        CHECK(resolveEntityName(all, 0, "").empty());
+        CHECK(resolveEntityName(all, -1, "front/door") == V{1});
+    });
+
+    test("effects: voxelate", [&] {
+        {
+            // A box that fits the grid keeps its exact size, 4 x 4 x 4 cubes.
+            Mesh m;
+            cube(m);
+            Material none;
+            EffectResult r;
+            VoxelateParams p;
+            p.size = 0.25;
+            CHECK(effectVoxelate(m, allFaces(m), p, &r));
+            CHECK_EQ(m.aliveFaceCount(), 6 * 16);
+            CHECK_EQ((int)r.faces.size(), m.aliveFaceCount());
+            CHECK(!r.limited);
+            CHECK(isSolid(m));
+            CHECK(near(solidVolume(m), 1.0));
+            Vec3 mn, mx;
+            bool any = false;
+            m.bounds(mn, mx, any);
+            CHECK(mn.nearlyEquals(Vec3(0, 0, 0), 1e-9) && mx.nearlyEquals(Vec3(1, 1, 1), 1e-9));
+            CHECK(m.aliveVertexCount() == 5 * 5 * 5 - 3 * 3 * 3);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) // normals look out
+                if (m.faces[f].alive) CHECK((m.faceInteriorPoint(f) - Vec3(0.5, 0.5, 0.5)).dot(m.faces[f].normal) > 0);
+        }
+        {
+            // Merged, it is a plain box again.
+            Mesh m;
+            cube(m);
+            VoxelateParams p;
+            p.size = 0.25;
+            p.mergeFlat = true;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK_EQ(m.aliveFaceCount(), 6);
+            CHECK(near(solidVolume(m), 1.0));
+        }
+        {
+            // Not filled: a shell, with an inner surface too.
+            Mesh m;
+            cube(m);
+            VoxelateParams p;
+            p.size = 0.25;
+            p.fill = false;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK_EQ(m.aliveFaceCount(), 6 * 16 + 6 * 4);
+            CHECK(near(solidVolume(m), 1.0 - 0.125, 1e-6));
+        }
+        {
+            // A size that does not fit rounds up to whole cubes that cover it.
+            Mesh m;
+            cube(m);
+            VoxelateParams p;
+            p.size = 0.3;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK(near(solidVolume(m), 1.2 * 1.2 * 1.2, 1e-6));
+        }
+        {
+            // A flat face is one layer thick, and open shapes do not fill.
+            Mesh m;
+            m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+            VoxelateParams p;
+            p.size = 0.25;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK(near(solidVolume(m), 0.25, 1e-6));
+            Vec3 mn, mx;
+            bool any = false;
+            m.bounds(mn, mx, any);
+            CHECK(near(mx.z - mn.z, 0.25));
+        }
+        {
+            // A slanted surface becomes stairs of cubes.
+            Mesh m;
+            m.drawPolyline({{0, 0, 0}, {4, 0, 2}, {4, 4, 2}, {0, 4, 0}}, true);
+            VoxelateParams p;
+            p.size = 0.5;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK(m.aliveFaceCount() > 40);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) // on the grid, along the axes
+                if (m.faces[f].alive) CHECK(near(std::fabs(m.faces[f].normal.x) + std::fabs(m.faces[f].normal.y) + std::fabs(m.faces[f].normal.z), 1));
+        }
+        {
+            // Materials stay; each side takes the source facing its way.
+            Mesh m;
+            cube(m);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) m.faces[f].front.material = m.faces[f].normal.z > 0.5 ? 3 : 1;
+            VoxelateParams p;
+            p.size = 0.25;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) CHECK_EQ(m.faces[f].front.material, m.faces[f].normal.z > 0.5 ? 3 : 1);
+        }
+        {
+            // Asking too much makes bigger cubes, and says so; bad input changes nothing.
+            Mesh m;
+            cube(m, 100);
+            EffectResult r;
+            VoxelateParams p;
+            p.size = 0.01;
+            CHECK(effectVoxelate(m, allFaces(m), p, &r));
+            CHECK(r.limited);
+            CHECK(m.aliveFaceCount() <= kEffectTriangleLimit);
+            Mesh same;
+            cube(same);
+            p.size = 0;
+            std::string err;
+            CHECK(!effectVoxelate(same, allFaces(same), p, nullptr, &err) && !err.empty());
+            CHECK_EQ(same.aliveFaceCount(), 6);
+            p.size = 0.1;
+            CHECK(!effectVoxelate(same, {}, p, nullptr, &err));
+        }
+        {
+            // Only what is selected changes.
+            Mesh m;
+            cube(m);
+            m.drawPolyline({{5, 0, 0}, {6, 0, 0}, {6, 1, 0}, {5, 1, 0}}, true);
+            std::set<Id> box;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && m.faceInteriorPoint(f).x < 2) box.insert(f);
+            VoxelateParams p;
+            p.size = 0.5;
+            CHECK(effectVoxelate(m, box, p));
+            CHECK_EQ(m.aliveFaceCount(), 6 * 4 + 1);
+        }
     });
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);

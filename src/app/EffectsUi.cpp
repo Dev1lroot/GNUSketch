@@ -176,6 +176,24 @@ std::vector<EffectDef> buildRegistry() {
     remesh(QStringLiteral("Remesh to Triangles"), QStringLiteral("Triangles"), RemeshParams::Triangles);
     {
         EffectDef d;
+        d.name = d.menuText = QStringLiteral("Voxelate");
+        d.submenu = QStringLiteral("Polygons");
+        d.icon = QStringLiteral("fx_voxelate");
+        d.tip = QStringLiteral("Rebuilds the geometry out of cubes of this size, on a grid aligned with the world. A shape that fits the grid keeps its exact size.");
+        d.params = {real("size", QStringLiteral("Cube size"), 0.01, 10, 0.1, 3, QStringLiteral(" m"), true),
+                    flag("fill", QStringLiteral("Solid inside"), true),
+                    flag("merge", QStringLiteral("Merge flat sides"), false)};
+        d.apply = [](Mesh& m, const std::set<Id>& f, const QVariantMap& v, EffectResult* out, std::string* err) {
+            VoxelateParams p;
+            p.size = v["size"].toDouble();
+            p.fill = v["fill"].toBool();
+            p.mergeFlat = v["merge"].toBool();
+            return effectVoxelate(m, f, p, out, err);
+        };
+        r.push_back(std::move(d));
+    }
+    {
+        EffectDef d;
         d.name = d.menuText = QStringLiteral("Triangulate");
         d.submenu = QStringLiteral("Polygons");
         d.tip = QStringLiteral("Splits every polygon into triangles, without moving anything.");

@@ -10,7 +10,9 @@
 #include <functional>
 #include <vector>
 
+class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -34,6 +36,7 @@ public:
     // Sets the class as the combo box does, giving it a script if it has none.
     void setClass(const QString& classname);
     void choosePreset(const QString& name);
+    void setPhysics(bool on, double mass);
     QPlainTextEdit* scriptEdit() const { return script_; }
     QString message() const;
     // Targets tab.
@@ -75,6 +78,10 @@ private:
     QLabel* sourcesHint_;
     QComboBox* start_;
     QListWidget* states_;
+    QCheckBox* physics_;
+    QDoubleSpinBox* mass_;
+    QDoubleSpinBox* friction_;
+    QDoubleSpinBox* bounce_;
     QPushButton* record_;
     QPushButton* goTo_;
     QPushButton* rename_;

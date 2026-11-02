@@ -524,7 +524,8 @@ void MaterialsPanel::showTab(int page) {
     // Only the page on show takes up height (a stack is as tall as its tallest page).
     for (int i = 0; i < pages_->count(); ++i)
         pages_->widget(i)->setSizePolicy(QSizePolicy::Preferred, i == page ? QSizePolicy::Preferred : QSizePolicy::Ignored);
-    pages_->adjustSize();
+    pages_->updateGeometry();
+    updateGeometry();
     if (page == 1) editor_->refresh();
 }
 

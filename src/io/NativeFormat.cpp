@@ -100,6 +100,7 @@ QJsonObject objectToJson(const SceneObject& o) {
     j["name"] = QString::fromStdString(o.name);
     j["pos"] = vec(o.pos);
     if (o.aims()) j["target"] = vec(o.target);
+    if (o.hidden) j["hidden"] = true;
     if (o.isLight()) {
         j["enabled"] = o.enabled;
         j["color"] = QJsonArray{o.color.r, o.color.g, o.color.b, o.color.a};
@@ -124,6 +125,7 @@ SceneObject objectFromJson(const QJsonObject& j) {
     o.name = j["name"].toString().toStdString();
     o.pos = vec(j["pos"]);
     o.target = j.contains("target") ? vec(j["target"]) : o.pos;
+    o.hidden = j["hidden"].toBool();
     o.enabled = j["enabled"].toBool(true);
     QJsonArray c = j["color"].toArray();
     if (c.size() >= 3) o.color = Color((float)c[0].toDouble(), (float)c[1].toDouble(), (float)c[2].toDouble());
@@ -367,6 +369,7 @@ QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
         QJsonObject c = meshToJson(d.mesh);
         c["name"] = QString::fromStdString(d.name);
         c["uid"] = QString::fromStdString(d.uid);
+        if (!d.prefab.empty()) c["prefab"] = QString::fromStdString(d.prefab);
         if (!d.states.empty()) {
             // Vertex ids as in the file, which holds the mesh compacted.
             Mesh copy = d.mesh;
@@ -410,7 +413,7 @@ QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
         for (double v : in.xf.m) xf.append(v);
         o["transform"] = xf;
         if (in.hidden) o["hidden"] = true;
-        if (in.entity.isEntity() || !in.entity.targetname.empty()) {
+        if (in.entity.isLive() || !in.entity.targetname.empty()) {
             QJsonObject e;
             e["classname"] = QString::fromStdString(in.entity.classname);
             e["targetname"] = QString::fromStdString(in.entity.targetname);
@@ -419,6 +422,12 @@ QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
             if (!targets.isEmpty()) e["targets"] = targets;
             e["startState"] = QString::fromStdString(in.entity.startState);
             e["script"] = QString::fromStdString(in.entity.script);
+            if (in.entity.physics) {
+                e["physics"] = true;
+                e["mass"] = in.entity.mass;
+                e["friction"] = in.entity.friction;
+                e["bounce"] = in.entity.bounce;
+            }
             o["entity"] = e;
         }
         insts.append(o);
@@ -475,6 +484,7 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
         meshFromJson(o, d.mesh);
         d.name = o["name"].toString().toStdString();
         d.uid = o["uid"].toString().toStdString();
+        d.prefab = o["prefab"].toString().toStdString();
         if (d.uid.empty()) d.uid = newComponentUid();
         for (Face& fc : d.mesh.faces) {
             if (fc.front.material >= (Id)st.materials.size()) fc.front.material = kNone;
@@ -532,6 +542,10 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
             if (!e["target"].toString().isEmpty()) in.entity.targets.push_back({e["target"].toString().toStdString(), 0});
             in.entity.startState = e["startState"].toString().toStdString();
             in.entity.script = e["script"].toString().toStdString();
+            in.entity.physics = e["physics"].toBool();
+            in.entity.mass = e.value("mass").toDouble(in.entity.mass);
+            in.entity.friction = e.value("friction").toDouble(in.entity.friction);
+            in.entity.bounce = e.value("bounce").toDouble(in.entity.bounce);
         }
         st.instances.push_back(in);
         fileInstance[fileIndex] = (Id)st.instances.size() - 1;

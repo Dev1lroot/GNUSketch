@@ -4,6 +4,7 @@
 #include "Browsers.h"
 #include "MaterialEditor.h"
 #include "SceneTools.h"
+#include "Hierarchy.h"
 #include "EntityProperties.h"
 #include "core/Animation.h"
 #include "io/AssetLibrary.h"
@@ -52,6 +53,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QTemporaryDir>
@@ -548,6 +550,10 @@ void MainWindow::buildMenus() {
     win->addAction(acts_["materialbrowser"]);
     win->addAction(acts_["materialeditor"]);
     win->addAction(acts_["prefabbrowser"]);
+    QAction* hierAct = win->addAction(QStringLiteral("&Hierarchy"));
+    hierAct->setCheckable(true);
+    connect(hierAct, &QAction::toggled, this, [this](bool on) { hierarchyDock_->setVisible(on); });
+    connect(win, &QMenu::aboutToShow, this, [this, hierAct] { QSignalBlocker b(hierAct); hierAct->setChecked(hierarchyDock_->isVisible()); });
     win->addSeparator();
     QAction* trayAct = win->addAction(QStringLiteral("Default &Tray"));
     trayAct->setCheckable(true);
@@ -698,8 +704,15 @@ void MainWindow::buildTray() {
     sections_["Instructor"] = tray->addSection(QStringLiteral("Instructor"), instructor_, false);
     scroll->setWidget(tray);
     trayDock_->setWidget(scroll);
-    trayDock_->setMinimumWidth(290);
+    trayDock_->setMinimumWidth(368);
     addDockWidget(Qt::RightDockWidgetArea, trayDock_);
+
+    hierarchyDock_ = new QDockWidget(QStringLiteral("Hierarchy"), this);
+    hierarchyDock_->setObjectName("Hierarchy");
+    hierarchy_ = new HierarchyPanel(&doc_, viewport_, acts_["explode"], acts_["delete"], acts_["entityprops"], hierarchyDock_);
+    hierarchyDock_->setWidget(hierarchy_);
+    hierarchyDock_->setMinimumWidth(230);
+    addDockWidget(Qt::LeftDockWidgetArea, hierarchyDock_);
 }
 
 void MainWindow::buildStatusBar() {
@@ -744,6 +757,7 @@ void MainWindow::onDocChanged() {
     entityInfo_->refresh();
     materials_->refresh();
     scene_->refresh();
+    if (hierarchy_) hierarchy_->refresh();
     if (materialEditor_ && materialEditor_->isVisible()) materialEditor_->refresh();
     if (entityProps_ && entityProps_->isVisible()) entityProps_->refresh();
     if (materialBrowser_) materialBrowser_->refreshFromModel();
@@ -753,6 +767,7 @@ void MainWindow::onDocChanged() {
 void MainWindow::onSelectionChanged() {
     entityInfo_->refresh();
     scene_->refresh();
+    if (hierarchy_) hierarchy_->refresh();
     if (doc_.selection.objects.size() == 1 && !doc_.selection.faces.size() && !doc_.selection.edges.size() && !doc_.selection.instances.size())
         sections_["Scene"]->setExpanded(true);
     bool any = !doc_.selection.empty();
@@ -1211,6 +1226,7 @@ void MainWindow::hideSelection() {
     for (Id f : doc_.selection.faces) doc_.mesh().faces[f].hidden = true;
     for (Id e : doc_.selection.edges) doc_.mesh().edges[e].hidden = true;
     for (Id i : doc_.selection.instances) doc_.state.instances[i].hidden = true;
+    for (Id o : doc_.selection.objects) doc_.state.objects[o].hidden = true;
     doc_.mesh().touch();
     doc_.selection.clear();
     doc_.commitOp();
@@ -1222,6 +1238,7 @@ void MainWindow::unhideAll() {
     for (Face& f : doc_.mesh().faces) f.hidden = false;
     for (Edge& e : doc_.mesh().edges) e.hidden = false;
     for (Instance& i : doc_.state.instances) i.hidden = false;
+    for (SceneObject& o : doc_.state.objects) o.hidden = false;
     doc_.mesh().touch();
     doc_.commitOp();
 }
@@ -1580,6 +1597,7 @@ bool MainWindow::startPrefabPlacement(const QString& path) {
     viewport_->setTool(ToolId::Move);
     doc_.beginOp("Place Prefab");
     const Id def = importDefinition(doc_, prefab, 0);
+    doc_.state.defs[def].prefab = QFileInfo(path).completeBaseName().toStdString();
     if (!canPlaceInActive(doc_.state, def)) {
         doc_.cancelOp();
         statusLabel_->setText(QStringLiteral("A component cannot go inside itself."));

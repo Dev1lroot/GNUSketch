@@ -45,6 +45,11 @@ public:
         for (const Body& b : bodies_)
             if (b.mn.x <= mx.x && b.mx.x >= mn.x && b.mn.y <= mx.y && b.mx.y >= mn.y && b.mn.z <= mx.z && b.mx.z >= mn.z)
                 for (const Tri& t : b.world) fn(t);
+        forEachStaticNear(mn, mx, fn);
+    }
+    // The same for the static geometry only.
+    template <typename Fn>
+    void forEachStaticNear(const Vec3& mn, const Vec3& mx, Fn fn) const {
         if (tris_.empty()) return;
         ++stampNow_;
         int x0, y0, x1, y1;

@@ -2,8 +2,11 @@
 #include "SelfTest.h"
 
 #include "Browsers.h"
+#include "EffectsUi.h"
+#include "Hierarchy.h"
 #include "EntityProperties.h"
 #include "core/Animation.h"
+#include "core/Effects.h"
 #include "GameMode.h"
 #include "MaterialEditor.h"
 #include "Panels.h"
@@ -21,6 +24,7 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QTemporaryDir>
+#include <QTreeWidget>
 #include <QThread>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -2579,6 +2583,207 @@ int runSelfTest(MainWindow& w) {
         doc.reset();
         doc.style = RenderStyle();
         vp->setTool(ToolId::Select);
+    }
+
+    // --- Hierarchy panel and physics in the real window.
+    {
+        QTemporaryDir data;
+        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        doc.reset();
+        doc.style = RenderStyle();
+        doc.style.showAxes = false;
+        vp->setTool(ToolId::Select);
+        vp->camera() = Camera();
+        vp->camera().eye = Vec3(0, -12, 6);
+        vp->camera().target = Vec3(0, 0, 0);
+        Mesh& m = d.mesh();
+        m.viewHint = Vec3(0, -10, 10);
+        m.groundFacesDown = false;
+        auto* hp = w.findChild<HierarchyPanel*>();
+        d.check(hp != nullptr, "the window has a Hierarchy panel");
+        auto makeBox = [&](const Vec3& o, const char* name) {
+            std::set<Id> before;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) before.insert(f);
+            d.mesh().drawPolyline({o, o + Vec3(1, 0, 0), o + Vec3(1, 1, 0), o + Vec3(0, 1, 0)}, true);
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && !before.count(f)) d.mesh().pushPull(f, 1.0);
+            Selection sel;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && !before.count(f)) sel.faces.insert(f);
+            return makeComponent(doc.state, sel, name);
+        };
+        doc.beginOp("Boxes");
+        const Id a = makeBox(Vec3(-3, 0, 0), "A"), b = makeBox(Vec3(3, 0, 0), "B");
+        d.mesh().drawPolyline({{-9, -9, 0}, {-8, -9, 0}, {-8, -8, 0}, {-9, -8, 0}}, true);
+        SceneObject lamp;
+        lamp.name = "Lamp";
+        lamp.pos = Vec3(0, 0, 3);
+        const Id lampId = doc.addObject(lamp);
+        doc.commitOp();
+        d.pump();
+        QTreeWidget* tree = hp->tree();
+        d.check(tree->topLevelItemCount() == 4, "it lists geometry, components and lights");
+        d.check(hp->findInstance(a) && hp->findInstance(b) && hp->findObject(lampId) && hp->geometryRow(), "each with a row");
+        // Selecting goes both ways.
+        hp->findInstance(a)->setSelected(true);
+        d.pump();
+        d.check(doc.selection.instances == std::set<Id>{a}, "a row selects the component");
+        doc.selection.clear();
+        doc.selection.instances.insert(b);
+        doc.notifySelection();
+        d.check(hp->findInstance(b)->isSelected() && !hp->findInstance(a)->isSelected(), "selecting in the model marks its row");
+        tree->clearSelection();
+        hp->findObject(lampId)->setSelected(true);
+        d.check(doc.selection.objects == std::set<Id>{lampId}, "lights too");
+        tree->clearSelection();
+        hp->geometryRow()->setSelected(true);
+        d.check(doc.selection.faces.size() == 1, "the geometry row selects loose geometry");
+        tree->clearSelection();
+        // Hiding and back, with undo.
+        hp->findInstance(a)->setCheckState(1, Qt::Unchecked);
+        d.check(doc.state.instances[a].hidden, "unticking hides a component");
+        d.check(!hp->findInstance(a)->isDisabled() && hp->findInstance(a)->checkState(1) == Qt::Unchecked, "the row stays, unticked");
+        doc.undo();
+        d.check(!doc.state.instances[a].hidden && hp->findInstance(a)->checkState(1) == Qt::Checked, "undo shows it and ticks the row");
+        hp->findObject(lampId)->setCheckState(1, Qt::Unchecked);
+        d.check(doc.state.objects[lampId].hidden, "unticking hides a light");
+        hp->findObject(lampId)->setCheckState(1, Qt::Checked);
+        hp->geometryRow()->setCheckState(1, Qt::Unchecked);
+        bool allHidden = true;
+        for (const Face& f : doc.state.mesh.faces) allHidden = allHidden && (!f.alive || f.hidden);
+        d.check(allHidden, "unticking Geometry hides the loose faces");
+        hp->geometryRow()->setCheckState(1, Qt::Checked);
+        // Renaming.
+        hp->findInstance(a)->setText(0, QStringLiteral("Crate"));
+        d.check(doc.state.defs[doc.state.instances[a].def].name == "Crate", "renaming a row renames the component");
+        hp->findObject(lampId)->setText(0, QStringLiteral("Key Light"));
+        d.check(doc.state.objects[lampId].name == "Key Light", "and a light");
+        // Grouping and taking apart.
+        tree->clearSelection();
+        hp->findInstance(a)->setSelected(true);
+        hp->findInstance(b)->setSelected(true);
+        d.check(doc.selection.instances.size() == 2, "two rows select both");
+        const Id grp = hp->groupSelection();
+        d.check(grp != kNone && doc.state.instances[a].parent == doc.state.instances[grp].def && doc.state.instances[b].parent == doc.state.instances[grp].def, "Group puts them in one");
+        QTreeWidgetItem* grpRow = hp->findInstance(grp);
+        d.check(grpRow && grpRow->childCount() == 2, "the tree shows them inside it");
+        // A row inside: opens the way to it.
+        tree->clearSelection();
+        hp->findInstance(a)->setSelected(true);
+        d.check(doc.state.editing == grp && doc.selection.instances == std::set<Id>{a}, "a row inside a group opens the group and selects it");
+        tree->clearSelection();
+        hp->findInstance(grp)->setSelected(true);
+        d.check(doc.state.editing == kNone && doc.selection.instances == std::set<Id>{grp}, "the group's own row comes back out");
+        // Search.
+        hp->findChild<QLineEdit*>()->setText(QStringLiteral("key"));
+        d.check(!hp->findObject(lampId)->isHidden() && hp->findInstance(grp)->isHidden(), "search narrows the tree");
+        hp->findChild<QLineEdit*>()->clear();
+        d.check(!hp->findInstance(grp)->isHidden(), "and clears");
+        doc.undo();
+        d.check(doc.state.instances[a].parent == kNone, "undo takes the group apart");
+
+        // Physics, from the Properties window to the game.
+        EntityProperties* props = w.entityProperties();
+        props->setInstance(a);
+        props->show();
+        d.pump();
+        props->setPhysics(true, 25);
+        d.check(doc.state.instances[a].entity.physics && doc.state.instances[a].entity.mass == 25 && !doc.state.instances[a].entity.isEntity(), "plain geometry can have physics");
+        d.check(hp->findInstance(a)->text(0).contains(QStringLiteral("physics")), "the tree says so");
+        props->close();
+        // Up in the air, a heavy one on the ground beside it.
+        doc.beginOp("Lift");
+        doc.state.instances[a].xf = Mat4::translation(Vec3(0, 0, 3)) * doc.state.instances[a].xf;
+        doc.state.instances[b].entity.physics = true;
+        doc.state.instances[b].entity.mass = 5000;
+        doc.commitOp();
+        const QString path = QDir(data.path()).filePath(QStringLiteral("phys.gsketch"));
+        QString err;
+        d.check(saveNative(doc, path, {}, &err), "it saves");
+        GameWindow game;
+        d.check(game.load(path, Vec3(-2.5, -3, 0.01), 0.0, &err), "Game Mode loads it");
+        game.show();
+        d.pump();
+        EntityWorld* ents = game.entities();
+        d.check(ents && ents->count() == 2 && ents->physics().count() == 2, "with two rigid bodies");
+        if (ents && ents->count() == 2) {
+            const int light = ents->entity(0).props.mass == 25 ? 0 : 1, heavy = 1 - light;
+            auto bodyMin = [&](int e) {
+                Vec3 lo, hi;
+                game.world().bodyBounds(ents->entity(e).parts[0].body, lo, hi);
+                return lo;
+            };
+            auto frames = [&](double seconds) {
+                for (double t = 0; t < seconds; t += 1.0 / 60) game.simulate(1.0 / 60);
+            };
+            d.check(bodyMin(light).z > 2.5, "it starts in the air");
+            frames(1.5);
+            d.check(std::fabs(bodyMin(light).z) < 0.1, "it falls to the ground");
+            frames(1.0);
+            // The character shoves the light one by walking into it, and not the heavy one.
+            const Vec3 lightStart = bodyMin(light), heavyStart = bodyMin(heavy);
+            struct KeyPeek : GameWindow {
+                using GameWindow::keyPressEvent;
+                using GameWindow::keyReleaseEvent;
+            };
+            auto key = [&](bool down) {
+                QKeyEvent e(down ? QEvent::KeyPress : QEvent::KeyRelease, Qt::Key_W, Qt::NoModifier, QStringLiteral("w"));
+                if (down) (game.*(&KeyPeek::keyPressEvent))(&e);
+                else (game.*(&KeyPeek::keyReleaseEvent))(&e);
+            };
+            game.walker().setYaw(0);
+            game.walker().spawn(Vec3(lightStart.x - 0.5, lightStart.y + 0.5, 0.01));
+            key(true);
+            frames(1.5);
+            key(false);
+            std::printf("    light box moved %.2f m\n", bodyMin(light).x - lightStart.x);
+            d.check(bodyMin(light).x > lightStart.x + 0.3, "walking into a light box pushes it");
+            game.walker().spawn(Vec3(heavyStart.x - 0.5, heavyStart.y + 0.5, 0.01));
+            key(true);
+            frames(1.5);
+            key(false);
+            d.check(std::fabs(bodyMin(heavy).x - heavyStart.x) < 0.05, "a heavy one stays put");
+            d.check(ents->errors().isEmpty(), "no errors");
+            d.check(!game.grabFramebuffer().isNull(), "it renders");
+        }
+        game.close();
+        qunsetenv("GNUSKETCH_DATA_DIR");
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+    }
+
+    // --- Voxelate from the Effects menu's registry, on a real selection.
+    {
+        doc.reset();
+        vp->setTool(ToolId::Select);
+        d.mesh().viewHint = Vec3(0, 0, 10);
+        d.mesh().groundFacesDown = false;
+        d.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) doc.selection.faces.insert(f);
+        doc.notifySelection();
+        d.check(w.findChild<QAction*>(QStringLiteral("effect_voxelate")) != nullptr, "Voxelate is in the Effects menu");
+        d.check(w.findChild<QAction*>(QStringLiteral("effect_voxelate"))->isEnabled(), "and enabled with faces selected");
+        for (const EffectDef& def : effectRegistry())
+            if (def.name == QLatin1String("Voxelate")) {
+                QVariantMap v;
+                v["size"] = 0.25;
+                v["fill"] = true;
+                v["merge"] = false;
+                doc.beginOp("Voxelate");
+                Selection sel = doc.selection;
+                std::string err;
+                const bool ok = applyEffect(doc.state, sel, [&](Mesh& m, const std::set<Id>& f, EffectResult* r, std::string* e) { return def.apply(m, f, v, r, e); }, nullptr, &err);
+                doc.selection = sel;
+                doc.commitOp();
+                d.check(ok && d.mesh().aliveFaceCount() > 16, "it runs on the selection");
+            }
+        d.check(!vp->grabFramebuffer().isNull(), "the cubes render");
+        doc.undo();
+        d.check(d.mesh().aliveFaceCount() == 1, "one undo restores the face");
+        doc.reset();
     }
 
     std::printf("selftest: %d faces, %d edges, %zu materials, %d failures\n", d.mesh().aliveFaceCount(),

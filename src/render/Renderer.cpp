@@ -1200,7 +1200,7 @@ void Renderer::updateLights(const ModelState& ms) {
     // Directional lights reach everywhere; of the others the strongest count.
     std::vector<const SceneObject*> lights;
     for (const SceneObject& o : ms.objects)
-        if (o.alive && o.enabled && o.isLight() && o.intensity > 0) lights.push_back(&o);
+        if (o.alive && !o.hidden && o.enabled && o.isLight() && o.intensity > 0) lights.push_back(&o);
     std::stable_sort(lights.begin(), lights.end(), [](const SceneObject* a, const SceneObject* b) {
         const bool da = a->kind == SceneObject::DirectionalLight, db = b->kind == SceneObject::DirectionalLight;
         return da != db ? da : a->intensity > b->intensity;
@@ -1238,7 +1238,7 @@ void Renderer::drawObjects(const Document& doc, const Camera& cam, double dpr) {
     std::vector<float> lines, dashed;
     for (Id i = 0; i < (Id)st.objects.size(); ++i) {
         const SceneObject& o = st.objects[i];
-        if (!o.alive) continue;
+        if (!o.alive || o.hidden) continue;
         const bool sel = doc.selection.objects.count(i) > 0;
         Color c = sel ? Color::rgb8(0, 0, 255)
                 : !o.isLight() ? Color::rgb8(40, 40, 40)

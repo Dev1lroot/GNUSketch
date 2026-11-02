@@ -52,7 +52,17 @@ struct AnimEntity {
     Mat4 mount; // this entity's transform in the owner part's coordinates
     int poseA = -1, poseB = -1;
     double poseT = 0;
+    // The occurrences of components around it, outermost first, with their names
+    // (the Name given, or else the component's): a name is looked up there first.
+    std::vector<std::pair<int, std::string>> scope;
+    int occurrence = -1; // of this entity itself: a scope for what is inside it
+    int body = -1;       // physics body
+    std::vector<Mat4> restBases; // per part: base when the simulation started
 };
+// Which entities a name means, seen from one of them: those in the innermost
+// component around it that has any by that name, or else any in the model. A
+// path ("front/door") only counts those inside components so named.
+std::vector<int> resolveEntityName(const std::vector<AnimEntity>& all, int from, const std::string& name);
 
 // Splits every entity of a model into moving parts with their own definitions,
 // and hides the originals. Meant for a throw-away copy of the model: Game Mode.

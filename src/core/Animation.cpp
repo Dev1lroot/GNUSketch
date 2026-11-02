@@ -221,17 +221,34 @@ std::vector<std::vector<Id>> meshIslands(const Mesh& m) {
 
 namespace {
 
+using Scope = std::vector<std::pair<int, std::string>>;
+struct Inner {
+    Id id;
+    Mat4 xf;
+    Scope scope;
+};
+
+std::string scopeName(const ModelState& st, Id inst) {
+    const Instance& I = st.instances[inst];
+    return I.entity.targetname.empty() ? st.defs[I.def].name : I.entity.targetname;
+}
+
 // Geometry of a definition and the plain components inside it, merged, in the
-// coordinates xf maps to; entities inside are listed instead.
-void collectPlain(ModelState& st, Id def, const Mat4& xf, Mesh& out, std::vector<std::pair<Id, Mat4>>& entities, int depth = 0) {
+// coordinates xf maps to; what lives on its own inside is listed instead.
+void collectPlain(ModelState& st, Id def, const Mat4& xf, Mesh& out, std::vector<Inner>& inner, const Scope& scope, int& occ, int depth = 0) {
     if (depth > 32) return;
     appendMesh(out, st.defs[def].mesh, xf);
     for (Id c : childrenOf(st, def)) {
         const Instance& I = st.instances[c];
         if (I.hidden) continue;
         const Mat4 cxf = xf * I.xf;
-        if (I.entity.isEntity()) entities.emplace_back(c, cxf);
-        else collectPlain(st, I.def, cxf, out, entities, depth + 1);
+        if (I.entity.isLive()) {
+            inner.push_back({c, cxf, scope});
+        } else {
+            Scope deeper = scope;
+            deeper.emplace_back(occ++, scopeName(st, c));
+            collectPlain(st, I.def, cxf, out, inner, deeper, occ, depth + 1);
+        }
     }
 }
 
@@ -249,7 +266,8 @@ Id addPrivateInstance(ModelState& st, Mesh&& mesh, const std::string& name, cons
     return (Id)st.instances.size() - 1;
 }
 
-void expandEntity(ModelState& st, std::vector<AnimEntity>& out, Id source, const Mat4& base, int owner, int ownerPart, const Mat4& mount) {
+void expandEntity(ModelState& st, std::vector<AnimEntity>& out, Id source, const Mat4& base, int owner, int ownerPart, const Mat4& mount,
+                  const Scope& scope, int& occ) {
     const Instance src = st.instances[source];
     const ComponentDef def = st.defs[src.def]; // a copy: st.defs grows below
     const int self = (int)out.size();
@@ -261,8 +279,12 @@ void expandEntity(ModelState& st, std::vector<AnimEntity>& out, Id source, const
         e.owner = owner;
         e.ownerPart = ownerPart;
         e.mount = mount;
+        e.scope = scope;
+        e.occurrence = occ++;
         for (const AnimState& s : def.states) e.states.push_back(s.name);
     }
+    Scope own = scope;
+    own.emplace_back(out[self].occurrence, scopeName(st, source));
     for (const std::vector<Id>& island : meshIslands(def.mesh)) {
         AnimPart part;
         part.base = base;
@@ -302,9 +324,14 @@ void expandEntity(ModelState& st, std::vector<AnimEntity>& out, Id source, const
         const Instance child = st.instances[c];
         if (child.hidden) continue;
         Mesh merged;
-        std::vector<std::pair<Id, Mat4>> inner;
-        if (child.entity.isEntity()) inner.emplace_back(c, child.xf);
-        else collectPlain(st, child.def, child.xf, merged, inner);
+        std::vector<Inner> inner;
+        if (child.entity.isLive()) {
+            inner.push_back({c, child.xf, own});
+        } else {
+            Scope deeper = own;
+            deeper.emplace_back(occ++, scopeName(st, c));
+            collectPlain(st, child.def, child.xf, merged, inner, deeper, occ);
+        }
         AnimPart part;
         part.base = base;
         const Mat4 restInv = child.xf.inverted();
@@ -319,7 +346,11 @@ void expandEntity(ModelState& st, std::vector<AnimEntity>& out, Id source, const
         part.def = st.instances[part.instance].def;
         const int partIndex = (int)out[self].parts.size();
         out[self].parts.push_back(std::move(part));
-        for (const auto& [id, xf] : inner) expandEntity(st, out, id, base * xf, self, partIndex, xf);
+        for (const Inner& n : inner) {
+            // With physics of its own it goes its own way from the start.
+            if (st.instances[n.id].entity.physics) expandEntity(st, out, n.id, base * n.xf, -1, -1, Mat4(), n.scope, occ);
+            else expandEntity(st, out, n.id, base * n.xf, self, partIndex, n.xf, n.scope, occ);
+        }
     }
 }
 
@@ -328,25 +359,70 @@ void expandEntity(ModelState& st, std::vector<AnimEntity>& out, Id source, const
 std::vector<AnimEntity> prepareEntities(ModelState& st) {
     closeAllComponents(st);
     std::vector<AnimEntity> out;
+    int occ = 0;
     const Id originalCount = (Id)st.instances.size();
     for (Id i = 0; i < originalCount; ++i) {
         const Instance src = st.instances[i];
         if (!src.alive || src.hidden || src.parent != kNone || src.def < 0 || src.def >= (Id)st.defs.size()) continue;
-        if (src.entity.isEntity()) {
-            expandEntity(st, out, i, src.xf, -1, -1, Mat4());
+        if (src.entity.isLive()) {
+            expandEntity(st, out, i, src.xf, -1, -1, Mat4(), {}, occ);
             st.instances[i].alive = false;
             continue;
         }
         if (childrenOf(st, src.def).empty()) continue; // plain geometry stays as it is
         // Plain with things inside: its plain contents become one static piece.
         Mesh merged;
-        std::vector<std::pair<Id, Mat4>> inner;
-        collectPlain(st, src.def, src.xf, merged, inner);
+        std::vector<Inner> inner;
+        Scope scope;
+        scope.emplace_back(occ++, scopeName(st, i));
+        collectPlain(st, src.def, src.xf, merged, inner, scope, occ);
         addPrivateInstance(st, std::move(merged), st.defs[src.def].name, Mat4(), false);
-        for (const auto& [id, xf] : inner) expandEntity(st, out, id, xf, -1, -1, Mat4());
+        for (const Inner& n : inner) expandEntity(st, out, n.id, n.xf, -1, -1, Mat4(), n.scope, occ);
         st.instances[i].alive = false;
     }
     return out;
+}
+
+std::vector<int> resolveEntityName(const std::vector<AnimEntity>& all, int from, const std::string& name) {
+    std::vector<std::string> path;
+    {
+        size_t start = 0, slash;
+        while ((slash = name.find('/', start)) != std::string::npos) {
+            if (slash > start) path.push_back(name.substr(start, slash - start));
+            start = slash + 1;
+        }
+        path.push_back(name.substr(start));
+    }
+    const std::string last = path.back();
+    path.pop_back();
+    if (last.empty()) return {};
+    // Named ones around it, in order, need not be consecutive.
+    auto pathFits = [&](const AnimEntity& e) {
+        size_t k = 0;
+        for (const auto& [occ, n] : e.scope)
+            if (k < path.size() && n == path[k]) ++k;
+        return k == path.size();
+    };
+    auto inScope = [](const AnimEntity& e, int occ) {
+        for (const auto& [o, n] : e.scope)
+            if (o == occ) return true;
+        return false;
+    };
+    std::vector<int> found;
+    auto search = [&](int occ) {
+        found.clear();
+        for (int i = 0; i < (int)all.size(); ++i)
+            if (all[i].props.targetname == last && pathFits(all[i]) && (occ < 0 || inScope(all[i], occ))) found.push_back(i);
+        return !found.empty();
+    };
+    if (from >= 0 && from < (int)all.size()) {
+        const AnimEntity& f = all[from];
+        if (search(f.occurrence)) return found;
+        for (auto it = f.scope.rbegin(); it != f.scope.rend(); ++it)
+            if (search(it->first)) return found;
+    }
+    search(-1);
+    return found;
 }
 
 void poseMounted(ModelState& st, std::vector<AnimEntity>& all, int i, const std::function<void(int)>& moved) {

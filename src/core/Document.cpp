@@ -159,7 +159,7 @@ void Document::validateSelection() {
         it = (*it < 0 || *it >= (Id)m.edges.size() || !m.edges[*it].alive) ? selection.edges.erase(it) : ++it;
     const auto& insts = state.instances;
     for (auto it = selection.instances.begin(); it != selection.instances.end();)
-        it = (state.editing != kNone || *it < 0 || *it >= (Id)insts.size() || !insts[*it].alive) ? selection.instances.erase(it) : ++it;
+        it = (*it < 0 || *it >= (Id)insts.size() || !insts[*it].alive || insts[*it].parent != state.activeDef()) ? selection.instances.erase(it) : ++it;
     const auto& objs = state.objects;
     for (auto it = selection.objects.begin(); it != selection.objects.end();)
         it = (state.editing != kNone || *it < 0 || *it >= (Id)objs.size() || !objs[*it].alive) ? selection.objects.erase(it) : ++it;

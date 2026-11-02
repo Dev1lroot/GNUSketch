@@ -4,6 +4,8 @@
 #include "Browsers.h"
 #include "MaterialEditor.h"
 #include "SceneTools.h"
+#include "EntityProperties.h"
+#include "core/Animation.h"
 #include "io/AssetLibrary.h"
 #include "render/OffscreenRenderer.h"
 
@@ -266,6 +268,10 @@ void MainWindow::buildActions() {
     act("texreset", "", QStringLiteral("Texture: &Reset Position"), QKeySequence(), [this] { textureFitSelection(false); });
     act("makecomponent", "", QStringLiteral("Make &Component…"), QKeySequence(), [this] { makeComponent(); })
         ->setStatusTip(QStringLiteral("Turn the selected geometry into a component; copies of it share their geometry."));
+    act("recordstate", "", QStringLiteral("&Record Animation State"), QKeySequence(Qt::Key_F5), [this] { promptRecordState(); })
+        ->setStatusTip(QStringLiteral("Save the open component's geometry as a named state; move it and press F5 again for the next state."));
+    act("entityprops", "", QStringLiteral("Propert&ies…"), QKeySequence(), [this] { showEntityProperties(); })
+        ->setStatusTip(QStringLiteral("Make the selected component a door, button or actor, link it and script it."));
     act("saveprefab", "", QStringLiteral("Save as &Prefab…"), QKeySequence(), [this] { saveAsPrefab(); })
         ->setStatusTip(QStringLiteral("Save the selected component as a file in the prefab library, to drop into any model."));
     act("addcamera", "camera_place", QStringLiteral("Add Camera From &View"), QKeySequence(), [this] { addCameraFromView(); })
@@ -524,6 +530,8 @@ void MainWindow::buildMenus() {
     tools->addAction(acts_["traceimage"]);
     tools->addSeparator();
     tools->addAction(toolActions_[ToolId::PlaceCharacter]);
+    tools->addAction(acts_["entityprops"]);
+    tools->addAction(acts_["recordstate"]);
 
     QMenu* effects = menuBar()->addMenu(QStringLiteral("Effe&cts"));
     effects->addAction(acts_["repeateffect"]);
@@ -737,6 +745,7 @@ void MainWindow::onDocChanged() {
     materials_->refresh();
     scene_->refresh();
     if (materialEditor_ && materialEditor_->isVisible()) materialEditor_->refresh();
+    if (entityProps_ && entityProps_->isVisible()) entityProps_->refresh();
     if (materialBrowser_) materialBrowser_->refreshFromModel();
     viewport_->update();
 }
@@ -754,9 +763,10 @@ void MainWindow::onSelectionChanged() {
     acts_["repeateffect"]->setEnabled(effectTargets && lastEffect_);
     const bool geometry = !doc_.selection.faces.empty() || !doc_.selection.edges.empty();
     const bool instances = !doc_.selection.instances.empty();
-    acts_["makecomponent"]->setEnabled(geometry && !doc_.editingComponent());
-    acts_["saveprefab"]->setEnabled((geometry || instances) && !doc_.editingComponent());
+    acts_["makecomponent"]->setEnabled(geometry || instances);
+    acts_["saveprefab"]->setEnabled(geometry || instances);
     acts_["editcomponent"]->setEnabled(doc_.selection.instances.size() == 1);
+    acts_["entityprops"]->setEnabled(doc_.selection.instances.size() == 1 || doc_.editingComponent());
     acts_["closecomponent"]->setEnabled(doc_.editingComponent());
     acts_["explode"]->setEnabled(instances);
     bool shared = false;
@@ -979,12 +989,9 @@ static const QString kClipMime = QStringLiteral("application/x-gnusketch");
 void MainWindow::copySelection(bool cut) {
     if (doc_.selection.empty()) return;
     ModelState clip;
-    for (Id i : doc_.selection.instances) {
-        const Instance& in = doc_.state.instances[i];
-        clip.defs.push_back(doc_.state.defs[in.def]);
-        Instance c = in;
-        c.def = (Id)clip.defs.size() - 1;
-        clip.instances.push_back(c);
+    {
+        std::map<Id, Id> defMap;
+        for (Id i : doc_.selection.instances) copyInstanceInto(clip, doc_.state, i, defMap);
     }
     for (Id o : doc_.selection.objects) clip.objects.push_back(doc_.state.objects[o]);
     clip.mesh = doc_.mesh();
@@ -1118,37 +1125,19 @@ void MainWindow::paste() {
         sel.faces.insert(nf);
     }
     // Components: reuse a definition with the same identity so pasted copies
-    // stay linked to the originals.
-    for (ComponentDef& cd : c.defs)
-        for (Face& f : cd.mesh.faces) {
-            f.front.material = mapMat(f.front.material);
-            f.back.material = mapMat(f.back.material);
-        }
-    for (ComponentDef& cd : c.defs)
-        for (Vertex& v : cd.mesh.vertices) {
-            for (PaintWeight& w : v.paint) w.material = mapMat(w.material);
-            std::erase_if(v.paint, [](const PaintWeight& w) { return w.material == kNone; });
-        }
-    std::vector<Id> defMap(c.defs.size(), kNone);
+    // stay linked to the originals. Materials merge on the way in.
     for (const Instance& in : c.instances) {
-        if (in.def < 0 || in.def >= (Id)c.defs.size()) continue;
-        const ComponentDef& cd = c.defs[in.def];
-        if (doc_.editingComponent()) {
-            // No components inside components: paste the geometry itself.
-            appendMesh(m, cd.mesh, in.xf, nullptr, nullptr, false, &sel);
+        if (in.parent != kNone || in.def < 0 || in.def >= (Id)c.defs.size()) continue;
+        const Id d = importDefinition(doc_, c, in.def);
+        if (d == kNone) continue;
+        if (!canPlaceInActive(doc_.state, d)) {
+            // Into itself: paste its geometry instead.
+            appendMesh(m, c.defs[in.def].mesh, in.xf, nullptr, nullptr, false, &sel);
             continue;
-        }
-        Id& d = defMap[in.def];
-        for (Id j = 0; j < (Id)doc_.state.defs.size() && d == kNone; ++j)
-            if (!cd.uid.empty() && doc_.state.defs[j].uid == cd.uid) d = j;
-        if (d == kNone) {
-            ComponentDef nd = cd;
-            nd.name = uniqueComponentName(doc_.state, cd.name);
-            doc_.state.defs.push_back(std::move(nd));
-            d = (Id)doc_.state.defs.size() - 1;
         }
         Instance ni = in;
         ni.def = d;
+        ni.parent = doc_.state.activeDef();
         ni.alive = true;
         doc_.state.instances.push_back(ni);
         sel.instances.insert((Id)doc_.state.instances.size() - 1);
@@ -1208,8 +1197,8 @@ void MainWindow::selectAll() {
     for (Id e = 0; e < (Id)m.edges.size(); ++e)
         if (m.edges[e].alive && !m.edges[e].hidden) doc_.selection.edges.insert(e);
     const auto& insts = doc_.state.instances;
-    for (Id i = 0; i < (Id)insts.size() && !doc_.editingComponent(); ++i)
-        if (insts[i].alive && !insts[i].hidden) doc_.selection.instances.insert(i);
+    for (Id i = 0; i < (Id)insts.size(); ++i)
+        if (insts[i].alive && !insts[i].hidden && insts[i].parent == doc_.state.activeDef()) doc_.selection.instances.insert(i);
     const auto& objs = doc_.state.objects;
     for (Id i = 0; i < (Id)objs.size() && !doc_.editingComponent() && doc_.style.showObjects; ++i)
         if (objs[i].alive) doc_.selection.objects.insert(i);
@@ -1400,6 +1389,7 @@ void MainWindow::launchGame(const Vec3& feet, double yaw, bool native) {
         game_->deleteLater();
         game_ = nullptr;
     }
+    if (entityProps_) entityProps_->applyScript(); // what is being typed counts
     if (!gameDir_) gameDir_ = std::make_unique<QTemporaryDir>();
     const QString path = gameDir_->filePath(QStringLiteral("game.gsketch"));
     QString error;
@@ -1501,7 +1491,7 @@ void MainWindow::roundCorners() {
 
 void MainWindow::makeComponent() {
     const Selection& s = doc_.selection;
-    if ((s.faces.empty() && s.edges.empty()) || doc_.editingComponent()) return;
+    if (s.faces.empty() && s.edges.empty() && s.instances.empty()) return;
     viewport_->cancelTool();
     bool ok = false;
     QString name = QInputDialog::getText(this, QStringLiteral("Make Component"), QStringLiteral("Name:"), QLineEdit::Normal,
@@ -1526,7 +1516,7 @@ QString MainWindow::savePrefabOf(Id instance, const QString& name) {
     const Id def = doc_.state.instances[instance].def;
     const QImage thumb = OffscreenRenderer::instance().modelThumbnail(extractDefinition(doc_.state, def), 256);
     QString err;
-    const QString path = savePrefab(doc_.state, def, name, thumb, &err);
+    const QString path = savePrefab(doc_.state, def, name, thumb, &err, doc_.state.instances[instance].entity);
     if (path.isEmpty()) {
         statusLabel_->setText(QStringLiteral("Could not save the prefab: %1").arg(err));
         return {};
@@ -1537,7 +1527,6 @@ QString MainWindow::savePrefabOf(Id instance, const QString& name) {
 }
 
 void MainWindow::saveAsPrefab() {
-    if (doc_.editingComponent()) return;
     viewport_->cancelTool();
     Selection s = doc_.selection;
     QString suggested = QStringLiteral("Prefab");
@@ -1581,10 +1570,6 @@ void MainWindow::saveAsPrefab() {
 }
 
 bool MainWindow::startPrefabPlacement(const QString& path) {
-    if (doc_.editingComponent()) {
-        statusLabel_->setText(QStringLiteral("Close the open component first: components cannot hold other components."));
-        return false;
-    }
     ModelState prefab;
     QString err;
     if (!loadPrefab(path, prefab, nullptr, nullptr, &err)) {
@@ -1595,8 +1580,15 @@ bool MainWindow::startPrefabPlacement(const QString& path) {
     viewport_->setTool(ToolId::Move);
     doc_.beginOp("Place Prefab");
     const Id def = importDefinition(doc_, prefab, 0);
+    if (!canPlaceInActive(doc_.state, def)) {
+        doc_.cancelOp();
+        statusLabel_->setText(QStringLiteral("A component cannot go inside itself."));
+        return false;
+    }
     Instance in;
     in.def = def;
+    in.parent = doc_.state.activeDef();
+    if (!prefab.instances.empty()) in.entity = prefab.instances[0].entity;
     doc_.state.instances.push_back(in);
     const Id inst = (Id)doc_.state.instances.size() - 1;
     doc_.selection.clear();
@@ -1618,6 +1610,70 @@ bool MainWindow::startPrefabPlacement(const QString& path) {
     viewport_->setFocus();
     viewport_->update();
     return true;
+}
+
+bool MainWindow::recordState(const QString& name) {
+    if (!doc_.editingComponent() || name.trimmed().isEmpty()) return false;
+    viewport_->cancelTool();
+    doc_.beginOp("Record State");
+    if (!gs::recordState(doc_.state, name.trimmed().toStdString())) {
+        doc_.cancelOp();
+        return false;
+    }
+    doc_.commitOp();
+    const int n = (int)doc_.state.defs[doc_.state.instances[doc_.state.editing].def].states.size();
+    statusLabel_->setText(QStringLiteral("Saved state \"%1\" (%2 in all). Move or rotate the geometry and press F5 for the next one.").arg(name.trimmed()).arg(n));
+    return true;
+}
+
+void MainWindow::promptRecordState() {
+    if (!doc_.editingComponent()) {
+        statusLabel_->setText(QStringLiteral("Open a component first (double-click it), then F5 saves its geometry as a state."));
+        return;
+    }
+    Instance& in = doc_.state.instances[doc_.state.editing];
+    const ComponentDef& def = doc_.state.defs[in.def];
+    const std::string& cls = in.entity.classname;
+    // Names that fit: the first state is where it starts.
+    QStringList suggestions;
+    if (cls == "func_door") suggestions = {QStringLiteral("CLOSED"), QStringLiteral("OPEN")};
+    else if (cls == "func_button") suggestions = {QStringLiteral("IDLE"), QStringLiteral("PRESSED")};
+    QStringList names;
+    for (const AnimState& s : def.states) names << QString::fromStdString(s.name);
+    for (const QString& s : suggestions)
+        if (!names.contains(s)) names.prepend(s);
+    std::stable_sort(names.begin(), names.end(), [&](const QString& a, const QString& b) {
+        return findState(def, a.toStdString()) < findState(def, b.toStdString());
+    });
+    QString suggested = QStringLiteral("STATE%1").arg(def.states.size() + 1);
+    for (const QString& s : suggestions)
+        if (findState(def, s.toStdString()) < 0) {
+            suggested = s;
+            break;
+        }
+    if (!names.contains(suggested)) names.prepend(suggested);
+    bool ok = false;
+    const QString name = QInputDialog::getItem(this, QStringLiteral("Record State"), QStringLiteral("Name of this state:"), names,
+                                               (int)names.indexOf(suggested), true, &ok);
+    if (ok) recordState(name);
+    viewport_->setFocus();
+}
+
+EntityProperties* MainWindow::entityProperties() {
+    if (!entityProps_) {
+        entityProps_ = new EntityProperties(&doc_, viewport_, this);
+        connect(entityProps_, &EntityProperties::recordRequested, this, [this] { promptRecordState(); });
+    }
+    return entityProps_;
+}
+
+void MainWindow::showEntityProperties() {
+    // What is selected in the open component, or else the open component.
+    Id inst = doc_.selection.instances.size() == 1 ? *doc_.selection.instances.begin() : doc_.state.editing;
+    if (inst == kNone) return;
+    entityProperties()->setInstance(inst);
+    entityProps_->show();
+    entityProps_->raise();
 }
 
 void MainWindow::addCameraFromView() {
@@ -1876,6 +1932,7 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
             const ComponentDef& d = doc_.state.defs[doc_.state.instances[*s.instances.begin()].def];
             menu.addSection(QStringLiteral("Component: %1").arg(QString::fromStdString(d.name)));
             menu.addAction(acts_["editcomponent"]);
+            menu.addAction(acts_["entityprops"]);
         }
         menu.addAction(acts_["saveprefab"]);
         menu.addAction(acts_["makeunique"]);
@@ -1893,13 +1950,15 @@ void MainWindow::contextMenu(const QPoint& globalPos, const PickResult& pick) {
         menu.addSeparator();
     }
     if (doc_.editingComponent()) {
+        menu.addAction(acts_["entityprops"]);
+        menu.addAction(acts_["recordstate"]);
         menu.addAction(acts_["closecomponent"]);
         menu.addSeparator();
     }
     if (!s.empty()) {
-        if (geometry && !doc_.editingComponent()) {
+        if (geometry || !s.instances.empty()) {
             menu.addAction(acts_["makecomponent"]);
-            menu.addAction(acts_["saveprefab"]);
+            if (geometry) menu.addAction(acts_["saveprefab"]);
             menu.addSeparator();
         }
         menu.addAction(acts_["delete"]);

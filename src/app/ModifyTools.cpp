@@ -273,10 +273,10 @@ void SelectTool::rectSelect(Qt::KeyboardModifiers mods) {
         if (sel) s.faces.insert(f);
     }
     const ModelState& st = doc().state;
-    for (Id i = 0; i < (Id)st.instances.size() && st.editing == kNone; ++i) {
+    for (Id i = 0; i < (Id)st.instances.size(); ++i) {
         const Instance& I = st.instances[i];
         Vec3 k[8];
-        if (!I.alive || I.hidden || !instanceBoxCorners(st, i, k)) continue;
+        if (!I.alive || I.hidden || I.parent != st.activeDef() || !instanceBoxCorners(st, i, k)) continue;
         QRectF box;
         bool all = true, ok = true;
         for (const Vec3& p : k) {

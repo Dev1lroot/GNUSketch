@@ -4,6 +4,7 @@
 // (other than the moved ones) offer the same snaps as loose geometry.
 #pragma once
 
+#include "core/Components.h"
 #include "core/Document.h"
 #include "render/Camera.h"
 #include "render/Renderer.h"
@@ -66,7 +67,7 @@ public:
     Id pickFace(double px, double py, double* tOut = nullptr, const std::set<Id>* excludeVerts = nullptr) const;
     Id pickEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts = nullptr) const;
     int pickGuide(double px, double py, double tolPx) const;
-    // Closest component instance under the cursor (none while one is open);
+    // Closest component instance at the level being edited under the cursor;
     // normalOut receives the world normal of the face hit (zero for an edge).
     Id pickInstance(double px, double py, double* tOut = nullptr, Vec3* normalOut = nullptr) const;
     // Light or camera whose marker is under the cursor (none while a component is open).
@@ -93,8 +94,8 @@ private:
     };
     bool pickAnyEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts, double tFace, EdgeHit& hit) const;
     // World-space hard edges of the instances that offer snaps (cached).
-    const std::vector<Segment>& instanceEdges(Id inst) const;
-    bool snapsTo(Id inst) const;
+    const std::vector<Segment>& instanceEdges(int index, const PlacedInstance& p) const;
+    bool snapsTo(const PlacedInstance& p) const;
     bool excluded(Id v, const Options& o) const { return o.excludeVerts && o.excludeVerts->count(v); }
     // pickEdge with the nearest face hit distance already known (for occlusion).
     Id pickEdgeT(double px, double py, double tolPx, const std::set<Id>* excludeVerts, double tFace) const;

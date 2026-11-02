@@ -122,6 +122,13 @@ include its output in the bug report.
   **Make Unique** gives the selected copies their own definition, and **Explode**
   turns a component back into loose geometry. Exporters write components as
   ordinary geometry.
+* **Components inside components**: select components (with or without geometry) and
+  Make Component, or open a component and paste, drop a prefab or make a component in it.
+  Double-click goes in a level at a time, Esc comes out one. A click on a closed component
+  takes it whole. A state (F5) also remembers where the components inside are, so a handle
+  goes with its door. Scripted components stay alive wherever they are nested: a door
+  with a handle, inside a frame, saved together, is one prefab that still opens. A
+  component cannot go inside itself.
 * **Prefabs**: right-click a component (or selected geometry) and choose **Save as
   Prefab**. It becomes its own `.gsketch` file in `~/.local/share/GNUSketch/prefabs`
   (with its materials and a picture). **Window → Prefab Browser** lists them with
@@ -139,6 +146,42 @@ include its output in the bug report.
   brightness, range, cone angle and field of view. Double-click a camera to look
   through it. Lights shine on every material, in Game Mode too, and are exported to
   glTF with the cameras. Only the sun casts shadows; these lights do not, yet.
+* **Animation and game logic**, in the manner of Valve Hammer. Right-click a component →
+  **Properties**: choose the class **func_door**, **func_button** or **func_actor**.
+  Double-click the component to open it, press **F5** to save its geometry as a named
+  state (CLOSED, say), move or rotate the geometry, press **F5** again (OPEN). The whole
+  geometry inside is recorded, so a frame can stay while a panel swings; separate pieces
+  move on their own, along true arcs. Properties also lists the states (Go To, Rename,
+  Delete) and picks the one it starts in.
+
+  To link them as in Hammer, give the door a **Name** and list that name in the button's
+  **Targets** tab. A button can have any number of targets, each with its own **delay**
+  in seconds; the **Sources** tab shows who fires an entity, and adds or removes them from
+  that side. A door nothing targets opens by touch or **E**; a door a button targets
+  opens by that button only. In Game Mode, **E** or a click presses what you look at.
+
+  Behaviour is a JavaScript script you can read and change, starting from a preset
+  (Save as Preset keeps yours in `~/.local/share/GNUSketch/scripts`):
+
+  ```js
+  var closed = self.states[0], open = self.states[1];
+  on("trigger", function () {
+      self.tween(open, { duration: 1, easing: "outBounce" }, function () {
+          after(3, function () { self.tween(closed, 1); });
+      });
+  });
+  ```
+
+  `self.tween(state, seconds or {duration, easing, from}, done)`,
+  `self.play([states], {duration, easing, loop}, done)` for keyframes,
+  `self.set(state)`, `self.stop()`, `self.fire(arg)` (all targets, each after its delay),
+  `self.send(event, arg)`;
+  `self.name .classname .targets .target .states .state .moving .linked`; `on("start" | "use" |
+  "touch" | "trigger" | "tick", fn)`; `after(s, fn)`, `every(s, fn)`, `cancel(id)`,
+  `find(name)`, `log(...)`, `game.time`. Easings: linear, inQuad, outQuad, inOutQuad,
+  inCubic, outCubic, inOutCubic, outBack, outBounce, outElastic. Scripts cannot reach
+  files or the network, and one stuck in an endless loop is interrupted after 2 seconds.
+  Errors show in the corner of the game window. Doors collide where they are.
 * **Solid Tools** (Tools → Solid Tools, Solid Tools toolbar, right-click a
   component): boolean operations on closed components ("solids"). Click the
   first solid, then the second:

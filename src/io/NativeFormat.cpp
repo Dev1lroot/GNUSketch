@@ -9,7 +9,10 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 
+#include <algorithm>
+#include <functional>
 #include <map>
+#include <set>
 
 namespace gs {
 
@@ -327,26 +330,97 @@ QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
     }
     root["guides"] = guides;
 
-    // Only definitions that are still placed somewhere, renumbered.
-    std::map<Id, Id> defMap;
-    QJsonArray comps, insts;
-    for (const Instance& in : state.instances) {
-        if (!in.alive || in.def < 0 || in.def >= (Id)state.defs.size()) continue;
-        auto it = defMap.find(in.def);
-        if (it == defMap.end()) {
-            const ComponentDef& d = state.defs[in.def];
-            QJsonObject c = meshToJson(d.mesh);
-            c["name"] = QString::fromStdString(d.name);
-            c["uid"] = QString::fromStdString(d.uid);
-            it = defMap.emplace(in.def, (Id)comps.size()).first;
-            comps.append(c);
+    // Only definitions in use, renumbered, parents first; only their instances.
+    std::map<Id, Id> defMap, instMap;
+    std::vector<Id> defOrder, instOrder;
+    {
+        std::map<Id, std::vector<Id>> kids;
+        for (Id i = 0; i < (Id)state.instances.size(); ++i) {
+            const Instance& in = state.instances[i];
+            if (in.alive && in.parent != kNone && in.def >= 0 && in.def < (Id)state.defs.size()) kids[in.parent].push_back(i);
         }
+        // Reversed post-order: a parent comes before all that is inside it, even a
+        // definition that is also used elsewhere. The first root's stays number 0.
+        std::set<Id> seen;
+        std::function<void(Id)> visit = [&](Id d) {
+            if (!seen.insert(d).second) return;
+            for (auto it = kids[d].rbegin(); it != kids[d].rend(); ++it) visit(state.instances[*it].def);
+            defOrder.push_back(d);
+        };
+        for (Id i = (Id)state.instances.size() - 1; i >= 0; --i) {
+            const Instance& in = state.instances[i];
+            if (in.alive && in.parent == kNone && in.def >= 0 && in.def < (Id)state.defs.size()) visit(in.def);
+        }
+        std::reverse(defOrder.begin(), defOrder.end());
+        for (Id k = 0; k < (Id)defOrder.size(); ++k) defMap[defOrder[k]] = k;
+        for (Id i = 0; i < (Id)state.instances.size(); ++i) {
+            const Instance& in = state.instances[i];
+            if (!in.alive || in.def < 0 || in.def >= (Id)state.defs.size()) continue;
+            if (in.parent != kNone && !defMap.count(in.parent)) continue;
+            instMap[i] = (Id)instOrder.size();
+            instOrder.push_back(i);
+        }
+    }
+    QJsonArray comps, insts;
+    for (Id dd : defOrder) {
+        const ComponentDef& d = state.defs[dd];
+        QJsonObject c = meshToJson(d.mesh);
+        c["name"] = QString::fromStdString(d.name);
+        c["uid"] = QString::fromStdString(d.uid);
+        if (!d.states.empty()) {
+            // Vertex ids as in the file, which holds the mesh compacted.
+            Mesh copy = d.mesh;
+            std::vector<Id> vmap;
+            copy.compact(&vmap);
+            QJsonArray states;
+            for (const AnimState& as : d.states) {
+                QJsonArray vs, ps, kidStates;
+                for (size_t k = 0; k < as.verts.size(); ++k) {
+                    const Id v = as.verts[k];
+                    if (v < 0 || v >= (Id)vmap.size() || vmap[v] == kNone) continue;
+                    vs.append(vmap[v]);
+                    ps.append(as.pos[k].x);
+                    ps.append(as.pos[k].y);
+                    ps.append(as.pos[k].z);
+                }
+                for (const auto& [id, xf] : as.children) {
+                    auto it = instMap.find(id);
+                    if (it == instMap.end()) continue;
+                    QJsonArray t;
+                    for (double v : xf.m) t.append(v);
+                    kidStates.append(QJsonObject{{"instance", it->second}, {"transform", t}});
+                }
+                QJsonObject so;
+                so["name"] = QString::fromStdString(as.name);
+                so["vertices"] = vs;
+                so["positions"] = ps;
+                if (!kidStates.isEmpty()) so["children"] = kidStates;
+                states.append(so);
+            }
+            c["states"] = states;
+        }
+        comps.append(c);
+    }
+    for (Id i : instOrder) {
+        const Instance& in = state.instances[i];
         QJsonObject o;
-        o["component"] = it->second;
+        o["component"] = defMap[in.def];
+        if (in.parent != kNone) o["parent"] = defMap[in.parent];
         QJsonArray xf;
         for (double v : in.xf.m) xf.append(v);
         o["transform"] = xf;
         if (in.hidden) o["hidden"] = true;
+        if (in.entity.isEntity() || !in.entity.targetname.empty()) {
+            QJsonObject e;
+            e["classname"] = QString::fromStdString(in.entity.classname);
+            e["targetname"] = QString::fromStdString(in.entity.targetname);
+            QJsonArray targets;
+            for (const EntityTarget& t : in.entity.targets) targets.append(QJsonObject{{"name", QString::fromStdString(t.name)}, {"delay", t.delay}});
+            if (!targets.isEmpty()) e["targets"] = targets;
+            e["startState"] = QString::fromStdString(in.entity.startState);
+            e["script"] = QString::fromStdString(in.entity.script);
+            o["entity"] = e;
+        }
         insts.append(o);
     }
     if (!comps.isEmpty()) {
@@ -406,19 +480,68 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
             if (fc.front.material >= (Id)st.materials.size()) fc.front.material = kNone;
             if (fc.back.material >= (Id)st.materials.size()) fc.back.material = kNone;
         }
+        for (const auto& sj : o["states"].toArray()) {
+            const QJsonObject so = sj.toObject();
+            AnimState as;
+            as.name = so["name"].toString().toStdString();
+            const QJsonArray vs = so["vertices"].toArray(), ps = so["positions"].toArray();
+            if (ps.size() != vs.size() * 3) continue;
+            for (int k = 0; k < vs.size(); ++k) {
+                const Id v = vs[k].toInt(kNone);
+                if (v < 0 || v >= (Id)d.mesh.vertices.size()) continue;
+                as.verts.push_back(v);
+                as.pos.emplace_back(ps[k * 3].toDouble(), ps[k * 3 + 1].toDouble(), ps[k * 3 + 2].toDouble());
+            }
+            for (const auto& kj : so["children"].toArray()) {
+                const QJsonObject ko = kj.toObject();
+                const QJsonArray t = ko["transform"].toArray();
+                if (t.size() != 16) continue;
+                Mat4 xf;
+                for (int k = 0; k < 16; ++k) xf.m[k] = t[k].toDouble();
+                as.children.emplace_back(ko["instance"].toInt(kNone), xf);
+            }
+            d.states.push_back(std::move(as));
+        }
         st.defs.push_back(std::move(d));
     }
+    std::map<int, Id> fileInstance; // instance number in the file -> id here
+    int fileIndex = -1;
     for (const auto& ij : root["instances"].toArray()) {
+        ++fileIndex;
         QJsonObject o = ij.toObject();
         Instance in;
         in.def = o["component"].toInt(kNone);
         if (in.def < 0 || in.def >= (Id)st.defs.size()) continue;
+        in.parent = o.value("parent").toInt(kNone);
+        // Parents come before what is inside them: a file cannot make a
+        // component contain itself.
+        if (in.parent != kNone && (in.parent < 0 || in.parent >= in.def)) continue;
         QJsonArray xf = o["transform"].toArray();
         if (xf.size() == 16)
             for (int i = 0; i < 16; ++i) in.xf.m[i] = xf[i].toDouble();
         in.hidden = o["hidden"].toBool();
+        if (o.contains("entity")) {
+            const QJsonObject e = o["entity"].toObject();
+            in.entity.classname = e["classname"].toString().toStdString();
+            in.entity.targetname = e["targetname"].toString().toStdString();
+            for (const auto& tj : e["targets"].toArray()) {
+                const QJsonObject to = tj.toObject();
+                in.entity.targets.push_back({to["name"].toString().toStdString(), std::max(0.0, to["delay"].toDouble())});
+            }
+            // Files from before there could be several.
+            if (!e["target"].toString().isEmpty()) in.entity.targets.push_back({e["target"].toString().toStdString(), 0});
+            in.entity.startState = e["startState"].toString().toStdString();
+            in.entity.script = e["script"].toString().toStdString();
+        }
         st.instances.push_back(in);
+        fileInstance[fileIndex] = (Id)st.instances.size() - 1;
     }
+    for (ComponentDef& d : st.defs)
+        for (AnimState& as : d.states)
+            for (auto& [id, xf] : as.children) {
+                auto it = fileInstance.find(id);
+                id = it == fileInstance.end() ? kNone : it->second;
+            }
     for (const auto& gj : root["guides"].toArray()) {
         QJsonObject o = gj.toObject();
         Guide g;

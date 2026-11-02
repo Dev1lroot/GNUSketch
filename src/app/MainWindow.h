@@ -32,6 +32,7 @@ class InstructorPanel;
 class TerrainPanel;
 class SunPanel;
 class ScenePanel;
+class EntityProperties;
 class MaterialEditor;
 class MaterialBrowser;
 class PrefabBrowser;
@@ -49,6 +50,9 @@ public:
     QString savePrefabOf(Id instance, const QString& name);
     // Attaches a prefab to the cursor; the next click places it.
     bool startPrefabPlacement(const QString& path);
+    // Records the open component's geometry as a state. False if none is open.
+    bool recordState(const QString& name);
+    EntityProperties* entityProperties();
     MaterialBrowser* materialBrowser();
     PrefabBrowser* prefabBrowser();
     MaterialEditor* materialEditor();
@@ -95,6 +99,8 @@ private:
     void roundCorners();
     void makeComponent();
     void saveAsPrefab();
+    void promptRecordState();
+    void showEntityProperties();
     void addCameraFromView();
     void makeUnique();
     void explode();
@@ -117,6 +123,7 @@ private:
     TerrainPanel* terrain_ = nullptr;
     SunPanel* sun_ = nullptr;
     ScenePanel* scene_ = nullptr;
+    EntityProperties* entityProps_ = nullptr;
     MaterialEditor* materialEditor_ = nullptr;
     MaterialBrowser* materialBrowser_ = nullptr;
     PrefabBrowser* prefabBrowser_ = nullptr;

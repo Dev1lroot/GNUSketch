@@ -2,6 +2,8 @@
 #include "SelfTest.h"
 
 #include "Browsers.h"
+#include "EntityProperties.h"
+#include "core/Animation.h"
 #include "GameMode.h"
 #include "MaterialEditor.h"
 #include "Panels.h"
@@ -2103,7 +2105,7 @@ int runSelfTest(MainWindow& w) {
                 // Not while a component is open.
                 doc.openComponent(0);
                 dropOn(md.get(), dropAt);
-                d.check(doc.state.instances.size() == 2 && doc.editingComponent(), "nothing is placed inside an open component");
+                d.check(doc.state.instances.size() == 2 && doc.editingComponent(), "a component cannot go inside itself");
                 doc.closeComponent();
             }
         }
@@ -2264,6 +2266,315 @@ int runSelfTest(MainWindow& w) {
             ed->close();
         }
         d.check(OffscreenRenderer::instance().materialBall(doc.state.materials[0], 32).width() == 32, "the offscreen renderer still works");
+        qunsetenv("GNUSKETCH_DATA_DIR");
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+    }
+
+    // --- Animation: states with F5, Properties, and playing in Game Mode.
+    {
+        QTemporaryDir data;
+        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+        vp->camera() = Camera();
+        vp->camera().setViewport(vp->width(), vp->height());
+        Mesh& m = d.mesh();
+        m.viewHint = Vec3(0, 0, 10);
+        m.groundFacesDown = false;
+        // A floor, and a door and a button as components.
+        doc.beginOp("Scene");
+        m.drawPolyline({{-10, -10, 0}, {10, -10, 0}, {10, 10, 0}, {-10, 10, 0}}, true);
+        std::set<Id> floorFaces;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) floorFaces.insert(f);
+        auto makeBox = [&](const std::vector<Vec3>& loop, const char* name) {
+            std::set<Id> before;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) before.insert(f);
+            d.mesh().drawPolyline(loop, true);
+            Selection sel;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && !before.count(f)) sel.faces.insert(f);
+            return makeComponent(doc.state, sel, name);
+        };
+        const Id door = makeBox({{3, -1, 0.01}, {3, 1, 0.01}, {3, 1, 2.2}, {3, -1, 2.2}}, "Door");
+        const Id button = makeBox({{1, 2, 1}, {1.2, 2, 1}, {1.2, 2, 1.2}, {1, 2, 1.2}}, "Button");
+        doc.commitOp();
+
+        d.check(!w.recordState(QStringLiteral("CLOSED")), "F5 needs an open component");
+        EntityProperties* props = w.entityProperties();
+        props->setInstance(door);
+        props->show();
+        d.pump();
+        props->setClass(QStringLiteral("func_door"));
+        d.check(doc.state.instances[door].entity.classname == "func_door" && !doc.state.instances[door].entity.script.empty(), "choosing a class gives it a script");
+        d.check(props->scriptEdit()->toPlainText().contains(QStringLiteral("self.tween")), "shown in the Properties window");
+
+        // Door: closed, then slid up.
+        doc.openComponent(door);
+        d.check(w.recordState(QStringLiteral("CLOSED")), "F5 records the first state");
+        {
+            Mesh& open = doc.mesh();
+            std::set<Id> all;
+            for (Id v = 0; v < (Id)open.vertices.size(); ++v)
+                if (open.vertices[v].alive) all.insert(v);
+            open.transformVertices(all, Mat4::translation(Vec3(0, 0, 2.3)), false);
+            open.touch();
+        }
+        d.check(w.recordState(QStringLiteral("OPEN")), "and the second");
+        const Id doorDef = doc.state.instances[door].def;
+        d.check(doc.state.defs[doorDef].states.size() == 2, "the door has two states");
+        doc.undo();
+        d.check(doc.state.defs[doorDef].states.size() == 1, "recording undoes");
+        doc.redo();
+        applyState(doc.state, doorDef, "CLOSED");
+        doc.closeComponent();
+        d.check(!doc.editingComponent(), "the component closes");
+
+        // Button.
+        props->setInstance(button);
+        props->setClass(QStringLiteral("func_button"));
+        d.check(doc.state.instances[button].entity.script.find("self.fire") != std::string::npos, "a button's script fires its target");
+        props->choosePreset(QStringLiteral("Button: latching switch"));
+        d.check(doc.state.instances[button].entity.script.find("pressed = !pressed") != std::string::npos, "a preset replaces the script");
+        props->choosePreset(QStringLiteral("Button: press and return"));
+        doc.openComponent(button);
+        w.recordState(QStringLiteral("IDLE"));
+        {
+            Mesh& open = doc.mesh();
+            std::set<Id> all;
+            for (Id v = 0; v < (Id)open.vertices.size(); ++v)
+                if (open.vertices[v].alive) all.insert(v);
+            open.transformVertices(all, Mat4::translation(Vec3(0, 0.04, 0)), false);
+            open.touch();
+        }
+        w.recordState(QStringLiteral("PRESSED"));
+        applyState(doc.state, doc.state.instances[button].def, "IDLE");
+        doc.closeComponent();
+        doc.beginOp("Link");
+        doc.state.instances[door].entity.targetname = "door1";
+        doc.state.instances[button].entity.targets = {{"door1", 0}};
+        doc.commitOp();
+        props->refresh();
+        d.pump();
+        props->close();
+
+        // --- Tabs of the Properties window: one button, several targets with delays.
+        {
+            props->setInstance(button);
+            props->show();
+            d.pump();
+            props->addTarget("door1", 0);
+            d.check(doc.state.instances[button].entity.targets.size() == 2 && props->targetRows() == 2, "Targets lists what a button fires");
+            props->setTarget(1, "door1", 2.5);
+            d.check(doc.state.instances[button].entity.targets[1].delay == 2.5, "a target has its delay");
+            doc.undo();
+            d.check(doc.state.instances[button].entity.targets[1].delay == 0, "and undoes");
+            props->removeTarget(1);
+            d.check(doc.state.instances[button].entity.targets.size() == 1 && props->targetRows() == 1, "a target can be removed");
+            props->setInstance(door);
+            d.pump();
+            d.check(props->sources() == std::vector<Id>{button} && props->sourceRows() == 1, "Sources shows who fires the door");
+            props->removeSource(button);
+            d.check(doc.state.instances[button].entity.targets.empty() && props->sourceRows() == 0, "removing a source stops it firing");
+            props->addSource(button);
+            d.check(doc.state.instances[button].entity.targets.size() == 1 && doc.state.instances[button].entity.targets[0].name == "door1", "adding one makes it fire this name");
+            props->close();
+        }
+
+        // Edited scripts are kept and checked.
+        props->setInstance(door);
+        props->scriptEdit()->setPlainText(QStringLiteral("var x = ;"));
+        props->applyScript();
+        d.check(doc.state.instances[door].entity.script == "var x = ;", "typed scripts are applied");
+        doc.undo();
+        d.check(doc.state.instances[door].entity.script != "var x = ;", "and undo");
+        props->refresh();
+
+        const QString path = QDir(data.path()).filePath(QStringLiteral("anim.gsketch"));
+        QString err;
+        d.check(saveNative(doc, path, {}, &err), "the model with its entities saves");
+
+        GameWindow game;
+        d.check(game.load(path, Vec3(1.1, 1.0, 0.01), kPi / 2, &err), "Game Mode loads it");
+        game.show();
+        d.pump();
+        d.check(game.entities() && game.entities()->count() == 2, "with two entities");
+        if (game.entities() && game.entities()->count() == 2) {
+            EntityWorld* ents = game.entities();
+            d.check(ents->errors().isEmpty(), "their scripts start without errors");
+            if (!ents->errors().isEmpty()) std::printf("%s\n", qPrintable(ents->errors().join('\n')));
+            const int gameDoor = ents->entity(0).props.classname == "func_door" ? 0 : 1;
+            const int gameButton = 1 - gameDoor;
+            d.check(ents->linked(gameDoor) && !ents->usable(gameDoor) && ents->usable(gameButton), "the door is linked, only the button can be pressed");
+            auto keys = [&](QEvent::Type t, int k, const QString& text = {}) {
+                QKeyEvent e(t, k, Qt::NoModifier, text);
+                QApplication::sendEvent(&game, &e);
+            };
+            game.simulate(0.3);
+            // A closed door stops the walker.
+            game.walker().setYaw(0);
+            game.walker().spawn(Vec3(2.2, 0, 0.01));
+            keys(QEvent::KeyPress, Qt::Key_W, QStringLiteral("w"));
+            game.simulate(1.0);
+            keys(QEvent::KeyRelease, Qt::Key_W, QStringLiteral("w"));
+            const double blockedX = game.walker().feet().x;
+            d.check(blockedX < 3.0 && blockedX > 2.5, "the closed door blocks the way");
+            // Touching did not open it: it is linked.
+            game.simulate(0.5);
+            Vec3 mn, mx;
+            CollisionWorld& world = const_cast<CollisionWorld&>(game.world());
+            world.bodyBounds(ents->entity(gameDoor).parts[0].body, mn, mx);
+            d.check(mn.z < 0.1, "walking into a linked door does not open it");
+            // Look at the button and press E.
+            game.walker().spawn(Vec3(1.1, 1.0, 0.01));
+            game.walker().setYaw(kPi / 2);
+            game.walker().look(0, -0.25);
+            game.simulate(0.05);
+            int aim = -1;
+            for (double pitch = 0; pitch < 0.6 && aim != gameButton; pitch += 0.02) {
+                game.walker().look(0, -0.02);
+                aim = game.aimedEntity();
+            }
+            d.check(aim == gameButton, "the character can aim at the button");
+            // E itself: in this process the editor's Eraser shortcut would take the
+            // key before the game window; the real game is a process of its own.
+            struct KeyPeek : GameWindow {
+                using GameWindow::keyPressEvent;
+            };
+            {
+                QKeyEvent e(QEvent::KeyPress, Qt::Key_E, Qt::NoModifier, QStringLiteral("e"));
+                (game.*(&KeyPeek::keyPressEvent))(&e);
+            }
+            game.simulate(0.2);
+            game.simulate(1.2);
+            world.bodyBounds(ents->entity(gameDoor).parts[0].body, mn, mx);
+            d.check(mn.z > 2.0, "E on the button opens the door");
+            // Now the way is free.
+            game.walker().setYaw(0);
+            game.walker().spawn(Vec3(2.2, 0, 0.01));
+            keys(QEvent::KeyPress, Qt::Key_W, QStringLiteral("w"));
+            game.simulate(0.9);
+            keys(QEvent::KeyRelease, Qt::Key_W, QStringLiteral("w"));
+            d.check(game.walker().feet().x > 3.2, "the character walks through the open door");
+            QImage frame = game.grabFramebuffer();
+            d.check(!frame.isNull(), "the moved door renders");
+            d.check(ents->errors().isEmpty(), "no script errors while playing");
+            if (!ents->errors().isEmpty()) std::printf("%s\n", qPrintable(ents->errors().join('\n')));
+        }
+        game.close();
+        qunsetenv("GNUSKETCH_DATA_DIR");
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+    }
+
+    // --- Components inside components, in the real UI.
+    {
+        QTemporaryDir data;
+        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        doc.reset();
+        doc.style = RenderStyle();
+        doc.style.showAxes = false;
+        vp->setTool(ToolId::Select);
+        vp->camera() = Camera();
+        vp->camera().eye = Vec3(0, -12, 6);
+        vp->camera().target = Vec3(0, 0, 0);
+        vp->camera().setViewport(vp->width(), vp->height());
+        Mesh& m = d.mesh();
+        m.viewHint = Vec3(0, -10, 10);
+        m.groundFacesDown = false;
+        auto makeBox = [&](const Vec3& o, double w, const char* name) {
+            std::set<Id> before;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) before.insert(f);
+            d.mesh().drawPolyline({o, o + Vec3(w, 0, 0), o + Vec3(w, w, 0), o + Vec3(0, w, 0)}, true);
+            Selection sel;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && !before.count(f)) sel.faces.insert(f);
+            return makeComponent(doc.state, sel, name);
+        };
+        doc.beginOp("Boxes");
+        const Id a = makeBox(Vec3(-2, 0, 0), 1, "A");
+        const Id b = makeBox(Vec3(2, 0, 0), 1, "B");
+        doc.commitOp();
+        d.pump();
+        doc.selection.instances = {a, b};
+        doc.notifySelection();
+        doc.beginOp("Make Component");
+        const Id whole = makeComponent(doc.state, doc.selection, "Whole");
+        doc.selection.clear();
+        doc.selection.instances.insert(whole);
+        doc.commitOp();
+        doc.notifySelection();
+        const QImage closedFrame = vp->grabFramebuffer();
+        d.check(!closedFrame.isNull(), "a component of components renders");
+        // A click on what is inside picks the outer one while it is closed.
+        doc.selection.clear();
+        d.click(d.screen(Vec3(-1.5, 0.5, 0)));
+        d.check(doc.selection.instances == std::set<Id>{whole}, "a click on a part selects the component it is in");
+        // Double-click opens one level, then the next.
+        const QPointF inner = d.screen(Vec3(-1.5, 0.5, 0));
+        d.send(QEvent::MouseButtonDblClick, inner, Qt::LeftButton, Qt::LeftButton);
+        d.send(QEvent::MouseButtonRelease, inner, Qt::LeftButton, Qt::NoButton);
+        d.pump();
+        d.check(doc.state.editing == whole, "double-click opens the outer component");
+        QApplication::processEvents();
+        QThread::msleep(QApplication::doubleClickInterval() + 30);
+        doc.selection.clear();
+        d.click(inner);
+        d.check(doc.selection.instances == std::set<Id>{a}, "inside it, a click selects a part");
+        // Moving the part inside with the real tool.
+        vp->setTool(ToolId::Move);
+        Vec3 mnBefore, mxBefore, mn2, mx2;
+        instanceBounds(doc.state, a, mnBefore, mxBefore);
+        d.click(inner);
+        d.click(inner + QPointF(40, 0));
+        d.pump();
+        instanceBounds(doc.state, a, mn2, mx2);
+        d.check((mn2 - mnBefore).length() > 0.05, "the Move tool moves a part inside");
+        doc.undo();
+        vp->setTool(ToolId::Select);
+        d.check(doc.state.editing == whole, "undo keeps it open");
+        QThread::msleep(QApplication::doubleClickInterval() + 30);
+        d.send(QEvent::MouseButtonDblClick, inner, Qt::LeftButton, Qt::LeftButton);
+        d.send(QEvent::MouseButtonRelease, inner, Qt::LeftButton, Qt::NoButton);
+        d.pump();
+        d.check(doc.state.editing == a && doc.state.outerOpen == std::vector<Id>{whole}, "double-click opens the part inside");
+        d.check(!vp->grabFramebuffer().isNull(), "two levels open render");
+        QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        vp->setFocus();
+        QApplication::sendEvent(vp, &esc);
+        d.check(doc.state.editing == whole, "Esc closes one level");
+        QKeyEvent esc2(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(vp, &esc2);
+        d.check(doc.state.editing == kNone, "and the next");
+        // A prefab dropped into an open component goes inside it.
+        const QString path = w.savePrefabOf(whole, QStringLiteral("Whole"));
+        d.check(!path.isEmpty(), "the nested component saves as one prefab");
+        doc.reset();
+        vp->camera() = Camera();
+        vp->camera().eye = Vec3(0, -12, 6);
+        vp->camera().target = Vec3(0, 0, 0);
+        ModelState pre;
+        d.check(loadPrefab(path, pre), "and loads");
+        const Id placed = vp->placePrefab(pre, Vec3(0, 0, 0));
+        d.check(placed != kNone && doc.state.defs.size() == 3 && doc.state.instances.size() == 3, "placed, it brings what is inside");
+        doc.beginOp("Room");
+        const Id room = makeBox(Vec3(-8, -8, 0), 1, "Room");
+        doc.commitOp();
+        doc.openComponent(room);
+        const Id nested = vp->placePrefab(pre, Vec3(-7.5, -7.5, 0));
+        d.check(nested != kNone && doc.state.instances[nested].parent == doc.state.instances[room].def, "a prefab placed in an open component goes inside it");
+        doc.closeComponent();
+        Vec3 mn, mx;
+        instanceBounds(doc.state, room, mn, mx);
+        d.check(mn.x < -9.9 && mx.x > -5.1, "the outer component's box includes it");
+        ModelState saved;
+        d.check(modelFromJson(modelToJson(doc.state), saved) && saved.defs.size() == 4 && saved.instances.size() == 5, "all of it saves");
         qunsetenv("GNUSKETCH_DATA_DIR");
         doc.reset();
         doc.style = RenderStyle();

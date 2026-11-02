@@ -22,12 +22,41 @@ struct Guide {
 
 struct Selection {
     std::set<Id> faces, edges; // in the active mesh
-    std::set<Id> instances;    // component instances (top level only)
+    std::set<Id> instances;    // component instances, at the level being edited
     std::set<Id> objects;      // lights and cameras in the world
     bool empty() const { return faces.empty() && edges.empty() && instances.empty() && objects.empty(); }
     size_t count() const { return faces.size() + edges.size() + instances.size() + objects.size(); }
     void clear() { faces.clear(); edges.clear(); instances.clear(); objects.clear(); }
     bool operator==(const Selection&) const = default;
+};
+
+// A saved pose of a component's geometry (F5 while it is open): where each
+// vertex is, in the definition's own coordinates.
+struct AnimState {
+    std::string name;
+    std::vector<Id> verts;
+    std::vector<Vec3> pos;
+    // Where the components inside it are: (instance, transform in the definition).
+    std::vector<std::pair<Id, Mat4>> children;
+};
+
+// One thing an entity fires, some time after it was fired.
+struct EntityTarget {
+    std::string name;
+    double delay = 0; // seconds
+    bool operator==(const EntityTarget&) const = default;
+};
+
+// What makes an instance a live thing in Game Mode, in the manner of Valve
+// Hammer entities: a class, a name others can target, a target of its own.
+struct EntityProps {
+    std::string classname;  // func_door, func_button, func_actor; empty = plain geometry
+    std::string targetname; // what buttons refer to
+    std::vector<EntityTarget> targets; // which entities fire() triggers, and when
+    std::string startState; // empty = the first state
+    std::string script;     // JavaScript; see core/Animation.h and io/EntityScript.h
+    bool isEntity() const { return !classname.empty(); }
+    bool operator==(const EntityProps&) const = default;
 };
 
 // A component definition: geometry shared by all of its instances, in the
@@ -36,6 +65,7 @@ struct ComponentDef {
     std::string name;
     std::string uid; // stable identity (lets pasted copies stay linked)
     Mesh mesh;
+    std::vector<AnimState> states;
 };
 
 // One placement of a component definition.
@@ -44,6 +74,9 @@ struct Instance {
     Mat4 xf; // definition -> world
     bool alive = true;
     bool hidden = false;
+    EntityProps entity;
+    Id parent = kNone;    // the definition this one is inside; kNone = the model itself
+    bool dynamic = false; // Game Mode: collides as a moving body, not as static geometry
 };
 
 // A light source or camera placed in the world.
@@ -76,9 +109,13 @@ struct ModelState {
     std::vector<Instance> instances;
     std::vector<SceneObject> objects;
     // Instance open for editing (kNone = top level). While open, its
-    // definition mesh holds world coordinates (the instance transform is
-    // baked in) so every tool edits it in place; see Components.h.
+    // definition mesh and the transforms of the components inside it hold world
+    // coordinates (the instance transform is baked in) so every tool edits it
+    // in place; see Components.h.
     Id editing = kNone;
+    std::vector<Id> outerOpen; // the ones open around it, outermost first
+
+    Id activeDef() const { return editing == kNone ? kNone : instances[editing].def; }
 
     Mesh& activeMesh() { return editing == kNone ? mesh : defs[instances[editing].def].mesh; }
     const Mesh& activeMesh() const { return editing == kNone ? mesh : defs[instances[editing].def].mesh; }

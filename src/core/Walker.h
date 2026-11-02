@@ -28,9 +28,23 @@ public:
     };
     const std::vector<Tri>& triangles() const { return tris_; }
     double floorZ() const { return floorZ_; }
+    // A separate set of triangles that can move (doors, buttons...). Returns its id.
+    int addBody(const Mesh& m, const Mat4& xf);
+    void setBodyTransform(int body, const Mat4& xf);
+    // After a mesh deformed, not just moved.
+    void setBodyMesh(int body, const Mesh& m, const Mat4& xf);
+    int bodyCount() const { return (int)bodies_.size(); }
+    const std::vector<Tri>& bodyTriangles(int body) const { return bodies_[body].world; }
+    void bodyBounds(int body, Vec3& mn, Vec3& mx) const { mn = bodies_[body].mn; mx = bodies_[body].mx; }
+    // Nearest hit along the ray within maxDist; body = -1 for static geometry.
+    bool raycast(const Vec3& origin, const Vec3& dir, double maxDist, double& t, int& body) const;
+
     // Calls fn(tri) for the triangles whose bounds may touch the box.
     template <typename Fn>
     void forEachNear(const Vec3& mn, const Vec3& mx, Fn fn) const {
+        for (const Body& b : bodies_)
+            if (b.mn.x <= mx.x && b.mx.x >= mn.x && b.mn.y <= mx.y && b.mx.y >= mn.y && b.mn.z <= mx.z && b.mx.z >= mn.z)
+                for (const Tri& t : b.world) fn(t);
         if (tris_.empty()) return;
         ++stampNow_;
         int x0, y0, x1, y1;
@@ -45,9 +59,14 @@ public:
     }
 
 private:
+    struct Body {
+        std::vector<Tri> local, world;
+        Vec3 mn, mx;
+    };
     void cellRange(const Vec3& mn, const Vec3& mx, int& x0, int& y0, int& x1, int& y1) const;
 
     std::vector<Tri> tris_;
+    std::vector<Body> bodies_;
     std::vector<std::vector<int>> cells_;
     mutable std::vector<unsigned> stamp_;
     mutable unsigned stampNow_ = 0;
@@ -95,6 +114,8 @@ public:
     Vec3 lookDirection() const;
     // True if a capsule at these feet would overlap the model.
     bool overlaps(const Vec3& feet) const;
+    // The capsule comes within margin of a moving body.
+    bool touches(int body, double margin) const;
 
 private:
     struct Contact {

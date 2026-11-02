@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Headless tests for the geometry kernel.
+#include "core/Animation.h"
 #include "core/Components.h"
 #include "core/Document.h"
 #include "core/Effects.h"
@@ -2544,6 +2545,359 @@ int main() {
         CHECK(importDefinition(other, variant, 0) == 1);
         CHECK(other.state.materials.size() == 2);
         CHECK(importDefinition(other, pre, 5) == kNone);
+    });
+
+    test("animation: rigid fit and screw motion", [&] {
+        // A door 1 m wide hinged on the Z axis through (2, 3): a quarter turn.
+        const std::vector<Vec3> rest = {{2, 3, 0}, {3, 3, 0}, {3, 3, 2}, {2, 3, 2}};
+        std::vector<Vec3> open = {{2, 3, 0}, {2, 4, 0}, {2, 4, 2}, {2, 3, 2}};
+        double residual = 1;
+        const Mat4 fit = fitRigid(rest, open, &residual);
+        CHECK(residual < 1e-9);
+        for (size_t i = 0; i < rest.size(); ++i) CHECK(fit.transformPoint(rest[i]).nearlyEquals(open[i], 1e-9));
+        // Half way the free edge is on the arc, not on the straight line between.
+        const Mat4 half = interpolateRigid(Mat4(), fit, 0.5);
+        const Vec3 edge = half.transformPoint(Vec3(3, 3, 1));
+        CHECK(near((edge - Vec3(2, 3, 1)).length(), 1.0, 1e-9));
+        CHECK(edge.nearlyEquals(Vec3(2 + std::sqrt(0.5), 3 + std::sqrt(0.5), 1), 1e-9));
+        CHECK(half.transformPoint(Vec3(2, 3, 1)).nearlyEquals(Vec3(2, 3, 1), 1e-9)); // the hinge stays put
+        CHECK(interpolateRigid(Mat4(), fit, 0).isIdentity());
+        CHECK(interpolateRigid(Mat4(), fit, 1).transformPoint(rest[1]).nearlyEquals(open[1], 1e-9));
+        // Between two non-identity poses.
+        const Mat4 from = Mat4::translation(Vec3(5, 0, 0));
+        CHECK(interpolateRigid(from, Mat4::translation(Vec3(5, 0, 4)), 0.25).transformPoint(Vec3()).nearlyEquals(Vec3(5, 0, 1), 1e-9));
+        // A half turn is handled, and a turn plus a slide.
+        const Mat4 turn = Mat4::translation(Vec3(1, 0, 3)) * Mat4::rotation(Vec3(0, 0, 1), kPi);
+        const Mat4 end = interpolateRigid(Mat4(), turn, 1);
+        CHECK(end.transformPoint(Vec3(2, 5, 1)).nearlyEquals(turn.transformPoint(Vec3(2, 5, 1)), 1e-6));
+        const Vec3 mid = interpolateRigid(Mat4(), turn, 0.5).transformPoint(Vec3(0.5, 0, 0));
+        CHECK(near(mid.z, 1.5, 1e-6)); // half the slide
+        // A scaled shape is no rigid motion.
+        std::vector<Vec3> big;
+        for (const Vec3& p : rest) big.push_back(p * 2.0);
+        fitRigid(rest, big, &residual);
+        CHECK(residual > 0.1);
+        // Mirror-free fit of a flat, three-point set still works.
+        const std::vector<Vec3> tri = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+        const Mat4 q = Mat4::rotation(Vec3(1, 0, 0), 0.7);
+        std::vector<Vec3> tri2;
+        for (const Vec3& p : tri) tri2.push_back(q.transformPoint(p));
+        fitRigid(tri, tri2, &residual);
+        CHECK(residual < 1e-9);
+    });
+
+    test("animation: states of a component", [&] {
+        Document d;
+        Mesh& m = d.mesh();
+        m.drawPolyline({{1, 1, 0}, {2, 1, 0}, {2, 2, 0}, {1, 2, 0}}, true);
+        Selection s;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) s.faces.insert(f);
+        const Id inst = makeComponent(d.state, s, "Door");
+        ModelState& st = d.state;
+        const Id def = st.instances[inst].def;
+        CHECK(!recordState(st, "CLOSED")); // nothing open
+        d.state.instances[inst].xf = Mat4::translation(Vec3(10, 0, 0)) * d.state.instances[inst].xf;
+        d.openComponent(inst);
+        CHECK(recordState(st, "CLOSED"));
+        CHECK(st.defs[def].states.size() == 1);
+        // States are in the definition's own coordinates, not the world's.
+        Vec3 mn(1e9, 1e9, 1e9);
+        for (const Vec3& p : st.defs[def].states[0].pos) mn = Vec3(std::min(mn.x, p.x), std::min(mn.y, p.y), std::min(mn.z, p.z));
+        CHECK(mn.nearlyEquals(Vec3(0, 0, 0), 1e-9));
+        std::set<Id> all;
+        Mesh& open = st.activeMesh();
+        for (Id v = 0; v < (Id)open.vertices.size(); ++v)
+            if (open.vertices[v].alive) all.insert(v);
+        open.transformVertices(all, Mat4::translation(Vec3(0, 0, 2)), false);
+        CHECK(recordState(st, "UP"));
+        CHECK(st.defs[def].states.size() == 2);
+        CHECK(recordState(st, "UP")); // same name: updates it
+        CHECK(st.defs[def].states.size() == 2 && findState(st.defs[def], "UP") == 1);
+        CHECK(!recordState(st, ""));
+        // Going to a state while open keeps world placement right.
+        CHECK(applyState(st, def, "CLOSED"));
+        Vec3 a, b;
+        bool any = false;
+        st.activeMesh().bounds(a, b, any);
+        CHECK(a.nearlyEquals(Vec3(11, 1, 0), 1e-9));
+        CHECK(!applyState(st, def, "NOPE"));
+        CHECK(applyState(st, def, "UP"));
+        d.closeComponent();
+        CHECK(instanceBounds(st, inst, a, b));
+        CHECK(near(a.z, 2, 1e-9));
+        CHECK(applyState(st, def, "CLOSED")); // closed: in its own coordinates
+        CHECK(instanceBounds(st, inst, a, b));
+        CHECK(near(a.z, 0, 1e-9) && near(a.x, 11, 1e-9));
+    });
+
+    test("animation: parts of an entity", [&] {
+        ModelState st;
+        // Two separate pieces in one component: a frame that stays and a panel that swings.
+        ComponentDef def;
+        def.name = "Gate";
+        def.mesh.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 0, 2}, {0, 0, 2}}, true);
+        def.mesh.drawPolyline({{5, 0, 0}, {6, 0, 0}, {6, 0, 2}, {5, 0, 2}}, true);
+        CHECK(meshIslands(def.mesh).size() == 2);
+        AnimState closed, open;
+        closed.name = "CLOSED";
+        open.name = "OPEN";
+        const Mat4 swing = Mat4::translation(Vec3(5, 0, 0)) * Mat4::rotation(Vec3(0, 0, 1), kPi / 2) * Mat4::translation(Vec3(-5, 0, 0));
+        for (Id v = 0; v < (Id)def.mesh.vertices.size(); ++v) {
+            const Vec3 p = def.mesh.vertices[v].p;
+            closed.verts.push_back(v);
+            closed.pos.push_back(p);
+            open.verts.push_back(v);
+            open.pos.push_back(p.x >= 5 ? swing.transformPoint(p) : p);
+        }
+        def.states = {closed, open};
+        st.defs.push_back(def);
+        Instance in;
+        in.def = 0;
+        in.xf = Mat4::translation(Vec3(0, 7, 0));
+        in.entity.classname = "func_door";
+        st.instances.push_back(in);
+        Instance plain;
+        plain.def = 0;
+        st.instances.push_back(plain);
+        auto ents = prepareEntities(st);
+        CHECK(ents.size() == 1 && ents[0].parts.size() == 2 && ents[0].states.size() == 2);
+        CHECK(!st.instances[0].alive && st.instances[1].alive); // plain geometry stays as it is
+        const AnimEntity& e = ents[0];
+        CHECK(st.instances[e.parts[0].instance].dynamic && st.defs[e.parts[0].def].mesh.aliveFaceCount() == 1);
+        poseEntity(st, e, 0, 1, 1.0);
+        const AnimPart* panel = nullptr;
+        const AnimPart* frame = nullptr;
+        for (const AnimPart& p : e.parts) (st.defs[p.def].mesh.vertices[4].alive ? panel : frame) = &p;
+        CHECK(panel && frame);
+        if (panel && frame) {
+            CHECK(st.instances[frame->instance].xf.isIdentity() == false); // the instance's place
+            CHECK(st.instances[frame->instance].xf.transformPoint(Vec3(1, 0, 0)).nearlyEquals(Vec3(1, 7, 0), 1e-9));
+            CHECK(st.instances[panel->instance].xf.transformPoint(Vec3(6, 0, 0)).nearlyEquals(Vec3(5, 8, 0), 1e-9));
+            poseEntity(st, e, 0, 1, 0.5);
+            const Vec3 mid = st.instances[panel->instance].xf.transformPoint(Vec3(6, 0, 0));
+            CHECK(near((mid - Vec3(5, 7, 0)).length(), 1.0, 1e-9)); // on the arc
+            CHECK(!poseEntity(st, e, 0, 0, 0)); // rigid parts leave the meshes alone
+        }
+        // A state that changes the shape blends the vertices instead.
+        ModelState st2;
+        ComponentDef def2 = def;
+        for (Vec3& p : def2.states[1].pos) p = p * 2.0;
+        st2.defs.push_back(def2);
+        Instance in2;
+        in2.def = 0;
+        in2.entity.classname = "func_actor";
+        st2.instances.push_back(in2);
+        auto ents2 = prepareEntities(st2);
+        CHECK(ents2[0].parts[0].deforms);
+        CHECK(poseEntity(st2, ents2[0], 0, 1, 0.5));
+        CHECK(poseEntity(st2, ents2[0], 0, 0, 0)); // and back to the rest shape
+        // Collision bodies move with their transform and are hit by rays.
+        CollisionWorld w;
+        w.buildFromModel(st);
+        const int body = w.addBody(st.defs[e.parts[0].def].mesh, st.instances[e.parts[0].instance].xf);
+        CHECK(w.bodyCount() == 1 && !w.bodyTriangles(body).empty());
+        double t = 0;
+        int hit = -5;
+        Vec3 mn, mx;
+        w.bodyBounds(body, mn, mx);
+        const Vec3 c = (mn + mx) * 0.5;
+        CHECK(w.raycast(c + Vec3(0.05, -3, 0.1), Vec3(0, 1, 0), 10, t, hit) && hit == body);
+        CHECK(!w.raycast(c + Vec3(0.05, -3, 0.1), Vec3(0, 1, 0), 1, t, hit));
+        w.setBodyTransform(body, Mat4::translation(Vec3(0, 0, 100)));
+        hit = -5;
+        CHECK(!w.raycast(c + Vec3(0.05, -3, 0.1), Vec3(0, 1, 0), 10, t, hit) || hit != body);
+    });
+
+    test("components inside components", [&] {
+        auto boxAt = [](Document& d, const Vec3& o, const char* name) {
+            Mesh& m = d.mesh();
+            std::set<Id> before;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) before.insert(f);
+            m.drawPolyline({o, o + Vec3(1, 0, 0), o + Vec3(1, 1, 0), o + Vec3(0, 1, 0)}, true);
+            Selection s;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && !before.count(f)) s.faces.insert(f);
+            return makeComponent(d.state, s, name);
+        };
+        Document d;
+        ModelState& st = d.state;
+        const Id handle = boxAt(d, Vec3(5, 0, 0), "Handle");
+        const Id door = boxAt(d, Vec3(0, 0, 0), "Door");
+        // A component made of components.
+        Selection both;
+        both.instances = {handle, door};
+        const Id whole = makeComponent(st, both, "Whole");
+        CHECK(whole != kNone && st.instances[whole].parent == kNone);
+        const Id wholeDef = st.instances[whole].def;
+        CHECK(st.instances[handle].parent == wholeDef && st.instances[door].parent == wholeDef);
+        CHECK(childrenOf(st, wholeDef).size() == 2);
+        Vec3 a, b;
+        CHECK(instanceBounds(st, whole, a, b));
+        CHECK(a.nearlyEquals(Vec3(0, 0, 0), 1e-9) && b.nearlyEquals(Vec3(6, 1, 0), 1e-9));
+        CHECK(placedInstances(st).size() == 3);
+        CHECK(flattenModel(st).aliveFaceCount() == 2);
+        // Placed elsewhere, what is inside goes along, and copies share it.
+        st.instances[whole].xf = Mat4::translation(Vec3(0, 10, 0));
+        const Id copy = cloneInstance(st, whole);
+        st.instances[copy].xf = Mat4::translation(Vec3(0, 20, 0));
+        auto placedDoorAt = [&](Id root) {
+            for (const PlacedInstance& p : placedInstances(st))
+                if (p.root == root && p.inst == door) return p.xf.transformPoint(Vec3());
+            return Vec3(-99, -99, -99);
+        };
+        CHECK(placedDoorAt(whole).nearlyEquals(Vec3(0, 10, 0), 1e-9) && placedDoorAt(copy).nearlyEquals(Vec3(0, 20, 0), 1e-9));
+        // Nothing can go inside itself.
+        CHECK(definitionContains(st, wholeDef, st.instances[door].def) && !definitionContains(st, st.instances[door].def, wholeDef));
+        CHECK(canPlaceInActive(st, wholeDef));
+        // Opening stacks: the frame, then the door in it.
+        const ModelState closed = st;
+        d.openComponent(whole);
+        CHECK(st.editing == whole && st.activeDef() == wholeDef);
+        CHECK(!canPlaceInActive(st, wholeDef) && canPlaceInActive(st, st.instances[door].def));
+        CHECK(st.instances[door].xf.transformPoint(Vec3()).nearlyEquals(Vec3(0, 10, 0), 1e-9)); // world, for the tools
+        d.selection.instances = {door};
+        d.validateSelection();
+        CHECK(d.selection.instances == std::set<Id>{door}); // what is inside can be selected now
+        d.selection.instances = {whole};
+        d.validateSelection();
+        CHECK(d.selection.instances.empty());
+        d.openComponent(door);
+        CHECK(st.editing == door && st.outerOpen == std::vector<Id>{whole});
+        Vec3 ma, mb;
+        bool any = false;
+        st.activeMesh().bounds(ma, mb, any);
+        CHECK(ma.nearlyEquals(Vec3(0, 10, 0), 1e-9));
+        CHECK(!canPlaceInActive(st, wholeDef) && !canPlaceInActive(st, st.instances[door].def));
+        // The other copy's door still is where it belongs.
+        bool otherOk = false;
+        for (const PlacedInstance& p : placedInstances(st))
+            if (p.inst == door && !p.active) otherOk = otherOk || p.xf.transformPoint(st.activeMesh().vertices[0].p).nearlyEquals(Vec3(0, 20, 0) + (st.activeMesh().vertices[0].p - Vec3(0, 10, 0)), 1e-9);
+        CHECK(otherOk);
+        d.closeComponent();
+        CHECK(st.editing == whole && st.outerOpen.empty());
+        d.closeComponent();
+        CHECK(st.editing == kNone);
+        CHECK(st.instances[door].xf.transformPoint(Vec3()).nearlyEquals(closed.instances[door].xf.transformPoint(Vec3()), 1e-9));
+        // A state records where the components inside are.
+        d.openComponent(whole);
+        CHECK(recordState(st, "A"));
+        CHECK(st.defs[wholeDef].states[0].children.size() == 2);
+        st.instances[door].xf = Mat4::translation(Vec3(0, 0, 3)) * st.instances[door].xf;
+        CHECK(recordState(st, "B"));
+        CHECK(applyState(st, wholeDef, "A"));
+        CHECK(near(st.instances[door].xf.at(2, 3), closed.instances[door].xf.at(2, 3), 1e-9));
+        d.closeComponent();
+        // Made unique, the copy gets its own contents.
+        Document u = Document();
+        u.state = st;
+        makeUnique(u.state, {copy});
+        const Id newDef = u.state.instances[copy].def;
+        CHECK(newDef != wholeDef && childrenOf(u.state, newDef).size() == 2 && childrenOf(u.state, wholeDef).size() == 2);
+        for (const auto& [id, xf] : u.state.defs[newDef].states[0].children) CHECK(u.state.instances[id].parent == newDef);
+        // Exploded, they come out to the level it was on.
+        Selection out;
+        explodeInstance(u.state, copy, &out);
+        CHECK(out.instances.size() == 2);
+        for (Id i : out.instances) CHECK(u.state.instances[i].parent == kNone);
+        CHECK(childrenOf(u.state, wholeDef).size() == 2);
+        // Inside an open component, Make Component nests too.
+        Document n;
+        const Id outer = boxAt(n, Vec3(0, 0, 0), "Outer");
+        n.openComponent(outer);
+        const Id inner = boxAt(n, Vec3(0, 0, 2), "Inner");
+        CHECK(inner != kNone && n.state.instances[inner].parent == n.state.activeDef());
+        CHECK(n.state.instances[inner].xf.transformPoint(Vec3()).nearlyEquals(Vec3(0, 0, 2), 1e-9));
+        n.closeComponent();
+        CHECK(flattenModel(n.state).aliveFaceCount() == 2);
+        // Extraction carries the tree.
+        Material used;
+        used.name = "Oak";
+        const Id mid = d.addMaterial(used);
+        for (Face& f : st.defs[st.instances[door].def].mesh.faces) f.front.material = mid;
+        ModelState pre = extractDefinition(st, wholeDef);
+        CHECK(pre.defs.size() == 3 && pre.instances.size() == 3 && pre.instances[0].def == 0 && pre.instances[0].parent == kNone);
+        CHECK(pre.materials.size() == 1 && childrenOf(pre, 0).size() == 2);
+        CHECK(pre.defs[0].states.size() == 2);
+        for (const auto& [id, xf] : pre.defs[0].states[0].children) CHECK(id >= 0 && pre.instances[id].parent == 0);
+        Document other;
+        const Id imported = importDefinition(other, pre, 0);
+        CHECK(other.state.defs.size() == 3 && other.state.instances.size() == 2 && other.state.materials.size() == 1);
+        CHECK(childrenOf(other.state, imported).size() == 2);
+        for (const auto& [id, xf] : other.state.defs[imported].states[0].children) CHECK(other.state.instances[id].parent == imported);
+        CHECK(importDefinition(other, pre, 0) == imported && other.state.instances.size() == 2);
+    });
+
+    test("entities inside components and inside entities", [&] {
+        // A frame (plain) holding a door (entity) holding a handle (plain), holding a lock (entity).
+        ModelState st;
+        auto plate = [&](const char* name, const Vec3& o) {
+            ComponentDef d;
+            d.name = name;
+            d.mesh.drawPolyline({o, o + Vec3(1, 0, 0), o + Vec3(1, 0, 1), o + Vec3(0, 0, 1)}, true);
+            st.defs.push_back(d);
+            return (Id)st.defs.size() - 1;
+        };
+        const Id frame = plate("Frame", Vec3(-1, 0, 0)), doorDef = plate("Door", Vec3(0, 0, 0)), handleDef = plate("Handle", Vec3(0.5, 0, 0.5)), lockDef = plate("Lock", Vec3(0.7, 0, 0.7));
+        Instance root;
+        root.def = frame;
+        root.xf = Mat4::translation(Vec3(100, 0, 0));
+        st.instances.push_back(root);
+        Instance door;
+        door.def = doorDef;
+        door.parent = frame;
+        door.xf = Mat4::translation(Vec3(2, 0, 0));
+        door.entity.classname = "func_door";
+        st.instances.push_back(door);
+        Instance handle;
+        handle.def = handleDef;
+        handle.parent = doorDef;
+        st.instances.push_back(handle);
+        Instance lock;
+        lock.def = lockDef;
+        lock.parent = handleDef;
+        lock.entity.classname = "func_actor";
+        st.instances.push_back(lock);
+        // Door states: it rises by 2; the handle inside tilts up by 1 more.
+        AnimState closed, open;
+        closed.name = "CLOSED";
+        open.name = "OPEN";
+        for (Id v = 0; v < (Id)st.defs[doorDef].mesh.vertices.size(); ++v) {
+            closed.verts.push_back(v);
+            closed.pos.push_back(st.defs[doorDef].mesh.vertices[v].p);
+            open.verts.push_back(v);
+            open.pos.push_back(st.defs[doorDef].mesh.vertices[v].p + Vec3(0, 0, 2));
+        }
+        closed.children.emplace_back(2, Mat4());
+        open.children.emplace_back(2, Mat4::translation(Vec3(0, 0, 3)));
+        st.defs[doorDef].states = {closed, open};
+        auto ents = prepareEntities(st);
+        CHECK(ents.size() == 2);
+        CHECK(!st.instances[0].alive);
+        const int de = ents[0].props.classname == "func_door" ? 0 : 1, le = 1 - de;
+        CHECK(ents[le].owner == de && ents[de].owner == -1);
+        CHECK(ents[de].parts.size() == 2); // its own plate, and the handle
+        // Everything that is shown is now flat: top level, no children below.
+        CollisionWorld w;
+        w.buildFromModel(st);
+        CHECK(w.triangles().size() == 2); // only the frame is static
+        auto setPose = [&](int a, int b, double t) {
+            ents[de].poseA = a;
+            ents[de].poseB = b;
+            ents[de].poseT = t;
+            poseEntity(st, ents[de], a, b, t);
+            poseMounted(st, ents, de, [](int) {});
+        };
+        setPose(0, 0, 0);
+        const Mat4 lockClosed = st.instances[ents[le].parts[0].instance].xf;
+        CHECK(lockClosed.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 0), 1e-9));
+        setPose(1, 1, 0);
+        CHECK(st.instances[ents[de].parts[0].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 2), 1e-9));
+        CHECK(st.instances[ents[de].parts[1].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 3), 1e-9));
+        CHECK(st.instances[ents[le].parts[0].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 3), 1e-9)); // the lock rides along
+        setPose(0, 1, 0.5);
+        CHECK(st.instances[ents[le].parts[0].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 1.5), 1e-9));
     });
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);

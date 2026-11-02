@@ -22,6 +22,7 @@ add_library(gs_core STATIC
   src/core/Units.h src/core/Units.cpp
   src/core/Document.h src/core/Document.cpp
   src/core/Components.h src/core/Components.cpp
+  src/core/Animation.h src/core/Animation.cpp
   src/core/Terrain.h src/core/Terrain.cpp
   src/core/Solids.h src/core/Solids.cpp
   src/core/Effects.h src/core/Effects.cpp
@@ -32,7 +33,7 @@ target_include_directories(gs_core PUBLIC src)
 target_compile_options(gs_core PRIVATE -Wall -Wextra)
 
 # ---- application --------------------------------------------------------------
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Svg)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Svg Qml)
 set(CMAKE_AUTOMOC ON)
 
 add_library(gs_io STATIC
@@ -43,8 +44,9 @@ add_library(gs_io STATIC
   src/io/ImageUtil.h src/io/ImageUtil.cpp
   src/io/AssetLibrary.h src/io/AssetLibrary.cpp
   src/io/ArchMaterials.h src/io/ArchMaterials.cpp
+  src/io/EntityScript.h src/io/EntityScript.cpp
 )
-target_link_libraries(gs_io PUBLIC gs_core Qt6::Core Qt6::Gui)
+target_link_libraries(gs_io PUBLIC gs_core Qt6::Core Qt6::Gui Qt6::Qml)
 target_compile_options(gs_io PRIVATE -Wall -Wextra)
 
 add_executable(gnusketch
@@ -63,6 +65,7 @@ add_executable(gnusketch
   src/app/TextureTool.h src/app/TextureTool.cpp
   src/app/EffectsUi.h src/app/EffectsUi.cpp
   src/app/SceneTools.h src/app/SceneTools.cpp
+  src/app/EntityProperties.h src/app/EntityProperties.cpp
   src/app/MaterialEditor.h src/app/MaterialEditor.cpp
   src/app/Browsers.h src/app/Browsers.cpp
   src/app/CameraTools.h src/app/CameraTools.cpp

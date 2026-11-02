@@ -1575,13 +1575,11 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     struct Placed {
         Id inst, def;
         Mat4 xf;
+        bool active;
     };
     std::vector<Placed> placed;
-    for (Id i = 0; i < (Id)ms.instances.size(); ++i) {
-        const Instance& I = ms.instances[i];
-        if (!I.alive || I.hidden || i == ms.editing || I.def < 0 || I.def >= (Id)ms.defs.size()) continue;
-        placed.push_back({i, I.def, instanceWorldXf(ms, i)});
-    }
+    for (const PlacedInstance& p : placedInstances(ms))
+        if (p.inst != ms.editing) placed.push_back({p.inst, p.def, p.xf, p.active});
     const MeshGpu& activeGpu = meshGpu(doc, editDef);
     const Mesh& active = ms.activeMesh();
 
@@ -1610,12 +1608,12 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
 
     drawBackground(doc, cam);
     drawMeshFaces(activeGpu, doc, cam, Mat4(), 0.0f);
-    if (!editing)
-        for (const Placed& p : placed) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.0f);
+    for (const Placed& p : placed)
+        if (p.active) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.0f);
     if (st.ambientOcclusion && !st.xray && st.faceStyle != RenderStyle::Wireframe) {
         std::vector<std::pair<const MeshGpu*, Mat4>> meshes{{&activeGpu, Mat4()}};
-        if (!editing)
-            for (const Placed& p : placed) meshes.push_back({&meshGpu(doc, p.def), p.xf});
+        for (const Placed& p : placed)
+            if (p.active) meshes.push_back({&meshGpu(doc, p.def), p.xf});
         drawAmbientOcclusion(meshes, cam);
     }
 
@@ -1642,7 +1640,7 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     EdgeLists el;
     collectEdges(active, Mat4(), doc, cam, preview, true, false, el);
     if (editing) collectEdges(ms.mesh, Mat4(), doc, cam, preview, false, true, el);
-    for (const Placed& p : placed) collectEdges(ms.defs[p.def].mesh, p.xf, doc, cam, preview, false, editing, el);
+    for (const Placed& p : placed) collectEdges(ms.defs[p.def].mesh, p.xf, doc, cam, preview, false, !p.active, el);
 
     // Component boxes: selected / hovered instances, and the open one.
     std::vector<float> boxes, openBox;
@@ -1675,7 +1673,8 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     if (editing) {
         // Faded rest of the model, translucent over the open component.
         drawMeshFaces(meshGpu(doc, kNone), doc, cam, Mat4(), 0.35f);
-        for (const Placed& p : placed) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.35f);
+        for (const Placed& p : placed)
+            if (!p.active) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.35f);
         glEnable(GL_BLEND);
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // the framebuffer itself stays opaque
         glDepthMask(GL_FALSE);

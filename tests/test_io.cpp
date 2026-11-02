@@ -4,6 +4,8 @@
 #include "core/Document.h"
 #include "io/ArchMaterials.h"
 #include "io/AssetLibrary.h"
+#include "io/EntityScript.h"
+#include "core/Animation.h"
 #include "io/GltfExport.h"
 #include "io/ImageUtil.h"
 #include "io/NativeFormat.h"
@@ -12,6 +14,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -32,6 +35,8 @@ static int g_failed = 0, g_passed = 0;
         if (cond) ++g_passed;                                                          \
         else { ++g_failed; std::printf("  FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); } \
     } while (0)
+
+static bool near(double a, double b, double tol = 1e-6) { return std::fabs(a - b) < tol; }
 
 static void makeModel(Document& d) {
     Mesh& m = d.mesh();
@@ -427,6 +432,410 @@ int main(int argc, char** argv) {
         CHECK(modelFromJson(modelToJson(d.state), back) && back.materials.size() == d.state.materials.size());
         CHECK(sameMaterial(back.materials[0], d.state.materials[0]));
         std::printf("[ ok ] architectural materials\n");
+    }
+    {
+        // A door panel and a button, the way the Properties window sets them up.
+        auto makeThing = [](ModelState& st, const Vec3& at, const Vec3& size, const Vec3& moved, const char* cls, const std::string& name,
+                            const std::string& target, const QString& script = {}) {
+            ComponentDef def;
+            def.name = cls;
+            def.uid = name + "uid";
+            def.mesh.drawPolyline({{0, 0, 0}, {size.x, 0, 0}, {size.x, 0, size.z}, {0, 0, size.z}}, true);
+            AnimState a, b;
+            a.name = "A";
+            b.name = "B";
+            for (Id v = 0; v < (Id)def.mesh.vertices.size(); ++v) {
+                a.verts.push_back(v);
+                a.pos.push_back(def.mesh.vertices[v].p);
+                b.verts.push_back(v);
+                b.pos.push_back(def.mesh.vertices[v].p + moved);
+            }
+            def.states = {a, b};
+            st.defs.push_back(def);
+            Instance in;
+            in.def = (Id)st.defs.size() - 1;
+            in.xf = Mat4::translation(at);
+            in.entity.classname = cls;
+            in.entity.targetname = name;
+            if (!target.empty()) in.entity.targets.push_back({target, 0});
+            in.entity.script = script.toStdString();
+            st.instances.push_back(in);
+            return (int)st.instances.size() - 1;
+        };
+        auto heightOf = [](const ModelState& st, const AnimEntity& e) { return st.instances[e.parts[0].instance].xf.at(2, 3); };
+
+        // Saved and loaded, with a mesh that gets renumbered on the way.
+        {
+            Document d;
+            Mesh& m = d.mesh();
+            (void)m;
+            makeThing(d.state, Vec3(1, 2, 3), Vec3(1, 0, 2), Vec3(0, 0, 2), "func_door", "gate", "next", QStringLiteral("// mine\n"));
+            ComponentDef& def = d.state.defs[0];
+            // A dead vertex at the start: the file holds the mesh compacted.
+            def.mesh.vertices.insert(def.mesh.vertices.begin(), def.mesh.vertices[0]);
+            def.mesh.vertices[0].alive = false;
+            for (Edge& e : def.mesh.edges) { ++e.v[0]; ++e.v[1]; }
+            for (Face& f : def.mesh.faces) for (Id& v : f.outer) ++v;
+            for (AnimState& s : def.states) for (Id& v : s.verts) ++v;
+            def.mesh.touch();
+            d.state.instances[0].entity.startState = "B";
+            ModelState back;
+            CHECK(modelFromJson(modelToJson(d.state), back));
+            CHECK(back.defs.size() == 1 && back.defs[0].states.size() == 2 && back.defs[0].states[1].name == "B");
+            const AnimState& s = back.defs[0].states[1];
+            CHECK(s.verts.size() == 4);
+            bool match = true;
+            for (size_t k = 0; k < s.verts.size(); ++k) match = match && s.pos[k].nearlyEquals(back.defs[0].mesh.pos(s.verts[k]) + Vec3(0, 0, 2), 1e-9);
+            CHECK(match);
+            const EntityProps& e = back.instances[0].entity;
+            CHECK(e.classname == "func_door" && e.targetname == "gate" && e.targets.size() == 1 && e.targets[0].name == "next" && e.startState == "B" && e.script == "// mine\n");
+            // And in a prefab.
+            QTemporaryDir data;
+            qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+            const QString path = savePrefab(back, 0, "Gate", {}, nullptr, e);
+            ModelState pre;
+            CHECK(loadPrefab(path, pre) && pre.defs[0].states.size() == 2 && pre.instances[0].entity == e);
+            qunsetenv("GNUSKETCH_DATA_DIR");
+            std::printf("[ ok ] states and entities save/load\n");
+        }
+
+        // A linked door opens by its button only; an unlinked one by touch and use.
+        ModelState st;
+        makeThing(st, Vec3(0, 0, 0), Vec3(1, 0, 2), Vec3(0, 0, 2), "func_door", "gate", "");
+        makeThing(st, Vec3(3, 0, 0), Vec3(0.2, 0, 0.2), Vec3(0, 0.05, 0), "func_button", "btn", "gate");
+        makeThing(st, Vec3(6, 0, 0), Vec3(1, 0, 2), Vec3(0, 0, 2), "func_door", "free", "");
+        EntityWorld world(st);
+        CHECK(world.count() == 3);
+        CollisionWorld col;
+        col.buildFromModel(st);
+        world.start(col);
+        CHECK(world.errors().isEmpty());
+        if (!world.errors().isEmpty()) std::printf("%s\n", qPrintable(world.errors().join('\n')));
+        CHECK(world.linked(0) && !world.linked(1) && !world.linked(2));
+        CHECK(!world.usable(0) && world.usable(1) && world.usable(2));
+        CHECK(col.bodyCount() == 3);
+        auto run = [&](double seconds) {
+            for (double t = 0; t < seconds; t += 0.02) world.update(0.02);
+        };
+        world.use(0);
+        world.setTouching(0, true);
+        run(0.5);
+        CHECK(near(heightOf(st, world.entity(0)), 0)); // not by touch, not by use
+        world.setTouching(0, false);
+        world.use(1); // the button
+        run(0.05);
+        CHECK(near(heightOf(st, world.entity(0)), 0)); // the button first goes in
+        run(0.5);
+        const double midway = heightOf(st, world.entity(0));
+        CHECK(midway > 0.05 && midway < 1.95);
+        run(0.8);
+        CHECK(near(heightOf(st, world.entity(0)), 2)); // open, 1 s after the button's press
+        {
+            // The collision body went along.
+            Vec3 mn, mx;
+            col.bodyBounds(world.entity(0).parts[0].body, mn, mx);
+            CHECK(near(mn.z, 2, 1e-9));
+        }
+        run(4.0);
+        CHECK(near(heightOf(st, world.entity(0)), 0)); // and closed itself
+        world.setTouching(2, true);
+        run(1.2);
+        CHECK(near(heightOf(st, world.entity(2)), 2)); // the free door by touch
+        world.setTouching(2, false);
+        run(4.5);
+        CHECK(near(heightOf(st, world.entity(2)), 0));
+        world.use(2);
+        run(1.2);
+        CHECK(near(heightOf(st, world.entity(2)), 2)); // and by use
+        std::printf("[ ok ] a door follows its button, as in Hammer\n");
+
+        // The whole API, used by a script.
+        {
+            ModelState s2;
+            makeThing(s2, Vec3(), Vec3(1, 0, 1), Vec3(0, 0, 1), "func_actor", "a", "b", QStringLiteral(R"JS(
+var hits = 0, ticks = 0;
+on("start", function () {
+    if (self.name !== "a" || self.classname !== "func_actor" || self.target !== "b") throw new Error("bad fields");
+    if (self.states.join() !== "A,B" || self.state !== "A" || self.moving) throw new Error("bad state");
+    self.play(["B", "A"], { duration: 0.5, easing: "linear", loop: true });
+});
+on("tick", function (dt) { ticks += dt; });
+every(0.25, function () { hits++; });
+var once = after(0.1, function () { throw new Error("cancelled timers do not run"); });
+cancel(once);
+after(1.7, function () {
+    if (hits < 5) throw new Error("every ran " + hits);
+    if (Math.abs(ticks - game.time) > 0.05) throw new Error("ticks " + ticks);
+    self.stop();
+    self.fire(42);
+});
+)JS"));
+            makeThing(s2, Vec3(5, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 3), "func_actor", "b", "", QStringLiteral(R"JS(
+on("trigger", function (arg) {
+    if (arg !== 42) throw new Error("bad arg");
+    if (find("a").length !== 1 || find("a")[0].name !== "a" || find("none").length) throw new Error("bad find");
+    self.set("B");
+});
+)JS"));
+            EntityWorld w2(s2);
+            CollisionWorld c2;
+            c2.buildFromModel(s2);
+            w2.start(c2);
+            for (int i = 0; i < 40; ++i) w2.update(0.02); // 0.8 s: on the way back
+            const double h = heightOf(s2, w2.entity(0));
+            CHECK(near(h, 0.4, 0.05)); // up in 0.5 s, then 0.3 s of the way down
+            for (int i = 0; i < 60; ++i) w2.update(0.02);
+            CHECK(near(heightOf(s2, w2.entity(1)), 3)); // fired, set
+            const double stopped = heightOf(s2, w2.entity(0));
+            for (int i = 0; i < 10; ++i) w2.update(0.02);
+            CHECK(near(heightOf(s2, w2.entity(0)), stopped)); // stop() holds still
+            CHECK(w2.errors().isEmpty());
+            if (!w2.errors().isEmpty()) std::printf("%s\n", qPrintable(w2.errors().join('\n')));
+            std::printf("[ ok ] the script API\n");
+        }
+
+        // Broken scripts report, and do not take the world down.
+        {
+            ModelState s3;
+            makeThing(s3, Vec3(), Vec3(1, 0, 1), Vec3(0, 0, 1), "func_actor", "syntax", "", QStringLiteral("var a = ;\n"));
+            makeThing(s3, Vec3(), Vec3(1, 0, 1), Vec3(0, 0, 1), "func_actor", "unknown", "", QStringLiteral("on(\"start\", function () { self.tween(\"NOPE\", 1); });"));
+            makeThing(s3, Vec3(), Vec3(1, 0, 1), Vec3(0, 0, 1), "func_actor", "fine", "", QStringLiteral("on(\"start\", function () { self.tween(\"B\", 0.1); });"));
+            makeThing(s3, Vec3(), Vec3(1, 0, 1), Vec3(0, 0, 1), "func_actor", "stuck", "", QStringLiteral("on(\"use\", function () { while (true) {} });"));
+            EntityWorld w3(s3);
+            CollisionWorld c3;
+            c3.buildFromModel(s3);
+            w3.start(c3);
+            for (int i = 0; i < 20; ++i) w3.update(0.02);
+            CHECK(w3.errors().size() == 2);
+            CHECK(w3.errors().join(' ').contains("syntax") && w3.errors().join(' ').contains("NOPE"));
+            CHECK(near(heightOf(s3, w3.entity(2)), 1)); // the good one still runs
+            QElapsedTimer timer;
+            timer.start();
+            w3.use(3); // an endless loop: interrupted, not a frozen game
+            CHECK(timer.elapsed() < 5000);
+            for (int i = 0; i < 5; ++i) w3.update(0.02);
+            std::printf("[ ok ] broken scripts\n");
+        }
+        // Every preset parses and the check reports lines.
+        CHECK(!scriptPresets().empty());
+        for (const ScriptPreset& p : scriptPresets()) {
+            QString err;
+            CHECK(checkEntityScript(p.code, &err));
+            if (!err.isEmpty()) std::printf("%s: %s\n", qPrintable(p.name), qPrintable(err));
+        }
+        for (const char* cls : {"func_door", "func_button", "func_actor"}) CHECK(!defaultScript(cls).isEmpty());
+        QString err;
+        CHECK(!checkEntityScript(QStringLiteral("var ok = 1;\nvar = 2;\n"), &err));
+        CHECK(err.startsWith(QStringLiteral("Line 2")));
+        // No way out of the sandbox.
+        {
+            ModelState s4;
+            makeThing(s4, Vec3(), Vec3(1, 0, 1), Vec3(0, 0, 1), "func_actor", "x", "", QStringLiteral(
+                "if (typeof Qt !== 'undefined' || typeof require !== 'undefined' || typeof process !== 'undefined' || typeof XMLHttpRequest !== 'undefined') throw new Error('leak');"));
+            EntityWorld w4(s4);
+            CollisionWorld c4;
+            c4.buildFromModel(s4);
+            w4.start(c4);
+            CHECK(w4.errors().isEmpty());
+        }
+        // User presets.
+        QTemporaryDir data;
+        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        const size_t n0 = scriptPresets().size();
+        CHECK(!saveScriptPreset("My/Door", "func_door", "// hi\n").isEmpty());
+        const auto presets = scriptPresets();
+        CHECK(presets.size() == n0 + 1 && presets.back().name == "My_Door" && presets.back().classname == "func_door" && !presets.back().builtIn);
+        qunsetenv("GNUSKETCH_DATA_DIR");
+        std::printf("[ ok ] presets\n");
+    }
+    {
+        // The whole door: a frame prefab with a scripted door inside, which has a handle.
+        auto plate = [](ModelState& st, const char* name, const Vec3& o, const Vec3& size) {
+            ComponentDef d;
+            d.name = name;
+            d.uid = std::string("uid-") + name;
+            d.mesh.drawPolyline({o, o + Vec3(size.x, 0, 0), o + Vec3(size.x, 0, size.z), o + Vec3(0, 0, size.z)}, true);
+            st.defs.push_back(d);
+            return (Id)st.defs.size() - 1;
+        };
+        Document d;
+        ModelState& st = d.state;
+        const Id frame = plate(st, "Frame", Vec3(-1, 0, 0), Vec3(0.5, 0, 2));
+        const Id doorDef = plate(st, "Door", Vec3(0, 0, 0), Vec3(1, 0, 2));
+        const Id handleDef = plate(st, "Handle", Vec3(0.8, 0, 1), Vec3(0.1, 0, 0.1));
+        Instance root;
+        root.def = frame;
+        root.xf = Mat4::translation(Vec3(4, 0, 0));
+        st.instances.push_back(root);
+        Instance door;
+        door.def = doorDef;
+        door.parent = frame;
+        door.entity.classname = "func_door";
+        door.entity.targetname = "door";
+        st.instances.push_back(door);
+        Instance handle;
+        handle.def = handleDef;
+        handle.parent = doorDef;
+        st.instances.push_back(handle);
+        AnimState closed, open;
+        closed.name = "CLOSED";
+        open.name = "OPEN";
+        for (Id v = 0; v < (Id)st.defs[doorDef].mesh.vertices.size(); ++v) {
+            closed.verts.push_back(v);
+            closed.pos.push_back(st.defs[doorDef].mesh.vertices[v].p);
+            open.verts.push_back(v);
+            open.pos.push_back(st.defs[doorDef].mesh.vertices[v].p + Vec3(0, 0, 2));
+        }
+        closed.children.emplace_back(2, Mat4());
+        open.children.emplace_back(2, Mat4::translation(Vec3(0, 0, 2)));
+        st.defs[doorDef].states = {closed, open};
+
+        QTemporaryDir data;
+        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        const QString path = savePrefab(st, frame, "Whole Door", {});
+        ModelState pre;
+        QString err, name;
+        CHECK(loadPrefab(path, pre, &name, nullptr, &err));
+        CHECK(name == "Whole Door" && pre.defs.size() == 3 && pre.instances.size() == 3);
+        CHECK(pre.instances[0].parent == kNone && pre.instances[0].def == 0);
+        CHECK(pre.defs[1].states.size() == 2 && pre.defs[1].states[1].children.size() == 1);
+        const Id handleInPrefab = pre.defs[1].states[1].children[0].first;
+        CHECK(handleInPrefab >= 0 && pre.instances[handleInPrefab].parent == 1);
+        CHECK(pre.instances[1].entity.classname == "func_door" || pre.instances[2].entity.classname == "func_door");
+        qunsetenv("GNUSKETCH_DATA_DIR");
+
+        // Placed in a new model next to a button that sets off two things, the second later.
+        Document w;
+        const Id placedDef = importDefinition(w, pre, 0);
+        Instance placed;
+        placed.def = placedDef;
+        placed.xf = Mat4::translation(Vec3(10, 0, 0));
+        w.state.instances.push_back(placed);
+        const Id btnDef = plate(w.state, "Button", Vec3(0, 0, 1), Vec3(0.2, 0, 0.2));
+        AnimState up, down;
+        up.name = "UP";
+        down.name = "DOWN";
+        for (Id v = 0; v < (Id)w.state.defs[btnDef].mesh.vertices.size(); ++v) {
+            up.verts.push_back(v);
+            up.pos.push_back(w.state.defs[btnDef].mesh.vertices[v].p);
+            down.verts.push_back(v);
+            down.pos.push_back(w.state.defs[btnDef].mesh.vertices[v].p + Vec3(0, 0.05, 0));
+        }
+        w.state.defs[btnDef].states = {up, down};
+        Instance btn;
+        btn.def = btnDef;
+        btn.entity.classname = "func_button";
+        btn.entity.targets = {{"door", 0}, {"lamp", 1.5}};
+        w.state.instances.push_back(btn);
+        const Id lampDef = plate(w.state, "Lamp", Vec3(0, 0, 0), Vec3(1, 0, 1));
+        w.state.defs[lampDef].states = {up, down};
+        for (AnimState& as : w.state.defs[lampDef].states) {
+            as.verts = {0, 1, 2, 3};
+            as.pos.resize(4);
+            for (int k = 0; k < 4; ++k) as.pos[k] = w.state.defs[lampDef].mesh.vertices[k].p + (as.name == "DOWN" ? Vec3(0, 0, 5) : Vec3());
+        }
+        Instance lamp;
+        lamp.def = lampDef;
+        lamp.xf = Mat4::translation(Vec3(20, 0, 0));
+        lamp.entity.classname = "func_actor";
+        lamp.entity.targetname = "lamp";
+        lamp.entity.script = "on(\"trigger\", function () { self.set(\"DOWN\"); });";
+        w.state.instances.push_back(lamp);
+        // Saved and loaded, as Game Mode does.
+        ModelState game;
+        CHECK(modelFromJson(modelToJson(w.state), game));
+        EntityWorld world(game);
+        CHECK(world.count() == 3);
+        int doorE = -1, btnE = -1, lampE = -1;
+        for (int i = 0; i < world.count(); ++i) {
+            const std::string& c = world.entity(i).props.classname;
+            (c == "func_door" ? doorE : c == "func_button" ? btnE : lampE) = i;
+        }
+        CollisionWorld col;
+        col.buildFromModel(game);
+        world.start(col);
+        CHECK(world.errors().isEmpty());
+        if (!world.errors().isEmpty()) std::printf("%s\n", qPrintable(world.errors().join('\n')));
+        CHECK(world.linked(doorE) && world.linked(lampE) && !world.usable(doorE) && world.usable(btnE));
+        // The frame stays static; the door is at the placed spot.
+        auto z0 = [&](int e, int part) { return game.instances[world.entity(e).parts[part].instance].xf.at(2, 3); };
+        CHECK(world.entity(doorE).parts.size() == 2);
+        CHECK(near(game.instances[world.entity(doorE).parts[0].instance].xf.at(0, 3), 10));
+        auto run = [&](double s) { for (double t = 0; t < s; t += 0.02) world.update(0.02); };
+        world.use(doorE);
+        run(0.3);
+        CHECK(near(z0(doorE, 0), 0)); // linked: the button only
+        world.use(btnE);
+        run(1.3); // pressed at 0.12, the door is up 1 s later
+        CHECK(near(z0(doorE, 0), 2));
+        CHECK(near(z0(doorE, 1), 2)); // and the handle in it
+        CHECK(near(z0(lampE, 0), 0)); // the lamp waits for its delay
+        run(0.5);
+        CHECK(near(game.defs.empty() ? 0 : game.instances[world.entity(lampE).parts[0].instance].xf.transformPoint(Vec3()).z, 5)); // 1.5 s after the press
+        // self.targets is there for scripts, and the first still reads as .target.
+        {
+            ModelState s2;
+            const Id dd = plate(s2, "A", Vec3(), Vec3(1, 0, 1));
+            Instance a;
+            a.def = dd;
+            a.entity.classname = "func_actor";
+            a.entity.targets = {{"x", 0.25}, {"y", 0}};
+            a.entity.script = "if (self.target !== 'x' || self.targets.length !== 2 || self.targets[0].delay !== 0.25) throw new Error('bad targets');";
+            s2.instances.push_back(a);
+            EntityWorld w2(s2);
+            CollisionWorld c2;
+            c2.buildFromModel(s2);
+            w2.start(c2);
+            CHECK(w2.errors().isEmpty());
+        }
+        std::printf("[ ok ] a whole door prefab, a button with delayed targets\n");
+
+        // One definition both on its own and inside another survives saving.
+        {
+            ModelState shared;
+            const Id inner = plate(shared, "Inner", Vec3(), Vec3(1, 0, 1));
+            const Id outer = plate(shared, "Outer", Vec3(0, 3, 0), Vec3(1, 0, 1));
+            Instance alone;
+            alone.def = inner;
+            shared.instances.push_back(alone);
+            Instance holder;
+            holder.def = outer;
+            shared.instances.push_back(holder);
+            Instance nestedOne;
+            nestedOne.def = inner;
+            nestedOne.parent = outer;
+            shared.instances.push_back(nestedOne);
+            ModelState back;
+            CHECK(modelFromJson(modelToJson(shared), back));
+            CHECK(back.defs.size() == 2 && back.instances.size() == 3);
+            CHECK(flattenModel(back).aliveFaceCount() == 3);
+        }
+        // Files written before there were several targets still load.
+        {
+            ModelState old;
+            const Id dd = plate(old, "A", Vec3(), Vec3(1, 0, 1));
+            Instance a;
+            a.def = dd;
+            a.entity.classname = "func_button";
+            old.instances.push_back(a);
+            QJsonObject root = QJsonDocument::fromJson(modelToJson(old)).object();
+            QJsonArray insts = root["instances"].toArray();
+            QJsonObject inst = insts[0].toObject(), ent = inst["entity"].toObject();
+            ent["target"] = "door9";
+            inst["entity"] = ent;
+            insts[0] = inst;
+            root["instances"] = insts;
+            ModelState back;
+            CHECK(modelFromJson(QJsonDocument(root).toJson(), back));
+            CHECK(back.instances[0].entity.targets.size() == 1 && back.instances[0].entity.targets[0].name == "door9");
+            // A file cannot make a component contain itself.
+            inst["parent"] = 0;
+            insts[0] = inst;
+            root["instances"] = insts;
+            ModelState evil;
+            CHECK(modelFromJson(QJsonDocument(root).toJson(), evil));
+            CHECK(evil.instances.empty());
+        }
     }
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
     return g_failed ? 1 : 0;

@@ -214,7 +214,7 @@ void Viewport::paintGL() {
         // The box the prefab would take up, standing where it would land.
         Vec3 mn, mx;
         bool any = false;
-        dragPrefab_->defs[0].mesh.bounds(mn, mx, any);
+        definitionBounds(*dragPrefab_, 0, mn, mx, any);
         if (any) {
             const Vec3 off = dragPrefabAt_ - Vec3((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mn.z);
             Vec3 k[8];
@@ -644,20 +644,23 @@ bool Viewport::surfacePointAt(double x, double y, Vec3& out) {
 }
 
 Id Viewport::placePrefab(const ModelState& prefab, const Vec3& at) {
-    if (doc_->editingComponent()) {
-        emit statusText(QStringLiteral("Close the open component first: components cannot hold other components."));
-        return kNone;
-    }
     if (prefab.defs.empty()) return kNone;
     if (tool_) tool_->reset();
     doc_->beginOp("Place Prefab");
     const Id def = importDefinition(*doc_, prefab, 0);
+    if (!canPlaceInActive(doc_->state, def)) {
+        doc_->cancelOp();
+        emit statusText(QStringLiteral("A component cannot go inside itself."));
+        return kNone;
+    }
     Vec3 mn, mx;
     bool any = false;
-    doc_->state.defs[def].mesh.bounds(mn, mx, any);
+    definitionBounds(doc_->state, def, mn, mx, any);
     Instance in;
     in.def = def;
+    in.parent = doc_->state.activeDef();
     in.xf = Mat4::translation(at - (any ? Vec3((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mn.z) : Vec3()));
+    if (!prefab.instances.empty()) in.entity = prefab.instances[0].entity;
     doc_->state.instances.push_back(in);
     const Id inst = (Id)doc_->state.instances.size() - 1;
     doc_->selection.clear();

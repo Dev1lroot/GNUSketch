@@ -27,7 +27,8 @@ struct PrefabInfo {
 
 // Writes the definition as a stand-alone model file; a free file name is
 // picked, nothing gets overwritten. Returns the path, or empty with *error set.
-QString savePrefab(const ModelState& state, Id def, const QString& name, const QImage& thumbnail, QString* error = nullptr);
+// The entity settings (class, script...) go with it.
+QString savePrefab(const ModelState& state, Id def, const QString& name, const QImage& thumbnail, QString* error = nullptr, const EntityProps& entity = {});
 bool loadPrefab(const QString& path, ModelState& out, QString* name = nullptr, QImage* thumbnail = nullptr, QString* error = nullptr);
 // The prefab files of every directory, sorted by name (no file contents read).
 QStringList prefabFiles();

@@ -65,13 +65,14 @@ QStringList assetDirs(const QString& kind) {
     return dirs;
 }
 
-QString savePrefab(const ModelState& state, Id def, const QString& name, const QImage& thumbnail, QString* error) {
+QString savePrefab(const ModelState& state, Id def, const QString& name, const QImage& thumbnail, QString* error, const EntityProps& entity) {
     ModelState prefab = extractDefinition(state, def);
     if (prefab.defs.empty()) {
         if (error) *error = QStringLiteral("There is no such component.");
         return {};
     }
     prefab.defs[0].name = name.toStdString();
+    prefab.instances[0].entity = entity;
     QJsonObject view;
     view["prefab"] = true;
     if (!thumbnail.isNull()) {
@@ -109,7 +110,10 @@ bool loadPrefab(const QString& path, ModelState& out, QString* name, QImage* thu
     if (!modelFromJson(f.readAll(), st, &view, error)) return false;
     // A model that was saved by hand into the folder: its loose geometry and
     // components together make up the prefab.
-    if (st.defs.size() != 1 || st.instances.size() != 1 || st.mesh.aliveFaceCount() > 0 || st.mesh.aliveEdgeCount() > 0) {
+    int roots = 0;
+    for (const Instance& in : st.instances) roots += in.alive && in.parent == kNone;
+    const bool isPrefab = roots == 1 && !st.instances.empty() && st.instances[0].parent == kNone && st.instances[0].def == 0;
+    if (!isPrefab || st.mesh.aliveFaceCount() > 0 || st.mesh.aliveEdgeCount() > 0) {
         ComponentDef d;
         d.name = QFileInfo(path).completeBaseName().toStdString();
         d.uid = "file:" + QFileInfo(path).fileName().toStdString(); // stays linked when placed again

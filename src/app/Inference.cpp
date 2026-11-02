@@ -77,14 +77,15 @@ Id InferenceEngine::pickInstance(double px, double py, double* tOut, Vec3* norma
     Id best = kNone;
     double bestT = std::numeric_limits<double>::infinity();
     if (normalOut) *normalOut = Vec3();
-    if (st.editing != kNone) return kNone;
     Ray r = cam_.ray(px, py);
     const bool wire = doc_.style.faceStyle == RenderStyle::Wireframe;
-    for (Id i = 0; i < (Id)st.instances.size(); ++i) {
-        const Instance& I = st.instances[i];
-        if (!I.alive || I.hidden || ignoredInstances.count(i)) continue;
-        const Mesh& m = st.defs[I.def].mesh;
-        Mat4 xf = instanceWorldXf(st, i), inv = xf.inverted();
+    // Everything inside a component counts as that component.
+    for (const PlacedInstance& placed : placedInstances(st)) {
+        if (!placed.active || placed.root == kNone || placed.inst == st.editing || ignoredInstances.count(placed.root)) continue;
+        const Id i = placed.root;
+        const Mesh& m = st.defs[placed.def].mesh;
+        const Mat4& xf = placed.xf;
+        const Mat4 inv = xf.inverted();
         // Ray in definition coordinates; same parameter t as in world space.
         Ray lr{inv.transformPoint(r.origin), inv.transformDir(r.dir)};
         if (!wire)
@@ -119,25 +120,21 @@ Id InferenceEngine::pickInstance(double px, double py, double* tOut, Vec3* norma
     return best;
 }
 
-bool InferenceEngine::snapsTo(Id i) const {
-    const ModelState& st = doc_.state;
-    const Instance& I = st.instances[i];
+bool InferenceEngine::snapsTo(const PlacedInstance& p) const {
     // The open component is the active mesh itself.
-    return I.alive && !I.hidden && i != st.editing && !ignoredInstances.count(i);
+    return p.inst != doc_.state.editing && (p.root == kNone || !ignoredInstances.count(p.root));
 }
 
-const std::vector<InferenceEngine::Segment>& InferenceEngine::instanceEdges(Id i) const {
-    const ModelState& st = doc_.state;
-    const Mesh& m = st.defs[st.instances[i].def].mesh;
-    const Mat4 xf = instanceWorldXf(st, i);
-    CachedEdges& c = instEdges_[i];
-    if (c.revision != m.revision || !std::equal(std::begin(c.xf.m), std::end(c.xf.m), std::begin(xf.m))) {
+const std::vector<InferenceEngine::Segment>& InferenceEngine::instanceEdges(int index, const PlacedInstance& p) const {
+    const Mesh& m = doc_.state.defs[p.def].mesh;
+    CachedEdges& c = instEdges_[index];
+    if (c.revision != m.revision || !std::equal(std::begin(c.xf.m), std::end(c.xf.m), std::begin(p.xf.m))) {
         c.revision = m.revision;
-        c.xf = xf;
+        c.xf = p.xf;
         c.edges.clear();
         for (const Edge& E : m.edges)
             if (E.alive && !E.soft && !E.hidden)
-                c.edges.push_back({xf.transformPoint(m.pos(E.v[0])), xf.transformPoint(m.pos(E.v[1]))});
+                c.edges.push_back({p.xf.transformPoint(m.pos(E.v[0])), p.xf.transformPoint(m.pos(E.v[1]))});
     }
     return c.edges;
 }
@@ -160,9 +157,10 @@ bool InferenceEngine::pickAnyEdge(double px, double py, double tolPx, const std:
         bestD = pixelDistance(hit.p, px, py);
         found = true;
     }
-    for (Id i = 0; i < (Id)doc_.state.instances.size(); ++i) {
-        if (!snapsTo(i)) continue;
-        for (const Segment& s : instanceEdges(i)) {
+    const std::vector<PlacedInstance> placed = placedInstances(doc_.state);
+    for (int i = 0; i < (int)placed.size(); ++i) {
+        if (!snapsTo(placed[i])) continue;
+        for (const Segment& s : instanceEdges(i, placed[i])) {
             Vec3 q = closest(s.a, s.b);
             double d = pixelDistance(q, px, py);
             if (d >= bestD) continue;
@@ -367,11 +365,10 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     if (bestV == kNone) {
         const ModelState& st = doc_.state;
         double bd = snap;
-        for (Id i = 0; i < (Id)st.instances.size(); ++i) {
-            const Instance& I = st.instances[i];
-            if (!snapsTo(i)) continue;
-            Mat4 xf = instanceWorldXf(st, i);
-            for (const Vertex& v : st.defs[I.def].mesh.vertices) {
+        for (const PlacedInstance& placed : placedInstances(st)) {
+            if (!snapsTo(placed)) continue;
+            const Mat4& xf = placed.xf;
+            for (const Vertex& v : st.defs[placed.def].mesh.vertices) {
                 if (!v.alive) continue;
                 Vec3 p = xf.transformPoint(v.p);
                 double d = pixelDistance(p, px, py);
@@ -402,9 +399,10 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     std::optional<Segment> instMid;
     if (bestV == kNone && !instPoint && bestMid == kNone) {
         double bd = snap;
-        for (Id i = 0; i < (Id)doc_.state.instances.size(); ++i) {
-            if (!snapsTo(i)) continue;
-            for (const Segment& s : instanceEdges(i)) {
+        const std::vector<PlacedInstance> placed = placedInstances(doc_.state);
+        for (int i = 0; i < (int)placed.size(); ++i) {
+            if (!snapsTo(placed[i])) continue;
+            for (const Segment& s : instanceEdges(i, placed[i])) {
                 Vec3 mid = (s.a + s.b) * 0.5;
                 double d = pixelDistance(mid, px, py);
                 if (d < bd && visible(mid)) {
@@ -565,9 +563,10 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
                 if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge});
             }
         // Edges of components meeting at the reference point.
-        for (Id i = 0; i < (Id)doc_.state.instances.size(); ++i) {
-            if (!snapsTo(i)) continue;
-            for (const Segment& s : instanceEdges(i)) {
+        const std::vector<PlacedInstance> placed = placedInstances(doc_.state);
+        for (int i = 0; i < (int)placed.size(); ++i) {
+            if (!snapsTo(placed[i])) continue;
+            for (const Segment& s : instanceEdges(i, placed[i])) {
                 Vec3 d = s.a.nearlyEquals(*o.ref) ? s.b - s.a : s.b.nearlyEquals(*o.ref) ? s.a - s.b : Vec3();
                 if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge});
             }

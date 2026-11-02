@@ -87,6 +87,23 @@ bottom. Screenshots help.
 - [ ] Right-click a component > Save as Prefab; Window > Prefab Browser lists it; **real mouse drag into the model**: blue box follows, lands on the surface; double-click carries it on the mouse, Esc cancels; Delete; Open to Edit
 - [ ] A prefab in another window or a new model comes with its materials; two placed copies edit together
 
+## Animation
+- [ ] Right-click a component > Properties: small window; choose func_door: a script appears; message says it needs two states
+- [ ] Double-click the door, F5 (name suggested CLOSED), rotate it about its hinge edge, F5 (OPEN), Esc; Go To shows each state; Rename, Delete, Undo
+- [ ] Ctrl+G: walking into the door opens it, along a real arc, textures stay on; it closes after 3 s; the HUD says "E press" when aiming at it
+- [ ] A second component as func_button (IDLE, PRESSED); door Name `door1`, button Target `door1`: the door no longer opens by touch or E, only by the button
+- [ ] A component with a frame and a separate panel: only the panel moves; the frame still collides
+- [ ] func_actor with 3+ states, preset "loop through states": runs as keyframes forever; a state that scales the geometry blends
+- [ ] Write a script error: Check gives the line; in the game the error shows red in the corner and the rest keeps working
+- [ ] Save as Preset, it is offered next time; Save as Prefab keeps states, class and script; save and reopen the model
+
+## Sources, targets, nesting
+- [ ] Properties has General, Targets and Sources tabs. Button: Add Target twice, pick names, set delays of 0 and 2 s; in the game the first fires at once and the second 2 s later
+- [ ] On the door, Sources lists the button; ✕ stops it firing; Add Source links another entity, naming the door if it had no name
+- [ ] Select two components, Make Component; click selects the whole; double-click opens it, click and move a part; double-click again goes a level deeper; Esc comes out one level at a time; other copies follow
+- [ ] A door with a handle inside (states recorded with the handle moving along), placed in a frame component, Save as Prefab, drop it twice: both open, with handles, and the frames stay; open it from the Prefab Browser and it still edits
+- [ ] Dropping a prefab onto an open component puts it inside; dropping it into itself is refused; undo at each step; save, reopen, export glTF and STL: everything inside is there
+
 ## Lights and cameras
 - [ ] Draw > Lights: point light above the clicked point; `3` before clicking changes the height; spot and directional aim with a second click; Sun at night shows them best
 - [ ] Window > Scene: colour, brightness, range, cone, softness; list follows the selection; Delete; Undo

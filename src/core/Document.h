@@ -77,6 +77,16 @@ struct RenderStyle {
     bool shadows = false;      // sun shadows on faces and the ground
     bool ambientOcclusion = false; // darkening in creases and corners (screen space)
     bool antialiasing = true;  // multisampling
+    bool backfaceCulling = false; // the back of a face is not drawn or picked
+    bool sun = true;           // sunlight and the sun in the sky
+    double sunAzimuth = 207;   // degrees clockwise from +Y (north, green axis)
+    double sunAltitude = 48;   // degrees above the horizon
+    double sunIntensity = 1.0;
+    // Unit vector towards the sun.
+    Vec3 sunDirection() const {
+        const double az = sunAzimuth * kPi / 180, alt = sunAltitude * kPi / 180;
+        return {std::sin(az) * std::cos(alt), std::cos(az) * std::cos(alt), std::sin(alt)};
+    }
     Color background = Color::rgb8(255, 255, 255);
     Color skyColor = Color::rgb8(166, 205, 236);
     Color horizonColor = Color::rgb8(222, 234, 244);

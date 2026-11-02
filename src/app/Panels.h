@@ -121,6 +121,28 @@ private:
     bool updating_ = false;
 };
 
+// Direction and strength of the sunlight.
+class SunPanel : public QWidget {
+    Q_OBJECT
+public:
+    SunPanel(Document* doc, Viewport* vp, QWidget* parent = nullptr);
+    void refresh();
+
+signals:
+    void styleChanged();
+
+private:
+    void apply();
+    Document* doc_;
+    Viewport* vp_;
+    QCheckBox* sun_;
+    QCheckBox* shadows_;
+    QDoubleSpinBox* azimuth_;
+    QDoubleSpinBox* altitude_;
+    QDoubleSpinBox* intensity_;
+    bool updating_ = false;
+};
+
 class StylesPanel : public QWidget {
     Q_OBJECT
 public:

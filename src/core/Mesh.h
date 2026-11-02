@@ -144,6 +144,9 @@ public:
     // sharing the edge are merged into one instead (SketchUp eraser behaviour).
     void eraseEdge(Id e, bool heal = true);
     void removeOrphanVertices();
+    // Removes those of the given edges that no longer bound any face (one
+    // adjacency pass, for bulk edits).
+    void removeEdgesWithoutFaces(const std::vector<Id>& candidates);
     void reverseFace(Id f);
 
     // Push/pull a face along its normal by dist. keepOriginal leaves the starting

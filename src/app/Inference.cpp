@@ -56,6 +56,7 @@ Id InferenceEngine::pickFace(double px, double py, double* tOut, const std::set<
             if (skip) continue;
         }
         double t;
+        if (doc_.style.backfaceCulling && !doc_.style.xray && F.normal.dot(r.dir) >= 0) continue; // not drawn
         if (m.rayFace(f, r, t) && t < bestT) {
             bestT = t;
             best = f;
@@ -90,6 +91,8 @@ Id InferenceEngine::pickInstance(double px, double py, double* tOut, Vec3* norma
             for (Id f = 0; f < (Id)m.faces.size(); ++f) {
                 if (!m.faces[f].alive || m.faces[f].hidden) continue;
                 double t;
+                if (doc_.style.backfaceCulling && !doc_.style.xray &&
+                    transformCovector(xf, m.faces[f].normal).dot(r.dir) >= 0) continue; // not drawn
                 if (m.rayFace(f, lr, t) && t < bestT) {
                     bestT = t;
                     best = i;

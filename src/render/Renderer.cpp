@@ -62,6 +62,7 @@ uniform sampler2D uSamF; uniform sampler2D uSamB;
 uniform int uMode;          // 0 shaded, 1 textured, 2 hidden line, 3 monochrome
 uniform vec4 uBg; uniform vec4 uMonoF; uniform vec4 uMonoB;
 uniform vec3 uLight; uniform float uAlpha; uniform float uFade;
+uniform bool uSunOn; uniform vec3 uSunColor; uniform vec3 uSkyAmbient; uniform vec3 uGroundAmbient;
 out vec4 fragColor;
 void main() {
     bool front = gl_FrontFacing;
@@ -75,6 +76,14 @@ void main() {
     }
     if (uMode == 3) base = front ? uMonoF : uMonoB;
     float diff = max(dot(n, uLight), 0.0);
+    if (uSunOn) {
+        // Light from the sky above and bounced off the ground, plus the sun.
+        vec3 lit = mix(uGroundAmbient, uSkyAmbient, n.z * 0.5 + 0.5);
+        float sh = (uShadows && diff > 0.0) ? shadowAt(vWorld, n) : 1.0;
+        lit += uSunColor * diff * sh;
+        fragColor = vec4(mix(min(base.rgb * lit, vec3(1.0)), vec3(1.0), uFade), base.a * uAlpha);
+        return;
+    }
     float light = 0.60 + 0.40 * diff;
     if (uShadows) light = 0.50 + 0.50 * diff * (diff > 0.0 ? shadowAt(vWorld, n) : 1.0);
     fragColor = vec4(mix(base.rgb * light, vec3(1.0), uFade), base.a * uAlpha);
@@ -153,6 +162,7 @@ in vec2 vNdc;
 uniform mat4 uInvVP;
 uniform vec4 uSky; uniform vec4 uHorizon; uniform vec4 uGround; uniform vec4 uBg;
 uniform bool uUseSky; uniform bool uUseGround;
+uniform bool uSunOn; uniform vec3 uSunDir; uniform vec3 uSunColor; uniform float uDaylight;
 out vec4 fragColor;
 void main() {
     vec4 a = uInvVP * vec4(vNdc, -1.0, 1.0);
@@ -166,6 +176,21 @@ void main() {
         if (!uUseGround) { fragColor = uUseSky ? uHorizon : uBg; return; }
         float t = clamp(-dir.z * 6.0, 0.0, 1.0);
         fragColor = mix(mix(uGround, uHorizon, 0.35), uGround, t);
+    }
+    if (uSunOn) {
+        // Night falls with the sun; the sky around it glows, the disc burns out.
+        float keep = mix(0.14, 1.0, uDaylight);
+        if (uUseSky || uUseGround) fragColor.rgb *= keep;
+        float c = dot(dir, uSunDir);
+        if (uUseSky && dir.z >= 0.0) {
+            // A soft glow around a disc brighter than anything near it.
+            float halo = pow(max(c, 0.0), 900.0) * 0.45 + pow(max(c, 0.0), 40.0) * 0.14;
+            fragColor.rgb += uSunColor * halo;
+            float disc = smoothstep(0.99975, 0.99985, c);
+            fragColor.rgb = mix(fragColor.rgb, vec3(1.0, 1.0, 0.97), disc * step(0.001, uSunDir.z + 0.03));
+        } else if (uUseGround && dir.z < 0.0) {
+            fragColor.rgb *= mix(0.85, 1.05, clamp(uSunDir.z * 1.5, 0.0, 1.0));
+        }
     }
     // Shadows cast onto the ground plane (z = 0).
     vec3 o = a.xyz / a.w;
@@ -294,7 +319,7 @@ void main() {
 )";
 
 constexpr int kShadowSize = 4096;
-const Vec3 kLightDir = Vec3(-0.3, -0.6, 0.75).normalized(); // towards the sun
+const Vec3 kLightDir = Vec3(-0.3, -0.6, 0.75).normalized(); // the plain modelling light
 
 void setColor(QOpenGLShaderProgram* p, const char* name, const Color& c) { p->setUniformValue(name, c.r, c.g, c.b, c.a); }
 
@@ -558,6 +583,11 @@ void Renderer::buildMesh(MeshGpu& g, const Mesh& m, const Document& doc) {
         for (const auto& h : F.holes) add(h);
         auto tris = triangulatePolygon(loops);
         if (tris.empty()) continue;
+        // Triangles wind around the front side, which back face culling relies on.
+        for (auto& t : tris) {
+            const Vec3 n3 = (m.pos(flat[t[1]]) - m.pos(flat[t[0]])).cross(m.pos(flat[t[2]]) - m.pos(flat[t[0]]));
+            if (n3.dot(F.normal) < 0) std::swap(t[1], t[2]);
+        }
 
         const Material* mf = doc.material(F.front.material);
         const Material* mb = doc.material(F.back.material);
@@ -711,6 +741,10 @@ void Renderer::drawBackground(const Document& doc, const Camera& cam) {
     setColor(skyProg_.get(), "uBg", st.background);
     skyProg_->setUniformValue("uUseSky", st.sky);
     skyProg_->setUniformValue("uUseGround", st.ground);
+    skyProg_->setUniformValue("uSunOn", sunOn_);
+    skyProg_->setUniformValue("uSunDir", QVector3D((float)lightDir_.x, (float)lightDir_.y, (float)lightDir_.z));
+    skyProg_->setUniformValue("uSunColor", QVector3D((float)sunColor_.x, (float)sunColor_.y, (float)sunColor_.z));
+    skyProg_->setUniformValue("uDaylight", (float)daylight_);
     setShadowUniforms(skyProg_.get());
     glBindVertexArray(skyVao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -747,8 +781,12 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
     setColor(faceProg_.get(), "uBg", st.background);
     setColor(faceProg_.get(), "uMonoF", Color::rgb8(255, 255, 255));
     setColor(faceProg_.get(), "uMonoB", st.backColor);
-    const Vec3& L = kLightDir;
+    const Vec3& L = lightDir_;
     faceProg_->setUniformValue("uLight", QVector3D((float)L.x, (float)L.y, (float)L.z));
+    faceProg_->setUniformValue("uSunOn", sunOn_);
+    faceProg_->setUniformValue("uSunColor", QVector3D((float)sunColor_.x, (float)sunColor_.y, (float)sunColor_.z));
+    faceProg_->setUniformValue("uSkyAmbient", QVector3D((float)skyAmbient_.x, (float)skyAmbient_.y, (float)skyAmbient_.z));
+    faceProg_->setUniformValue("uGroundAmbient", QVector3D((float)groundAmbient_.x, (float)groundAmbient_.y, (float)groundAmbient_.z));
     faceProg_->setUniformValue("uSamF", 0);
     faceProg_->setUniformValue("uSamB", 1);
     glEnable(GL_POLYGON_OFFSET_FILL);
@@ -756,6 +794,8 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
     // A mirroring transform flips the triangle winding.
     const bool mirrored = model.det3() < 0;
     if (mirrored) glFrontFace(GL_CW);
+    const bool cull = culling_ && fade <= 0;
+    if (cull) glEnable(GL_CULL_FACE);
     glBindVertexArray(g.vao);
     const bool xray = st.xray;
     for (const Batch& b : g.batches) {
@@ -786,7 +826,25 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindVertexArray(0);
     glDisable(GL_POLYGON_OFFSET_FILL);
+    if (cull) glDisable(GL_CULL_FACE);
     if (mirrored) glFrontFace(GL_CCW);
+}
+
+void Renderer::updateSun(const RenderStyle& st) {
+    sunOn_ = st.sun;
+    lightDir_ = st.sun ? st.sunDirection() : kLightDir;
+    if (!st.sun) return;
+    // Warm and dim near the horizon, gone below it; the sky fades a little later.
+    const double h = lightDir_.z;
+    const double above = std::clamp((h + 0.02) / 0.12, 0.0, 1.0);
+    const double high = std::clamp(h / 0.35, 0.0, 1.0);
+    const double I = std::max(st.sunIntensity, 0.0);
+    const Vec3 warm(1.0, 0.55, 0.28), white(1.0, 0.96, 0.86);
+    sunColor_ = lerp(warm, white, high) * (0.62 * I * above * above * (3 - 2 * above));
+    daylight_ = std::clamp((h + 0.12) / 0.45, 0.0, 1.0);
+    const double amb = 0.22 + 0.78 * daylight_;
+    skyAmbient_ = Vec3(0.46, 0.50, 0.56) * amb;
+    groundAmbient_ = Vec3(0.36, 0.34, 0.30) * amb;
 }
 
 void Renderer::setShadowUniforms(QOpenGLShaderProgram* p) {
@@ -854,12 +912,16 @@ void Renderer::drawAmbientOcclusion(const std::vector<std::pair<const MeshGpu*, 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     depthProg_->bind();
+    if (culling_) glEnable(GL_CULL_FACE);
     for (const auto& [g, xf] : meshes) {
         setMat(depthProg_.get(), "uMVP", cam.viewProjection() * xf);
+        if (xf.det3() < 0) glFrontFace(GL_CW);
         glBindVertexArray(g->vao);
         for (const Batch& b : g->batches)
             if (!b.transparent && !b.paint) glDrawArrays(GL_TRIANGLES, b.first, b.count);
+        glFrontFace(GL_CCW);
     }
+    glDisable(GL_CULL_FACE);
 
     // 2. Occlusion from that depth.
     const Mat4 proj = cam.projection();
@@ -905,8 +967,8 @@ void Renderer::renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>
     // range reaches down to the ground plane so ground shadows are covered.
     Vec3 c = (mn + mx) * 0.5;
     double r = std::max((mx - mn).length() * 0.5, 0.5);
-    double below = std::max(0.0, c.z + r) / kLightDir.z; // centre to ground along the light
-    Mat4 view = Mat4::lookAt(c + kLightDir * (r * 2), c, Vec3(0, 0, 1));
+    double below = std::max(0.0, c.z + r) / std::max(lightDir_.z, 0.1); // centre to ground along the light
+    Mat4 view = Mat4::lookAt(c + lightDir_ * (r * 2), c, Vec3(0, 0, 1));
     lightVP_ = Mat4::ortho(-r, r, -r, r, r * 0.5, r * 3 + below) * view;
     shadowBias_ = 2 * r / kShadowSize * 1.5;
 
@@ -963,6 +1025,13 @@ void Renderer::collectEdges(const Mesh& m, const Mat4& model, const Document& do
             ++nf;
         }
         Vec3 mid = (a + b) * 0.5;
+        if (culling_ && nf > 0 && !isSel) {
+            // Every face of this edge is culled: it would hang in empty space.
+            bool anyFront = false;
+            for (Id f : m.edgeFaces(e))
+                if (m.faces[f].alive && !m.faces[f].hidden && facing(f, mid)) anyFront = true;
+            if (!anyFront) continue;
+        }
         if (nf == 1) isProfile = true;
         else if (nf == 2) isProfile = facing(f0, mid) != facing(f1, mid);
         if (st.faceStyle == RenderStyle::Wireframe) isProfile = false;
@@ -992,6 +1061,14 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     vpW_ = (int)std::lround(cam.width * dpr);
     vpH_ = (int)std::lround(cam.height * dpr);
     glViewport(0, 0, vpW_, vpH_);
+    // QPainter on the previous frame leaves its state behind: drawing text, for
+    // one, keeps a blend mode on that would wash this whole frame out to white.
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glActiveTexture(GL_TEXTURE0);
     glClearColor(st.background.r, st.background.g, st.background.b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
@@ -1031,8 +1108,10 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     const MeshGpu& activeGpu = meshGpu(doc, editDef);
     const Mesh& active = ms.activeMesh();
 
+    updateSun(st);
+    culling_ = st.backfaceCulling && !st.xray && st.faceStyle != RenderStyle::Wireframe;
     shadowsOn_ = false;
-    if (st.shadows && st.faceStyle != RenderStyle::Wireframe && st.faceStyle != RenderStyle::HiddenLine) {
+    if (st.shadows && lightDir_.z > 0.02 && st.faceStyle != RenderStyle::Wireframe && st.faceStyle != RenderStyle::HiddenLine) {
         Vec3 mn, mx, amn, amx;
         bool any = false, anyActive = false;
         modelBounds(ms, mn, mx, any);
@@ -1074,7 +1153,9 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
             if (!doc.selection.faces.count(f)) addFace(f);
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(-1.0f, -1.0f);
+        if (culling_) glEnable(GL_CULL_FACE);
         drawOverlayFaces(sel, cam, Color::rgb8(0, 0, 220), true);
+        glDisable(GL_CULL_FACE);
         glDisable(GL_POLYGON_OFFSET_FILL);
     }
 

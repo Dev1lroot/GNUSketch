@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SelfTest.h"
 
+#include "GameMode.h"
+
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QEventLoop>
+#include <QJsonObject>
+#include <QPushButton>
+#include <QSettings>
+#include <QTimer>
+
 #include "MainWindow.h"
 #include "ModifyTools.h"
 #include "TerrainTools.h"
@@ -34,6 +45,22 @@
 namespace gs {
 
 namespace {
+
+void waitMs(int ms) {
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
+void solidBoxAt(Mesh& m, const Vec3& mn, const Vec3& mx) {
+    m.drawPolyline({{mn.x, mn.y, mn.z}, {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mn.x, mx.y, mn.z}}, true);
+    const Vec3 c((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mn.z);
+    for (Id f = 0; f < (Id)m.faces.size(); ++f)
+        if (m.faces[f].alive && m.facePlane(f).contains(c) && m.pointInFace(f, c)) {
+            m.pushPull(f, (mx.z - mn.z) * m.faces[f].normal.z);
+            return;
+        }
+}
 
 struct Driver {
     Viewport* vp;
@@ -1065,6 +1092,338 @@ int runSelfTest(MainWindow& w) {
     Document re;
     bool loaded = loadNative(re, file, nullptr, &err);
     d.check(saved && loaded && re.mesh().aliveFaceCount() == facesNow, "save/load roundtrip");
+
+    // Effects menu: settings dialog with live preview, on selected faces.
+    {
+        // The user's remembered effect settings are not the test's to overwrite.
+        QSettings userSettings;
+        userSettings.beginGroup(QStringLiteral("effects"));
+        QVariantMap savedEffects;
+        for (const QString& k : userSettings.childKeys()) savedEffects[k] = userSettings.value(k);
+        userSettings.remove(QString());
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        d.pump();
+        d.mesh().viewHint = Vec3(0, 0, 10);
+        d.mesh().groundFacesDown = false;
+        d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}}, true);
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) { d.mesh().pushPull(f, 2.0 * d.mesh().faces[f].normal.z); break; }
+        doc.commitOp();
+        vp->zoomExtents();
+        d.pump();
+        auto action = [&](const char* name) { return w.findChild<QAction*>(QString::fromLatin1(name)); };
+        QAction* noise = action("effect_noise");
+        QAction* hex = action("effect_remesh_to_hexagons");
+        QAction* decimate = action("effect_decimate");
+        QAction* blur = action("effect_blur");
+        QAction* repeat = action("repeateffect");
+        d.check(noise && hex && decimate && blur && repeat, "Effects menu has Noise, Blur, Decimate, Remesh and Repeat");
+        if (noise && hex && decimate && blur && repeat) {
+            doc.selection.clear();
+            doc.notifySelection();
+            d.check(!noise->isEnabled(), "effects are disabled without a selection");
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) doc.selection.faces.insert(f);
+            doc.notifySelection();
+            d.check(noise->isEnabled() && !repeat->isEnabled(), "effects enabled by the selection; nothing to repeat yet");
+
+            // Drives the real dialog: changes a setting, sees the preview, accepts or cancels.
+            auto throughDialog = [&](QAction* a, bool accept, const std::function<void(QDialog*)>& inDialog = {}) {
+                bool shown = false;
+                QTimer::singleShot(0, &w, [&] {
+                    auto* dlg = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                    if (!dlg) return;
+                    shown = true;
+                    if (inDialog) inDialog(dlg);
+                    QDialogButtonBox* bb = dlg->findChild<QDialogButtonBox*>();
+                    if (accept) bb->button(QDialogButtonBox::Ok)->click();
+                    else bb->button(QDialogButtonBox::Cancel)->click();
+                });
+                a->trigger();
+                d.pump();
+                return shown;
+            };
+
+            const int faces = d.mesh().aliveFaceCount();
+            const Selection selBefore = doc.selection;
+            int during = 0;
+            const bool shownCancel = throughDialog(noise, false, [&](QDialog*) { during = d.mesh().aliveFaceCount(); });
+            d.check(shownCancel && during > faces, "the Noise dialog previews on the model");
+            d.check(d.mesh().aliveFaceCount() == faces && doc.selection == selBefore, "cancelling an effect restores model and selection");
+
+            const std::string undoBefore = doc.undoName();
+            const bool shownOk = throughDialog(noise, true, [&](QDialog* dlg) {
+                // Distance (first spin box) to 10 cm.
+                if (auto* spin = dlg->findChild<QDoubleSpinBox*>()) spin->setValue(0.1);
+                waitMs(250); // the preview follows the setting
+            });
+            d.check(shownOk && doc.undoName() == "Noise", "accepting keeps the effect as one undo step");
+            d.check(isSolid(d.mesh()), "noise on a closed box stays closed");
+            d.check(!doc.selection.faces.empty() && (int)doc.selection.faces.size() == d.mesh().aliveFaceCount(), "the result is selected");
+            d.check(repeat->isEnabled() && repeat->text().contains("Noise"), "Repeat names the last effect");
+            const int noisy = d.mesh().aliveFaceCount();
+            repeat->trigger();
+            d.pump();
+            d.check(doc.undoName() == "Noise" && d.mesh().aliveFaceCount() >= noisy, "Repeat runs without a dialog");
+            w.findChild<QAction*>(QStringLiteral("undo"))->trigger();
+            w.findChild<QAction*>(QStringLiteral("undo"))->trigger();
+            d.pump();
+            d.check(d.mesh().aliveFaceCount() == faces, "undo brings the box back");
+
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) doc.selection.faces.insert(f);
+            doc.notifySelection();
+            d.check(throughDialog(hex, true), "Hexagons runs through its dialog");
+            int sixes = 0;
+            for (const Face& F : d.mesh().faces)
+                if (F.alive && F.outer.size() == 6) ++sixes;
+            d.check(sixes > 20 && isSolid(d.mesh()), "Hexagons turns the box into hexagon cells");
+            QImage cells = vp->grabFramebuffer();
+            d.check(!cells.isNull(), "the hexagon box renders");
+            d.check(throughDialog(decimate, true), "Decimate runs through its dialog");
+            d.check(isSolid(d.mesh()), "decimate leaves the box closed");
+        }
+        userSettings.remove(QString());
+        for (auto it = savedEffects.cbegin(); it != savedEffects.cend(); ++it) userSettings.setValue(it.key(), it.value());
+    }
+
+    // Sun: lighting, the disc in the sky, the panel; culling; both together.
+    {
+        auto diffCount = [](const QImage& a, const QImage& b, int*) {
+            int n = 0;
+            if (a.size() != b.size()) return a.width() * a.height();
+            for (int y = 0; y < a.height(); ++y)
+                for (int x = 0; x < a.width(); ++x)
+                    if (a.pixel(x, y) != b.pixel(x, y)) ++n;
+            return n;
+        };
+        doc.reset();
+        vp->setTool(ToolId::Select);
+        d.mesh().viewHint = Vec3(0, 0, 10);
+        d.mesh().groundFacesDown = false;
+        // A single-sided square seen from above, and a closed box next to it.
+        d.mesh().drawPolyline({{0, 0, 0.5}, {4, 0, 0.5}, {4, 4, 0.5}, {0, 4, 0.5}}, true);
+        Camera& cam = vp->camera();
+        cam.eye = Vec3(2, -6, 8);
+        cam.target = Vec3(2, 2, 0.5);
+        d.pump();
+        const QImage top = vp->grabFramebuffer();
+        QAction* sun = w.findChild<QAction*>(QStringLiteral("sun"));
+        QAction* cull = w.findChild<QAction*>(QStringLiteral("backfaceculling"));
+        d.check(sun && cull && sun->isChecked() && !cull->isChecked(), "View > Render has Sun (on) and Backface Culling (off)");
+        if (sun && cull) {
+            sun->trigger();
+            d.pump();
+            d.check(diffCount(top, vp->grabFramebuffer(), nullptr) > 500, "switching the sun off changes the lighting");
+            sun->trigger();
+            d.pump();
+            d.check(diffCount(top, vp->grabFramebuffer(), nullptr) == 0, "switching it back restores the frame");
+
+            // Evening: the same scene gets darker and warmer.
+            doc.style.sunAltitude = 6;
+            d.pump();
+            const QImage evening = vp->grabFramebuffer();
+            doc.style.sunAltitude = -20;
+            d.pump();
+            const QImage night = vp->grabFramebuffer();
+            auto brightness = [](const QImage& im) {
+                double sum = 0;
+                for (int y = 0; y < im.height(); y += 4)
+                    for (int x = 0; x < im.width(); x += 4) sum += qGray(im.pixel(x, y));
+                return sum;
+            };
+            d.check(brightness(night) < brightness(evening) && brightness(evening) < brightness(top), "the frame darkens as the sun sets");
+            // Looking towards the sun shows its disc in the sky.
+            doc.style.sunAzimuth = 0;
+            doc.style.sunAltitude = 20;
+            cam.eye = Vec3(2, -6, 2);
+            const Vec3 sd = doc.style.sunDirection();
+            cam.target = cam.eye + sd;
+            d.pump();
+            const QImage toSun = vp->grabFramebuffer();
+            const QRgb mid = toSun.pixel(toSun.width() / 2, toSun.height() / 2);
+            d.check(qRed(mid) > 240 && qGreen(mid) > 235 && qBlue(mid) > 200, "the sun's disc is in the sky, in its direction");
+            doc.style = RenderStyle();
+
+            // Culling: the square faces up; from above it is there, from below gone.
+            cam.eye = Vec3(2, -6, 8);
+            cam.target = Vec3(2, 2, 0.5);
+            d.pump();
+            const QImage above = vp->grabFramebuffer();
+            cull->trigger();
+            d.pump();
+            d.check(doc.style.backfaceCulling && diffCount(above, vp->grabFramebuffer(), nullptr) == 0, "culling keeps a face seen from the front");
+            const QPointF centreOfSquare = d.screen(Vec3(2, 2, 0.5));
+            Id pickedFront = vp->inference().pickFace(centreOfSquare.x(), centreOfSquare.y());
+            d.check(pickedFront != kNone, "a face seen from the front is picked");
+            cam.eye = Vec3(2, -4, -6);
+            cam.target = Vec3(2, 2, 0.5);
+            d.pump();
+            const QImage culled = vp->grabFramebuffer();
+            const QPointF below = d.screen(Vec3(2, 2, 0.5));
+            d.check(vp->inference().pickFace(below.x(), below.y()) == kNone, "a culled face is not picked");
+            cull->trigger();
+            d.pump();
+            const QImage shown = vp->grabFramebuffer();
+            d.check(vp->inference().pickFace(below.x(), below.y()) != kNone, "without culling the back is picked again");
+            d.check(diffCount(culled, shown, nullptr) > 1000, "culling removes the back of a face");
+            // Mirrored component: winding flips, front stays front.
+            doc.style.backfaceCulling = true;
+            Selection all;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) all.faces.insert(f);
+            Id inst = makeComponent(doc.state, all, "Mirrored");
+            doc.state.instances[inst].xf = Mat4::translation(Vec3(8, 0, 0)) * Mat4::scale(Vec3(-1, 1, 1));
+            // The square now spans x = 4..8.
+            cam.eye = Vec3(6, -6, 8);
+            cam.target = Vec3(6, 2, 0.5);
+            d.pump();
+            const QPointF q = d.screen(Vec3(6, 2, 0.5));
+            d.check(vp->inference().pickInstance(q.x(), q.y()) == inst, "a mirrored component is still picked from its front");
+            const QImage mirroredFront = vp->grabFramebuffer();
+            doc.style.backfaceCulling = false;
+            d.pump();
+            d.check(diffCount(mirroredFront, vp->grabFramebuffer(), nullptr) == 0, "a mirrored component is still drawn from its front");
+        }
+        doc.style = RenderStyle();
+    }
+
+    // The style survives saving, which is also how the game window gets it.
+    {
+        doc.style.sun = true;
+        doc.style.sunAzimuth = 123;
+        doc.style.sunAltitude = 17;
+        doc.style.sunIntensity = 1.5;
+        doc.style.backfaceCulling = true;
+        doc.style.shadows = true;
+        RenderStyle back;
+        styleFromJson(styleToJson(doc.style), back);
+        d.check(back.sunAzimuth == 123 && back.sunAltitude == 17 && back.sunIntensity == 1.5 && back.backfaceCulling && back.shadows,
+                "sun, culling and shadows are saved with the view");
+        doc.style = RenderStyle();
+    }
+
+    // Game Mode: the placement tool, and the window driven with real key events.
+    {
+        doc.reset();
+        vp->setTool(ToolId::Select);
+        d.mesh().viewHint = Vec3(0, 0, 10);
+        d.mesh().groundFacesDown = false;
+        d.mesh().drawPolyline({{-20, -20, 1}, {20, -20, 1}, {20, 20, 1}, {-20, 20, 1}}, true);
+        Camera& cam = vp->camera();
+        cam.eye = Vec3(0, -15, 15);
+        cam.target = Vec3(0, 0, 1);
+        d.pump();
+
+        Vec3 placed;
+        double placedYaw = 99;
+        int spawns = 0;
+        auto conn = QObject::connect(vp, &Viewport::characterPlaced, vp, [&](const Vec3& p, double y) {
+            placed = p;
+            placedYaw = y;
+            ++spawns;
+        }, Qt::DirectConnection);
+        // The real slot starts the separate process: tested from outside instead.
+        QObject::disconnect(vp, &Viewport::characterPlaced, &w, nullptr);
+        QAction* gameAct = w.findChild<QAction*>(QStringLiteral("gamemode"));
+        d.check(gameAct != nullptr, "Tools has Game Mode");
+        vp->setTool(ToolId::PlaceCharacter);
+        d.check(vp->toolId() == ToolId::PlaceCharacter, "Game Mode starts the placement tool");
+        const QPointF spot = d.screen(Vec3(3, 2, 1));
+        d.move(spot);
+        const QImage ghost = vp->grabFramebuffer();
+        d.check(!ghost.isNull(), "the character's capsule previews at the cursor");
+        d.click(spot);
+        d.pump();
+        d.check(spawns == 1 && placed.nearlyEquals(Vec3(3, 2, 1), 1e-3), "clicking places the character on the surface");
+        d.check(vp->toolId() == ToolId::Select, "the tool ends after placing");
+        const Vec3 f = cam.forward();
+        d.check(std::fabs(placedYaw - std::atan2(f.y, f.x)) < 1e-9, "the character looks the way the camera does");
+        QObject::disconnect(conn);
+
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("game.gsketch"));
+        solidBoxAt(d.mesh(), Vec3(8, -5, 1), Vec3(10, 5, 4)); // a wall ahead
+        doc.style.shadows = true;
+        QJsonObject view;
+        view["style"] = styleToJson(doc.style);
+        QString err;
+        d.check(saveNative(doc, path, view, &err), "the model is saved for the game");
+        doc.style = RenderStyle();
+
+        GameWindow game;
+        d.check(game.load(path, Vec3(3, 2, 1), 0.0, &err), "the game window loads the model");
+        game.show();
+        d.pump();
+        waitMs(100);
+        d.check(game.renderOk(), "the game window renders with its own OpenGL context");
+        // Several frames, with the HUD's text between them. Text leaves GL state
+        // behind; the world must survive it. The HUD's corner is left out.
+        QImage frame;
+        for (int i = 0; i < 3; ++i) frame = game.grabFramebuffer();
+        QSet<QRgb> shades;
+        for (int y = 60; y < frame.height(); y += 9)
+            for (int x = 0; x < frame.width(); x += 9) shades.insert(frame.pixel(x, y));
+        const QRgb overWall = frame.pixel(frame.width() / 2, 70);
+        d.check(shades.size() >= 4 && qBlue(overWall) > qRed(overWall), "the game window shows the world (the sky, over the wall)");
+        d.check(game.world().triangles().size() >= 12, "the collision world holds the model's triangles");
+
+        auto keys = [&](QEvent::Type t, int k, const QString& text = {}) {
+            QKeyEvent e(t, k, Qt::NoModifier, text);
+            QApplication::sendEvent(&game, &e);
+        };
+        game.simulate(1.0);
+        d.check(game.walker().grounded() && std::fabs(game.walker().feet().z - 1) < 0.01, "the character stands on the surface");
+        const double eyeZ = game.walker().eye().z - game.walker().feet().z;
+        d.check(eyeZ > 1.5 && eyeZ < 1.8, "the eye is below the top of the 1.80 m character");
+
+        Vec3 start = game.walker().feet();
+        keys(QEvent::KeyPress, Qt::Key_W, QStringLiteral("w"));
+        game.simulate(0.5);
+        keys(QEvent::KeyRelease, Qt::Key_W, QStringLiteral("w"));
+        d.check(game.walker().feet().x > start.x + 0.8, "W walks forward");
+        d.check(game.grabFramebuffer() != frame, "the view moves with the character");
+        start = game.walker().feet();
+        game.simulate(0.4);
+        start = game.walker().feet();
+        keys(QEvent::KeyPress, Qt::Key_A, QStringLiteral("a"));
+        game.simulate(0.5);
+        keys(QEvent::KeyRelease, Qt::Key_A, QStringLiteral("a"));
+        d.check(game.walker().feet().y > start.y + 0.5, "A walks left");
+        keys(QEvent::KeyPress, Qt::Key_W, QStringLiteral("w"));
+        game.simulate(5.0);
+        keys(QEvent::KeyRelease, Qt::Key_W, QStringLiteral("w"));
+        d.check(game.walker().feet().x < 8 && game.walker().feet().x > 7.5, "the wall stops the character");
+        keys(QEvent::KeyPress, Qt::Key_Space, QStringLiteral(" "));
+        game.simulate(0.1);
+        keys(QEvent::KeyRelease, Qt::Key_Space, QStringLiteral(" "));
+        d.check(game.walker().feet().z > 1.1, "Space jumps");
+        game.simulate(1.5);
+
+        // Mouse look: a click captures, motion turns, Esc frees it.
+        const double yaw0 = game.walker().yaw(), pitch0 = game.walker().pitch();
+        QMouseEvent click(QEvent::MouseButtonPress, QPointF(100, 100), QPointF(100, 100), QCursor::pos(), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&game, &click);
+        d.check(game.mouseCaptured(), "a click captures the mouse");
+        auto motion = [&](QPointF at) {
+            QMouseEvent m(QEvent::MouseMove, at, at, game.mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(&game, &m);
+        };
+        const QPointF c = QPointF(game.rect().center());
+        motion(c); // first report is skipped
+        motion(c + QPointF(40, 0));
+        d.check(game.walker().yaw() < yaw0, "moving the mouse right turns right");
+        motion(c + QPointF(0, -40));
+        d.check(game.walker().pitch() > pitch0, "moving the mouse up looks up");
+        keys(QEvent::KeyPress, Qt::Key_Escape);
+        d.check(!game.mouseCaptured() && game.isVisible(), "Esc frees the mouse first");
+        keys(QEvent::KeyPress, Qt::Key_R, QStringLiteral("r"));
+        d.check(game.walker().feet().nearlyEquals(Vec3(3, 2, 1), 0.01), "R returns to the start");
+        keys(QEvent::KeyPress, Qt::Key_Escape);
+        d.check(!game.isVisible(), "Esc again closes the window");
+    }
 
     std::printf("selftest: %d faces, %d edges, %zu materials, %d failures\n", d.mesh().aliveFaceCount(),
                 d.mesh().aliveEdgeCount(), doc.state.materials.size(), d.failures);

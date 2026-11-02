@@ -3,6 +3,7 @@
 
 #include "CameraTools.h"
 #include "DrawTools.h"
+#include "GameMode.h"
 #include "ModifyTools.h"
 #include "SolidTools.h"
 #include "TerrainTools.h"
@@ -76,6 +77,7 @@ void Viewport::setTool(ToolId id) {
     case ToolId::SolidSubtract:
     case ToolId::SolidTrim:
     case ToolId::SolidSplit: tool_ = std::make_unique<SolidTool>(this, id); break;
+    case ToolId::PlaceCharacter: tool_ = std::make_unique<PlaceCharacterTool>(this); break;
     }
     inference_->resetMemory();
     vcbLabel_ = tool_->vcbLabel();

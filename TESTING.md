@@ -30,6 +30,27 @@ bottom. Screenshots help.
 - [ ] Round Corners: rectangle corners, one cube edge, four top edges, all cube edges; live preview and too-large radius message
 - [ ] Components: select a box, right-click Make Component; Ctrl+Move copies; double-click a copy, push/pull and draw on it (rest fades, other copies change live); Esc / click outside closes; rotate and scale one copy (others unchanged); Make Unique then edit; Explode; undo/redo through all of it; save, reopen, copy/paste between windows
 
+## Effects
+- [ ] Effects menu is greyed out with nothing selected; select a box, Noise: the dialog previews live, Cancel restores it, OK is one Undo
+- [ ] Noise: only the blue axis on a flat plane makes terrain; only red on a wall; Distance and Bump size feel right in meters; New Pattern
+- [ ] Noise/Blur on only the top of a box: the sides stay flat and connected
+- [ ] Blur on a box: corners and edges round off; Keep volume on and off; on a noisy terrain it calms the bumps
+- [ ] Decimate a noisy terrain by percentage and by polygons per m²: the outline stays, the "Polygons: a → b" line is right
+- [ ] Quads / Hexagons / Triangles on a plane, a box, a terrain; Rotation; textures and materials stay on
+- [ ] Subdivide, Triangulate, Merge Flat Faces; Ctrl+F repeats; effects on a component with copies change only the selected one
+
+## Sun and culling
+- [ ] Window > Sun: Direction moves light and shadows; Height low = warm evening, below 0° = night; Brightness; the disc is visible looking towards it
+- [ ] View > Render > Sun off gives the old flat modelling light
+- [ ] Backface Culling: a box looks the same; from inside it you see out; a plane is see-through from behind and cannot be picked from behind
+
+## Game Mode
+- [ ] Ctrl+G, the green capsule follows the cursor; click on a surface: a separate window opens, standing on that spot, looking the same way as the camera
+- [ ] Click in the game window: the cursor hides, the mouse turns without stopping at the window edge (on your Wayland session)
+- [ ] WASD (also with a non-Latin keyboard layout), Shift, Space, arrow keys, R, Tab, F11, Esc then Esc
+- [ ] Walk into walls and slide along them; up stairs and slopes; off a ledge; under a low ceiling; on Noise terrain
+- [ ] Textures, sun, shadows and culling as set in the editor; closing the editor closes the game
+
 ## Materials and textures
 - [ ] Drag an image onto a face (fit), Ctrl+drop (tile), drop onto Materials panel
 - [ ] Paint Bucket with Ctrl/Shift/Alt; colour palette and generated textures

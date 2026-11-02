@@ -201,4 +201,42 @@ std::vector<std::array<int, 3>> triangulatePolygon(const std::vector<std::vector
     return tris;
 }
 
+void flipDegenerateTriangles(const std::vector<Vec2>& flat, std::vector<std::array<int, 3>>& tris) {
+    double scale = 0;
+    for (const Vec2& p : flat) scale = std::max({scale, std::fabs(p.x), std::fabs(p.y)});
+    const double eps = 1e-12 * std::max(scale * scale, 1e-12);
+    auto area = [&](const std::array<int, 3>& t) {
+        return (flat[t[1]] - flat[t[0]]).cross(flat[t[2]] - flat[t[0]]);
+    };
+    for (int round = 0; round < (int)tris.size() * 3; ++round) {
+        bool changed = false;
+        for (size_t a = 0; a < tris.size() && !changed; ++a) {
+            if (std::fabs(area(tris[a])) > eps) continue;
+            // Longest side i->j of the degenerate triangle (i, j, k).
+            int best = 0;
+            double bl = -1;
+            for (int s = 0; s < 3; ++s) {
+                double l = (flat[tris[a][(s + 1) % 3]] - flat[tris[a][s]]).length();
+                if (l > bl) { bl = l; best = s; }
+            }
+            int i = tris[a][best], j = tris[a][(best + 1) % 3], k = tris[a][(best + 2) % 3];
+            for (size_t b = 0; b < tris.size(); ++b) {
+                if (b == a) continue;
+                for (int s = 0; s < 3; ++s) {
+                    if (tris[b][s] != j || tris[b][(s + 1) % 3] != i) continue;
+                    int l = tris[b][(s + 2) % 3];
+                    std::array<int, 3> t1{k, i, l}, t2{l, j, k};
+                    if (area(t1) <= eps || area(t2) <= eps) continue;
+                    tris[a] = t1;
+                    tris[b] = t2;
+                    changed = true;
+                    break;
+                }
+                if (changed) break;
+            }
+        }
+        if (!changed) break;
+    }
+}
+
 } // namespace gs

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // GNUSketch - entry point.
+#include "app/GameMode.h"
 #include "app/MainWindow.h"
 #include "app/SelfTest.h"
 
@@ -81,10 +82,22 @@ int main(int argc, char** argv) {
     parser.addOption(selfTest);
     QCommandLineOption glProbe("gl-probe", "Create an offscreen OpenGL context, render one frame with the real renderer and exit (no window).");
     parser.addOption(glProbe);
+    QCommandLineOption game("game", "Walk around a saved model in the Game Mode window.", "model");
+    parser.addOption(game);
+    QCommandLineOption spawn("spawn", "Game Mode: where the character stands (x,y,z in meters).", "point", "0,0,0");
+    parser.addOption(spawn);
+    QCommandLineOption yaw("yaw", "Game Mode: direction the character looks (radians).", "angle", "0");
+    parser.addOption(yaw);
     parser.addPositionalArgument("file", "Model to open (.gsketch or .obj)");
     parser.process(app);
 
     if (parser.isSet(glProbe)) return gs::runGlProbe();
+
+    if (parser.isSet(game)) {
+        const QStringList p = parser.value(spawn).split(',');
+        const gs::Vec3 feet = p.size() == 3 ? gs::Vec3(p[0].toDouble(), p[1].toDouble(), p[2].toDouble()) : gs::Vec3();
+        return gs::runGameWindow(parser.value(game), feet, parser.value(yaw).toDouble());
+    }
 
     gs::MainWindow w;
     if (!parser.positionalArguments().isEmpty()) w.openFile(parser.positionalArguments().first());

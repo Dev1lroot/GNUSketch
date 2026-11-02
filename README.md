@@ -74,6 +74,33 @@ include its output in the bug report.
   with a radius in mm and a number of segments, with a live preview. Edges between
   two faces get a rounded strip with mitred or spherical corners; corners of
   rectangles and polylines get a tangent arc.
+* **Effects** (menu, like the Effects menu of an image editor) work on the selected
+  faces or components, with a dialog and a live preview; **Ctrl+F** repeats the last
+  one. Faces around the selection stay put and stay connected. A component that has
+  copies outside the selection gets its own geometry first.
+  * **Distort > Noise**: random distortion. Choose which axes may move and the
+    farthest distance, plus bump size, roughness and pattern.
+  * **Soften > Blur**: softens edges and corners, by a distance in meters, optionally
+    keeping the volume.
+  * **Polygons**: **Decimate** (a percentage, or polygons per m²), **Subdivide**
+    (edges per meter), **Quads / Hexagons / Triangles** (rebuild as a regular pattern,
+    in cells per meter), **Triangulate** and **Merge Flat Faces**. Pattern cells are
+    planar on flat surfaces and slightly warped across curved ones, so Solid Tools
+    and exact picking work best on the flat ones.
+* **Sun** (View > Render, Window > Sun): sunlight with sky and ground bounce, the sun
+  itself in the sky, and its direction, height and brightness. Low sun is warm, below
+  the horizon it is night. Shadows follow it.
+* **Backface Culling** (View > Render, off by default): the back of a face is neither
+  drawn nor picked, as in a game engine. New faces drawn on the ground face down, so
+  they vanish from above with this on: use Reverse Faces.
+* **Game Mode** (Ctrl+G, Tools menu, tool set): click to place a character and a separate
+  window opens to walk around the model. The character is 1.80 m tall and 0.30 m
+  across and collides with every visible face. WASD walks, the mouse (or arrow keys)
+  looks, Shift runs, Space jumps, R returns to the start, Tab shows edges, F11 is full
+  screen; Esc frees the mouse, then closes the window. It climbs steps up to 35 cm and
+  slopes up to 50°. Under the model is a floor at the ground plane or the model's lowest
+  point. The game runs on a copy of the model: place it again to see later edits. On
+  Wayland it runs through XWayland, which mouse look needs.
 * **Components**: select geometry and right-click **Make Component**. Copies made
   with Ctrl+Move (or copy/paste) share one definition. **Double-click** a component
   to edit it in place: the rest of the model fades, and every copy follows your
@@ -274,10 +301,12 @@ File → Export → FBX) or with assimp (`assimp export model.gltf model.fbx`).
 ```
 src/core    Math, Mesh (B-rep kernel + face inference), Triangulate, Units, Document (undo),
             FollowMe (profile sweeps), RoundCorners (fillets), ImageTrace (image outlines),
-            Terrain (sculpting brushes), Solids (boolean solid tools)
+            Terrain (sculpting brushes), Solids (boolean solid tools),
+            Effects (noise, blur, decimate, remesh), Walker (Game Mode physics)
 src/io      NativeFormat, ObjIO, GltfExport, StlExport, ImageUtil
 src/render  Camera, Renderer (GL 3.3: faces, geometry-shader wide/dashed lines, sky/ground)
-src/app     Viewport, Inference, tools (Draw/Modify/Camera/Terrain/Solid), Panels (tray), MainWindow, Icons
+src/app     Viewport, Inference, tools (Draw/Modify/Camera/Terrain/Solid), Panels (tray), MainWindow, Icons,
+            EffectsUi (Effects menu and dialog), GameMode (placement tool and game window)
 tests       kernel and I/O tests
 ```
 

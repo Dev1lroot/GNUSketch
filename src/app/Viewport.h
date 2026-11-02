@@ -61,6 +61,8 @@ signals:
     void contextMenuAt(const QPoint& globalPos, gs::PickResult pick);
     void imageDropped(const QString& path);
     void glFailed(const QString& log);
+    // Game Mode: where the character was placed and which way it looks (radians).
+    void characterPlaced(const gs::Vec3& feet, double yaw);
 
 protected:
     void initializeGL() override;

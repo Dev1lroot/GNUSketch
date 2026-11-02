@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "MainWindow.h"
 
+#include "EffectsUi.h"
+#include "GameMode.h"
 #include "Icons.h"
 #include "ModifyTools.h"
 #include "Panels.h"
@@ -24,6 +26,7 @@
 #include <QDoubleSpinBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QElapsedTimer>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -37,12 +40,15 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QProcess>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStatusBar>
+#include <QTemporaryDir>
 #include <QToolBar>
+#include <QTimer>
 #include <QToolButton>
 
 namespace gs {
@@ -57,11 +63,6 @@ QJsonArray vec(const Vec3& v) { return QJsonArray{v.x, v.y, v.z}; }
 Vec3 vec(const QJsonValue& j, const Vec3& def) {
     QJsonArray a = j.toArray();
     return a.size() == 3 ? Vec3(a[0].toDouble(), a[1].toDouble(), a[2].toDouble()) : def;
-}
-QJsonArray col(const Color& c) { return QJsonArray{c.r, c.g, c.b, c.a}; }
-Color col(const QJsonValue& j, const Color& def) {
-    QJsonArray a = j.toArray();
-    return a.size() == 4 ? Color((float)a[0].toDouble(), (float)a[1].toDouble(), (float)a[2].toDouble(), (float)a[3].toDouble()) : def;
 }
 
 const char* kFileFilter = "GNUSketch Model (*.gsketch)";
@@ -106,6 +107,8 @@ MainWindow::MainWindow() {
     });
     connect(materials_, &MaterialsPanel::materialChosen, this, [this] { entityInfo_->refresh(); });
     connect(styles_, &StylesPanel::styleChanged, this, [this] { syncStyleActions(); });
+    connect(sun_, &SunPanel::styleChanged, this, [this] { syncStyleActions(); });
+    connect(viewport_, &Viewport::characterPlaced, this, [this](const Vec3& feet, double yaw) { launchGame(feet, yaw); });
 
     QSettings s;
     restoreGeometry(s.value("window/geometry").toByteArray());
@@ -124,6 +127,12 @@ MainWindow::MainWindow() {
 }
 
 MainWindow::~MainWindow() {
+    // The game window works on this window's temporary copy of the model.
+    if (game_) {
+        game_->disconnect(this);
+        game_->kill();
+        game_->waitForFinished(2000);
+    }
     doc_.onChanged = nullptr;
     doc_.onSelectionChanged = nullptr;
 }
@@ -176,6 +185,9 @@ void MainWindow::buildActions() {
     toolAction(ToolId::SolidSubtract, QStringLiteral("Subtract"), QString());
     toolAction(ToolId::SolidTrim, QStringLiteral("Trim"), QString());
     toolAction(ToolId::SolidSplit, QStringLiteral("Split"), QString());
+    toolAction(ToolId::PlaceCharacter, QStringLiteral("Game Mode"), QStringLiteral("Ctrl+G"));
+    toolActions_[ToolId::PlaceCharacter]->setObjectName(QStringLiteral("gamemode"));
+    toolActions_[ToolId::PlaceCharacter]->setStatusTip(QStringLiteral("Place a character on the model and walk around it in a separate window."));
 
     auto act = [this](const QString& key, const QString& icon, const QString& text, const QKeySequence& sc,
                       std::function<void()> fn) {
@@ -286,6 +298,7 @@ void MainWindow::buildActions() {
         connect(a, &QAction::toggled, this, [this, field](bool on) {
             doc_.style.*field = on;
             styles_->refresh();
+            sun_->refresh();
             viewport_->update();
         });
         return a;
@@ -300,6 +313,20 @@ void MainWindow::buildActions() {
     shadowsAct_ = styleToggle("shadows", "", QStringLiteral("&Shadows"), &RenderStyle::shadows);
     aoAct_ = styleToggle("ambientocclusion", "", QStringLiteral("Ambient &Occlusion"), &RenderStyle::ambientOcclusion);
     antialiasAct_ = styleToggle("antialiasing", "", QStringLiteral("&Antialiasing"), &RenderStyle::antialiasing);
+    sunAct_ = styleToggle("sun", "", QStringLiteral("S&un"), &RenderStyle::sun);
+    sunAct_->setStatusTip(QStringLiteral("Sunlight and the sun in the sky. Window > Sun sets its direction and height."));
+    cullAct_ = styleToggle("backfaceculling", "", QStringLiteral("&Backface Culling"), &RenderStyle::backfaceCulling);
+    cullAct_->setStatusTip(QStringLiteral("Do not draw or pick the back of a face. A face looked at from behind becomes see-through."));
+
+    act("repeateffect", "effects", QStringLiteral("&Repeat Effect"), QKeySequence(QStringLiteral("Ctrl+F")), [this] {
+        if (lastEffect_) runEffect(*lastEffect_, true);
+    });
+    for (const EffectDef& d : effectRegistry()) {
+        const EffectDef* dp = &d;
+        QAction* a = act(d.key(), d.icon, d.menuText + (d.params.empty() ? QString() : QStringLiteral("…")), QKeySequence(),
+                         [this, dp] { runEffect(*dp, false); });
+        a->setStatusTip(d.tip);
+    }
 
     auto* faceGroup = new QActionGroup(this);
     struct FS { RenderStyle::FaceStyle s; const char* icon; const char* text; };
@@ -388,9 +415,11 @@ void MainWindow::buildMenus() {
     faceStyle->addSeparator();
     for (auto& [k, a] : faceStyleActs_) faceStyle->addAction(a);
     QMenu* render = view->addMenu(QStringLiteral("&Render"));
+    render->addAction(sunAct_);
     render->addAction(shadowsAct_);
     render->addAction(aoAct_);
     render->addAction(antialiasAct_);
+    render->addAction(cullAct_);
     view->addSeparator();
     view->addAction(acts_["instructor"]);
 
@@ -436,6 +465,18 @@ void MainWindow::buildMenus() {
     tools->addSeparator();
     tools->addAction(acts_["roundcorners"]);
     tools->addAction(acts_["traceimage"]);
+    tools->addSeparator();
+    tools->addAction(toolActions_[ToolId::PlaceCharacter]);
+
+    QMenu* effects = menuBar()->addMenu(QStringLiteral("Effe&cts"));
+    effects->addAction(acts_["repeateffect"]);
+    effects->addSeparator();
+    std::map<QString, QMenu*> effectMenus;
+    for (const EffectDef& d : effectRegistry()) {
+        QMenu*& sub = effectMenus[d.submenu];
+        if (!sub) sub = effects->addMenu(d.submenu);
+        sub->addAction(acts_[d.key()]);
+    }
 
     QMenu* win = menuBar()->addMenu(QStringLiteral("&Window"));
     win->addAction(acts_["modelinfo"]);
@@ -444,7 +485,7 @@ void MainWindow::buildMenus() {
     trayAct->setChecked(true);
     connect(trayAct, &QAction::toggled, this, [this](bool on) { trayDock_->setVisible(on); });
     connect(win, &QMenu::aboutToShow, this, [this, trayAct] { trayAct->setChecked(trayDock_->isVisible()); });
-    for (const char* name : {"Entity Info", "Terraform", "Materials", "Styles", "Instructor"}) {
+    for (const char* name : {"Entity Info", "Terraform", "Materials", "Styles", "Sun", "Instructor"}) {
         QAction* a = win->addAction(QString::fromUtf8(name));
         QString key = QString::fromUtf8(name);
         connect(a, &QAction::triggered, this, [this, key] {
@@ -531,7 +572,7 @@ void MainWindow::buildToolbars() {
         {-2, -2},
         {(int)ToolId::Orbit, (int)ToolId::Pan},
         {(int)ToolId::Zoom, (int)ToolId::ZoomWindow},
-        {-3, -1},
+        {-3, (int)ToolId::PlaceCharacter},
     };
     int r = 0;
     for (const auto& row : rows) {
@@ -571,6 +612,7 @@ void MainWindow::buildTray() {
     entityInfo_ = new EntityInfoPanel(&doc_, viewport_, tray);
     materials_ = new MaterialsPanel(&doc_, viewport_, tray);
     styles_ = new StylesPanel(&doc_, viewport_, tray);
+    sun_ = new SunPanel(&doc_, viewport_, tray);
     instructor_ = new InstructorPanel(tray);
     terrain_ = new TerrainPanel(&doc_, viewport_,
                                 {toolActions_[ToolId::Mountain], toolActions_[ToolId::Pit], toolActions_[ToolId::Flatten],
@@ -580,6 +622,7 @@ void MainWindow::buildTray() {
     sections_["Terraform"] = tray->addSection(QStringLiteral("Terraform"), terrain_, false);
     sections_["Materials"] = tray->addSection(QStringLiteral("Materials"), materials_, true);
     sections_["Styles"] = tray->addSection(QStringLiteral("Styles"), styles_, false);
+    sections_["Sun"] = tray->addSection(QStringLiteral("Sun"), sun_, false);
     sections_["Instructor"] = tray->addSection(QStringLiteral("Instructor"), instructor_, false);
     scroll->setWidget(tray);
     trayDock_->setWidget(scroll);
@@ -636,6 +679,9 @@ void MainWindow::onSelectionChanged() {
     bool any = !doc_.selection.empty();
     for (const char* k : {"cut", "copy", "delete", "hide", "roundcorners"}) acts_[k]->setEnabled(any);
     acts_["traceimage"]->setEnabled(!doc_.selection.faces.empty());
+    const bool effectTargets = effectFaceCount(doc_.state, doc_.selection) > 0;
+    for (const EffectDef& d : effectRegistry()) acts_[d.key()]->setEnabled(effectTargets);
+    acts_["repeateffect"]->setEnabled(effectTargets && lastEffect_);
     const bool geometry = !doc_.selection.faces.empty() || !doc_.selection.edges.empty();
     const bool instances = !doc_.selection.instances.empty();
     acts_["makecomponent"]->setEnabled(geometry && !doc_.editingComponent());
@@ -662,7 +708,7 @@ void MainWindow::updateUndoActions() {
 
 void MainWindow::syncStyleActions() {
     const RenderStyle& s = doc_.style;
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_}) a->blockSignals(true);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_, sunAct_, cullAct_}) a->blockSignals(true);
     xrayAct_->setChecked(s.xray);
     backEdgesAct_->setChecked(s.backEdges);
     edgesAct_->setChecked(s.edges);
@@ -673,7 +719,9 @@ void MainWindow::syncStyleActions() {
     shadowsAct_->setChecked(s.shadows);
     aoAct_->setChecked(s.ambientOcclusion);
     antialiasAct_->setChecked(s.antialiasing);
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_}) a->blockSignals(false);
+    sunAct_->setChecked(s.sun);
+    cullAct_->setChecked(s.backfaceCulling);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_, sunAct_, cullAct_}) a->blockSignals(false);
     auto it = faceStyleActs_.find((int)s.faceStyle);
     if (it != faceStyleActs_.end()) it->second->setChecked(true);
     perspectiveAct_->setChecked(viewport_->camera().perspective);
@@ -825,24 +873,7 @@ QJsonObject MainWindow::viewState() const {
     cam["fov"] = c.fovY;
     cam["perspective"] = c.perspective;
     o["camera"] = cam;
-    const RenderStyle& s = doc_.style;
-    QJsonObject st;
-    st["faceStyle"] = (int)s.faceStyle;
-    st["xray"] = s.xray;
-    st["edges"] = s.edges;
-    st["backEdges"] = s.backEdges;
-    st["profiles"] = s.profiles;
-    st["profileWidth"] = s.profileWidth;
-    st["axes"] = s.showAxes;
-    st["guides"] = s.showGuides;
-    st["sky"] = s.sky;
-    st["ground"] = s.ground;
-    st["skyColor"] = col(s.skyColor);
-    st["groundColor"] = col(s.groundColor);
-    st["background"] = col(s.background);
-    st["frontColor"] = col(s.frontColor);
-    st["backColor"] = col(s.backColor);
-    o["style"] = st;
+    o["style"] = styleToJson(doc_.style);
     o["units"] = (int)doc_.units.unit;
     o["precision"] = doc_.units.precision;
     return o;
@@ -859,25 +890,7 @@ void MainWindow::applyViewState(const QJsonObject& o) {
     } else {
         viewport_->zoomExtents();
     }
-    RenderStyle& s = doc_.style;
-    if (o.contains("style")) {
-        QJsonObject st = o["style"].toObject();
-        s.faceStyle = (RenderStyle::FaceStyle)std::clamp(st["faceStyle"].toInt((int)s.faceStyle), 0, 4);
-        s.xray = st["xray"].toBool(s.xray);
-        s.edges = st["edges"].toBool(s.edges);
-        s.backEdges = st["backEdges"].toBool(s.backEdges);
-        s.profiles = st["profiles"].toBool(s.profiles);
-        s.profileWidth = (float)st["profileWidth"].toDouble(s.profileWidth);
-        s.showAxes = st["axes"].toBool(s.showAxes);
-        s.showGuides = st["guides"].toBool(s.showGuides);
-        s.sky = st["sky"].toBool(s.sky);
-        s.ground = st["ground"].toBool(s.ground);
-        s.skyColor = col(st["skyColor"], s.skyColor);
-        s.groundColor = col(st["groundColor"], s.groundColor);
-        s.background = col(st["background"], s.background);
-        s.frontColor = col(st["frontColor"], s.frontColor);
-        s.backColor = col(st["backColor"], s.backColor);
-    }
+    if (o.contains("style")) styleFromJson(o["style"].toObject(), doc_.style);
     if (o.contains("units")) doc_.units.unit = (LengthUnit)std::clamp(o["units"].toInt(), 0, 4);
     if (o.contains("precision")) doc_.units.precision = std::clamp(o["precision"].toInt(), 0, 6);
     viewport_->update();
@@ -1226,6 +1239,127 @@ void MainWindow::modelInfo() {
     materials_->refresh();
 }
 
+void MainWindow::runEffect(const EffectDef& def, bool repeat) {
+    viewport_->cancelTool();
+    const Selection original = doc_.selection;
+    const int before = effectFaceCount(doc_.state, original);
+    if (before == 0) {
+        statusBar()->showMessage(QStringLiteral("Select faces or components for the effect first."), 5000);
+        return;
+    }
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("effects"));
+    QVariantMap values = settings.value(def.key()).toMap();
+    for (const EffectParam& p : def.params)
+        if (!values.contains(p.key)) {
+            if (p.type == EffectParam::Bool) values[p.key] = p.def != 0;
+            else if (p.type == EffectParam::Double) values[p.key] = p.def;
+            else values[p.key] = (int)p.def;
+        }
+
+    // Live preview: the operation stays open and is redone from the original
+    // geometry whenever a setting changes.
+    const std::string opName = def.name.toStdString();
+    QString lastMessage;
+    Selection result;
+    bool ok = false;
+    doc_.beginOp(opName);
+    auto apply = [&](const QVariantMap& v, bool& okOut) {
+        doc_.cancelOp();
+        doc_.beginOp(opName);
+        result = original;
+        bool limited = false;
+        std::string err;
+        ok = applyEffect(doc_.state, result, [&](Mesh& m, const std::set<Id>& faces, EffectResult* out, std::string* e) {
+            return def.apply(m, faces, v, out, e);
+        }, &limited, &err);
+        QString text;
+        if (ok) {
+            text = QStringLiteral("Polygons: %1 → %2").arg(before).arg(effectFaceCount(doc_.state, result));
+            if (limited) text += QStringLiteral(". Detail reduced: the area is too large for this density.");
+        } else {
+            // Nothing half-done is left on screen.
+            doc_.cancelOp();
+            doc_.beginOp(opName);
+            text = QString::fromStdString(err);
+        }
+        doc_.selection.clear(); // the result is easier to judge without the highlight
+        viewport_->update();
+        okOut = ok;
+        lastMessage = text;
+        return text;
+    };
+
+    bool accepted = true;
+    if (repeat || def.params.empty()) {
+        bool unused;
+        apply(values, unused);
+    } else {
+        EffectDialog dlg(def, values, apply, this);
+        accepted = dlg.exec() == QDialog::Accepted;
+        values = dlg.values();
+    }
+    if (accepted && ok) {
+        settings.setValue(def.key(), values);
+        doc_.selection = result;
+        doc_.commitOp();
+        lastEffect_ = &def;
+        acts_["repeateffect"]->setText(QStringLiteral("&Repeat %1").arg(def.name));
+        statusBar()->showMessage(QStringLiteral("%1: %2").arg(def.name, lastMessage), 5000);
+    } else {
+        doc_.cancelOp();
+        doc_.selection = original;
+        if (!lastMessage.isEmpty()) statusBar()->showMessage(lastMessage, 5000);
+    }
+    doc_.notifySelection();
+    viewport_->update();
+}
+
+void MainWindow::launchGame(const Vec3& feet, double yaw, bool native) {
+    if (game_) {
+        game_->disconnect(this);
+        game_->kill();
+        game_->waitForFinished(2000);
+        game_->deleteLater();
+        game_ = nullptr;
+    }
+    if (!gameDir_) gameDir_ = std::make_unique<QTemporaryDir>();
+    const QString path = gameDir_->filePath(QStringLiteral("game.gsketch"));
+    QString error;
+    if (!gameDir_->isValid() || !saveNative(doc_, path, viewState(), &error)) {
+        QMessageBox::warning(this, QStringLiteral("Game Mode"), QStringLiteral("Could not prepare the model for the game: %1").arg(error));
+        return;
+    }
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    // See GameMode.h: mouse look needs XWayland on a Wayland session.
+    const bool viaX = !native && QGuiApplication::platformName().startsWith(QLatin1String("wayland")) && env.contains(QStringLiteral("DISPLAY"));
+    if (viaX) {
+        env.remove(QStringLiteral("WAYLAND_DISPLAY"));
+        env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("xcb"));
+    }
+    game_ = new QProcess(this);
+    game_->setProcessEnvironment(env);
+    game_->setProcessChannelMode(QProcess::ForwardedChannels);
+    auto started = std::make_shared<QElapsedTimer>();
+    started->start();
+    connect(game_, &QProcess::finished, this, [this, feet, yaw, viaX, started](int code, QProcess::ExitStatus status) {
+        const bool failed = code != 0 || status != QProcess::NormalExit;
+        if (failed && started->elapsed() < 5000) {
+            if (viaX) {
+                // No usable XWayland: run natively, the mouse just stops at the window edges.
+                QTimer::singleShot(0, this, [this, feet, yaw] { launchGame(feet, yaw, true); });
+                return;
+            }
+            QMessageBox::warning(this, QStringLiteral("Game Mode"), QStringLiteral("The game window could not start."));
+        }
+    });
+    game_->start(QCoreApplication::applicationFilePath(),
+                 {QStringLiteral("--game"), path,
+                  QStringLiteral("--spawn"), QStringLiteral("%1,%2,%3").arg(feet.x, 0, 'g', 17).arg(feet.y, 0, 'g', 17).arg(feet.z, 0, 'g', 17),
+                  QStringLiteral("--yaw"), QString::number(yaw, 'g', 17)});
+    statusLabel_->setText(QStringLiteral("Game Mode started in its own window."));
+}
+
 void MainWindow::roundCorners() {
     viewport_->cancelTool();
     // Selected edges plus the outlines of selected faces.
@@ -1482,6 +1616,7 @@ void MainWindow::showShortcuts() {
                                             "<tr><td><b>Middle mouse</b></td><td>Orbit</td><td><b>Shift+Middle</b></td><td>Pan</td></tr>"
                                             "<tr><td><b>Arrows</b></td><td>Lock axis / plane</td><td><b>Shift</b></td><td>Lock inference</td></tr>"
                                             "<tr><td><b>Ctrl+T</b></td><td>Select none</td><td><b>Esc</b></td><td>Cancel</td></tr>"
+                                            "<tr><td><b>Ctrl+F</b></td><td>Repeat last effect</td><td><b>Ctrl+G</b></td><td>Game Mode</td></tr>"
                                             "</table><p>Type numbers at any time to enter exact values in the Measurements box.</p>"));
 }
 

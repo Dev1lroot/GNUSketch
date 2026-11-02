@@ -29,6 +29,10 @@ bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* 
 
 // The whole model (mesh, materials, guides) as .gsketch JSON bytes and back;
 // also used for the system clipboard.
+// The display style in the file's "view" object.
+QJsonObject styleToJson(const RenderStyle& s);
+void styleFromJson(const QJsonObject& o, RenderStyle& s);
+
 QByteArray modelToJson(const ModelState& state, const QJsonObject& view = {});
 bool modelFromJson(const QByteArray& json, ModelState& state, QJsonObject* view = nullptr, QString* error = nullptr);
 

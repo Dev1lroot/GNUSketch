@@ -10,6 +10,7 @@
 #include <QMainWindow>
 
 #include <map>
+#include <memory>
 #include <optional>
 
 class QAction;
@@ -18,6 +19,8 @@ class QLabel;
 class QMimeData;
 class QLineEdit;
 class QDockWidget;
+class QProcess;
+class QTemporaryDir;
 
 namespace gs {
 
@@ -27,6 +30,8 @@ class MaterialsPanel;
 class StylesPanel;
 class InstructorPanel;
 class TerrainPanel;
+class SunPanel;
+struct EffectDef;
 class TraySection;
 
 class MainWindow : public QMainWindow {
@@ -81,6 +86,8 @@ private:
     void explode();
     void editComponent();
     void traceImage();
+    void runEffect(const EffectDef& def, bool repeat);
+    void launchGame(const Vec3& feet, double yaw, bool native = false);
     void about();
     void showShortcuts();
     void contextMenu(const QPoint& globalPos, const PickResult& pick);
@@ -94,6 +101,10 @@ private:
     StylesPanel* styles_ = nullptr;
     InstructorPanel* instructor_ = nullptr;
     TerrainPanel* terrain_ = nullptr;
+    SunPanel* sun_ = nullptr;
+    const EffectDef* lastEffect_ = nullptr;
+    QProcess* game_ = nullptr;
+    std::unique_ptr<QTemporaryDir> gameDir_;
     QDockWidget* trayDock_ = nullptr;
     std::map<QString, TraySection*> sections_;
 
@@ -107,7 +118,7 @@ private:
     QAction *perspectiveAct_ = nullptr, *parallelAct_ = nullptr;
     QAction *xrayAct_ = nullptr, *backEdgesAct_ = nullptr, *axesAct_ = nullptr, *guidesAct_ = nullptr,
             *hiddenAct_ = nullptr, *edgesAct_ = nullptr, *profilesAct_ = nullptr, *shadowsAct_ = nullptr, *aoAct_ = nullptr,
-            *antialiasAct_ = nullptr;
+            *antialiasAct_ = nullptr, *sunAct_ = nullptr, *cullAct_ = nullptr;
     std::map<int, QAction*> faceStyleActs_;
     std::map<QString, QAction*> acts_;
 

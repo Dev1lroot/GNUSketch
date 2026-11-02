@@ -2,6 +2,8 @@
 // Headless tests for the geometry kernel.
 #include "core/Components.h"
 #include "core/Document.h"
+#include "core/Effects.h"
+#include "core/Walker.h"
 #include "core/Mesh.h"
 #include "core/RoundCorners.h"
 #include "core/Solids.h"
@@ -15,6 +17,8 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -1484,6 +1488,655 @@ int main() {
             CHECK(!solidOperation(d.state, SolidOp::Intersect, far, plate, nullptr, &err));
             CHECK(!err.empty() && d.state.instances[far].alive && d.state.instances[plate].alive);
         }
+    });
+
+    // ---- effects -------------------------------------------------------------
+    auto allFaces = [](const Mesh& m) {
+        std::set<Id> out;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) out.insert(f);
+        return out;
+    };
+    auto cube = [&](Mesh& m, double a = 1) { solidBox(m, Vec3(0, 0, 0), Vec3(a, a, a)); };
+    auto triangleMeshOnly = [](const Mesh& m) {
+        for (const Face& F : m.faces)
+            if (F.alive && (F.outer.size() != 3 || !F.holes.empty())) return false;
+        return true;
+    };
+    auto worstWarp = [](const Mesh& m) {
+        double worst = 0;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+            if (!m.faces[f].alive) continue;
+            Plane P = m.facePlane(f);
+            for (Id v : m.faceVertices(f)) worst = std::max(worst, std::fabs(P.distance(m.pos(v))));
+        }
+        return worst;
+    };
+    // A plain upward 10 x 10 grid plane, as one n-gon.
+    auto plate = [](Mesh& m, double size = 10) {
+        m.groundFacesDown = false;
+        m.viewHint = Vec3(0, 0, 10);
+        rect(m, 0, 0, size, size);
+    };
+
+    test("effects: subdivide reaches the density and stays closed", [&] {
+        Mesh m;
+        cube(m);
+        EffectResult r;
+        CHECK(effectSubdivide(m, allFaces(m), 4, &r));
+        CHECK(isSolid(m));
+        CHECK(near(solidVolume(m), 1.0));
+        CHECK(triangleMeshOnly(m));
+        CHECK(m.aliveFaceCount() >= 6 * 16);
+        CHECK_EQ((int)r.faces.size(), m.aliveFaceCount());
+        for (Id e = 0; e < (Id)m.edges.size(); ++e)
+            if (m.edges[e].alive) CHECK(m.edgeLength(e) <= 0.25 + 1e-9);
+    });
+    test("effects: triangulate and merge flat are inverses on a cube", [&] {
+        Mesh m;
+        cube(m);
+        CHECK(effectTriangulate(m, allFaces(m)));
+        CHECK_EQ(m.aliveFaceCount(), 12);
+        CHECK(isSolid(m));
+        CHECK(effectMergeFlat(m, allFaces(m)));
+        CHECK_EQ(m.aliveFaceCount(), 6);
+        CHECK_EQ(m.aliveVertexCount(), 8);
+        CHECK(isSolid(m) && near(solidVolume(m), 1.0));
+    });
+    test("effects: merge flat keeps a hole and drops collinear vertices", [&] {
+        Mesh m;
+        plate(m, 10);
+        rect(m, 4, 4, 6, 6);
+        // Remove the inner square: a plate with a hole.
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faces[f].holes.empty()) m.eraseFace(f);
+        CHECK_EQ(m.aliveFaceCount(), 1);
+        const double area = totalArea(m);
+        CHECK(effectSubdivide(m, allFaces(m), 1));
+        CHECK(m.aliveFaceCount() > 50);
+        CHECK(effectMergeFlat(m, allFaces(m)));
+        CHECK_EQ(m.aliveFaceCount(), 1);
+        CHECK_EQ(m.faces[onlyFace(m)].holes.size(), size_t(1));
+        CHECK_EQ(m.aliveVertexCount(), 8);
+        CHECK(near(totalArea(m), area));
+    });
+    test("effects: noise moves only allowed axes, within the distance", [&] {
+        Mesh m;
+        cube(m);
+        NoiseParams p;
+        p.x = p.y = false;
+        p.z = true;
+        p.amount = 0.2;
+        p.scale = 0.4;
+        std::vector<Vec2> before;
+        CHECK(effectNoise(m, allFaces(m), p));
+        CHECK(isSolid(m));
+        double moved = 0;
+        for (const Vertex& v : m.vertices) {
+            if (!v.alive) continue;
+            CHECK(v.p.x >= -1e-9 && v.p.x <= 1 + 1e-9 && v.p.y >= -1e-9 && v.p.y <= 1 + 1e-9);
+            CHECK(v.p.z >= -0.2 - 1e-9 && v.p.z <= 1.2 + 1e-9);
+            double dz = std::min(std::fabs(v.p.z), std::fabs(v.p.z - 1));
+            if (v.p.x > 1e-9 && v.p.x < 1 - 1e-9 && v.p.y > 1e-9 && v.p.y < 1 - 1e-9) moved = std::max(moved, dz);
+        }
+        CHECK(moved > 0.02);
+        CHECK(worstWarp(m) < 1e-6);
+
+        Mesh a, b, c;
+        cube(a); cube(b); cube(c);
+        p.x = p.y = p.z = true;
+        p.seed = 7;
+        CHECK(effectNoise(a, allFaces(a), p));
+        CHECK(effectNoise(b, allFaces(b), p));
+        p.seed = 8;
+        CHECK(effectNoise(c, allFaces(c), p));
+        bool same = a.vertices.size() == b.vertices.size(), differs = false;
+        for (size_t i = 0; same && i < a.vertices.size(); ++i) same = a.vertices[i].p.nearlyEquals(b.vertices[i].p, 1e-12);
+        for (size_t i = 0; i < std::min(a.vertices.size(), c.vertices.size()); ++i) differs = differs || !a.vertices[i].p.nearlyEquals(c.vertices[i].p, 1e-6);
+        CHECK(same && differs);
+
+        p.x = p.y = p.z = false;
+        std::string err;
+        Mesh d;
+        cube(d);
+        CHECK(!effectNoise(d, allFaces(d), p, nullptr, &err) && !err.empty());
+        CHECK_EQ(d.aliveFaceCount(), 6);
+    });
+    test("effects: a partial selection leaves its neighbours alone", [&] {
+        Mesh m;
+        cube(m);
+        Id top = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faces[f].normal.z > 0.9) top = f;
+        NoiseParams p;
+        p.x = p.y = false; // keeps the top's inside within the outline, for the check below
+        p.amount = 0.2;
+        p.scale = 0.3;
+        CHECK(effectNoise(m, {top}, p));
+        CHECK(isSolid(m)); // still watertight: the sides took in the new outline vertices
+        int planar = 0;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+            if (!m.faces[f].alive) continue;
+            if (m.faces[f].outer.size() > 3) ++planar;
+            Plane P = m.facePlane(f);
+            for (Id v : m.faceVertices(f)) CHECK(std::fabs(P.distance(m.pos(v))) < 1e-6);
+        }
+        CHECK(planar >= 5); // the other faces are still n-gons
+        // The top's outline did not move.
+        Vec3 mn, mx;
+        bool any;
+        m.bounds(mn, mx, any);
+        for (Id v = 0; v < (Id)m.vertices.size(); ++v) {
+            if (!m.vertices[v].alive) continue;
+            const Vec3& q = m.pos(v);
+            const bool onOutline = q.x < 1e-9 || q.x > 1 - 1e-9 || q.y < 1e-9 || q.y > 1 - 1e-9;
+            if (onOutline && q.z > 0.5) CHECK(near(q.z, 1.0));
+        }
+    });
+    test("effects: blur softens a cube without shrinking it away", [&] {
+        Mesh m;
+        cube(m);
+        BlurParams p;
+        p.radius = 0.15;
+        CHECK(effectBlur(m, allFaces(m), p));
+        CHECK(isSolid(m));
+        const double v = solidVolume(m);
+        CHECK(v > 0.75 && v < 1.05);
+        // The sharp corner (1,1,1) is gone, the middle of a face barely moved.
+        double farthest = 0;
+        for (const Vertex& q : m.vertices)
+            if (q.alive) farthest = std::max(farthest, (q.p - Vec3(0.5, 0.5, 0.5)).length());
+        CHECK(farthest < 0.82); // a corner is 0.866 away
+        Vec3 mn, mx;
+        bool any;
+        m.bounds(mn, mx, any);
+        CHECK(mx.z - mn.z > 0.85);
+        // All soft: no creases left.
+        for (Id e = 0; e < (Id)m.edges.size(); ++e)
+            if (m.edges[e].alive) CHECK(m.edges[e].soft);
+    });
+    test("effects: blur keeps the outline of a selection", [&] {
+        Mesh m;
+        cube(m);
+        Id top = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faces[f].normal.z > 0.9) top = f;
+        CHECK(effectBlur(m, {top}, BlurParams{}));
+        CHECK(isSolid(m) && near(solidVolume(m), 1.0));
+    });
+    test("effects: decimate reaches its targets and keeps the shape", [&] {
+        Mesh m;
+        cube(m);
+        CHECK(effectSubdivide(m, allFaces(m), 8));
+        const int fine = m.aliveFaceCount();
+        CHECK(fine > 500);
+        DecimateParams p;
+        p.mergeFlat = false;
+        p.ratio = 0.25;
+        CHECK(effectDecimate(m, allFaces(m), p));
+        CHECK(m.aliveFaceCount() <= fine / 4 + 1);
+        CHECK(isSolid(m) && near(solidVolume(m), 1.0));
+        // Flat faces collapse first, at no error: at 12 triangles a cube is still
+        // exact, and merging brings back its 6 quads.
+        p.mergeFlat = true;
+        p.ratio = 12.0 / m.aliveFaceCount();
+        CHECK(effectDecimate(m, allFaces(m), p));
+        CHECK(isSolid(m) && near(solidVolume(m), 1.0));
+        CHECK_EQ(m.aliveFaceCount(), 6);
+    });
+    test("effects: decimate by density on a bumpy plate", [&] {
+        Mesh m;
+        plate(m);
+        NoiseParams n;
+        n.x = n.y = false;
+        n.amount = 0.4;
+        n.scale = 2;
+        n.octaves = 1;
+        n.detail = 0.25;
+        CHECK(effectNoise(m, allFaces(m), n));
+        const int fine = m.aliveFaceCount();
+        Vec3 mn0, mx0;
+        bool any;
+        m.bounds(mn0, mx0, any);
+        DecimateParams p;
+        p.mode = DecimateParams::Density;
+        p.density = 2;
+        p.mergeFlat = false;
+        const int wanted = (int)std::ceil(totalArea(m) * p.density);
+        CHECK(effectDecimate(m, allFaces(m), p));
+        CHECK(fine > 1000);
+        CHECK(m.aliveFaceCount() <= wanted + 1);
+        CHECK(m.aliveFaceCount() > 50);
+        // The outline keeps its rectangle.
+        Vec3 mn, mx;
+        m.bounds(mn, mx, any);
+        CHECK(near(mn.x, 0) && near(mn.y, 0) && near(mx.x, 10) && near(mx.y, 10));
+        CHECK(near(mx.z, mx0.z, 0.15));
+    });
+    test("effects: decimate leaves neighbours connected", [&] {
+        Mesh m;
+        cube(m);
+        std::set<Id> sides;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && std::fabs(m.faces[f].normal.z) < 0.5) sides.insert(f);
+        CHECK(effectSubdivide(m, sides, 8));
+        DecimateParams p;
+        p.ratio = 0.1;
+        std::set<Id> newSides;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && std::fabs(m.faces[f].normal.z) < 0.5) newSides.insert(f);
+        CHECK(effectDecimate(m, newSides, p));
+        CHECK(isSolid(m) && near(solidVolume(m), 1.0));
+    });
+    auto cellCounts = [](const Mesh& m) {
+        std::map<int, int> c;
+        for (const Face& F : m.faces)
+            if (F.alive) ++c[(int)F.outer.size()];
+        return c;
+    };
+    test("effects: remesh a plate into a real pattern", [&] {
+        for (auto shape : {RemeshParams::Quads, RemeshParams::Hexagons, RemeshParams::Triangles}) {
+            Mesh m;
+            plate(m);
+            RemeshParams p;
+            p.shape = shape;
+            p.cellsPerMeter = 2;
+            EffectResult r;
+            CHECK(effectRemesh(m, allFaces(m), p, &r));
+            CHECK(worstWarp(m) < 1e-6);
+            CHECK(near(totalArea(m), 100.0, 1e-6));
+            const int want = shape == RemeshParams::Quads ? 4 : shape == RemeshParams::Hexagons ? 6 : 3;
+            auto c = cellCounts(m);
+            // Cell area: 0.25 m2 for quads, 0.2165 hexagons, 0.108 triangles.
+            const double area = shape == RemeshParams::Quads ? 0.25 : shape == RemeshParams::Hexagons ? 0.2165 : 0.10825;
+            const int expected = int(100 / area);
+            CHECK(m.aliveFaceCount() > expected * 0.85 && m.aliveFaceCount() < expected * 1.15);
+            // Nearly all whole cells have the right number of sides; the rest are at the outline.
+            CHECK(c[want] > expected * 0.75);
+            // Interior cells are regular: the right size.
+            int exact = 0;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && (int)m.faces[f].outer.size() == want && near(m.faceArea(f), area, 1e-3)) ++exact;
+            CHECK(exact > expected * 0.7);
+            for (Id f : r.faces) CHECK(f >= 0 && m.faces[f].alive);
+        }
+    });
+    test("effects: remesh a cube stays closed", [&] {
+        for (auto shape : {RemeshParams::Quads, RemeshParams::Hexagons, RemeshParams::Triangles}) {
+            Mesh m;
+            cube(m);
+            RemeshParams p;
+            p.shape = shape;
+            p.cellsPerMeter = 3;
+            CHECK(effectRemesh(m, allFaces(m), p));
+            std::string why;
+            CHECK(isSolid(m, &why));
+            CHECK(near(solidVolume(m), 1.0, 1e-6));
+            CHECK(worstWarp(m) < 1e-6);
+            CHECK(m.aliveFaceCount() > 30);
+        }
+    });
+    test("effects: remesh a curved surface and a partial selection", [&] {
+        Mesh m;
+        plate(m);
+        NoiseParams n;
+        n.x = n.y = false;
+        n.amount = 0.5;
+        n.scale = 4;
+        n.octaves = 1;
+        CHECK(effectNoise(m, allFaces(m), n));
+        RemeshParams p;
+        p.shape = RemeshParams::Hexagons;
+        p.cellsPerMeter = 1;
+        CHECK(effectRemesh(m, allFaces(m), p));
+        CHECK(cellCounts(m)[6] > 50);
+        CHECK(worstWarp(m) < 0.25); // gently warped, not torn
+
+        Mesh c;
+        cube(c);
+        Id top = kNone;
+        for (Id f = 0; f < (Id)c.faces.size(); ++f)
+            if (c.faces[f].alive && c.faces[f].normal.z > 0.9) top = f;
+        p.cellsPerMeter = 5;
+        CHECK(effectRemesh(c, {top}, p));
+        CHECK(isSolid(c));
+        CHECK(near(solidVolume(c), 1.0, 1e-6));
+        CHECK(worstWarp(c) < 1e-6);
+    });
+    test("effects: materials and painted weights carry over", [&] {
+        Mesh m;
+        plate(m, 2);
+        Id f = onlyFace(m);
+        m.faces[f].front.material = 3;
+        m.faces[f].back.material = 5;
+        for (Vertex& v : m.vertices)
+            if (v.alive) v.paint = {{4, 0.5f}};
+        CHECK(effectSubdivide(m, allFaces(m), 2));
+        for (const Face& F : m.faces)
+            if (F.alive) CHECK(F.front.material == 3 && F.back.material == 5 && F.front.axis.length2() > 0.5);
+        for (const Vertex& v : m.vertices)
+            if (v.alive) CHECK(v.paint.size() == 1 && v.paint[0].material == 4 && near(v.paint[0].weight, 0.5));
+    });
+    test("effects: an absurd density is limited, not hung", [&] {
+        Mesh m;
+        plate(m, 1000);
+        EffectResult r;
+        CHECK(effectSubdivide(m, allFaces(m), 1000, &r));
+        CHECK(r.limited);
+        CHECK(m.aliveFaceCount() <= kEffectTriangleLimit + 1000);
+    });
+    test("effects: components get their own copy, in world coordinates", [&] {
+        Document d;
+        cube(d.mesh());
+        Selection all;
+        all.faces = allFaces(d.mesh());
+        Id a = makeComponent(d.state, all, "Box");
+        Id b = cloneInstance(d.state, a);
+        d.state.instances[b].xf = Mat4::translation(Vec3(5, 0, 0));
+        d.state.instances[a].xf = Mat4::translation(Vec3(0, 0, 3));
+        const Id oldDef = d.state.instances[b].def;
+        const int defFaces = d.state.defs[oldDef].mesh.aliveFaceCount();
+        Selection sel;
+        sel.instances.insert(a);
+        CHECK_EQ(effectFaceCount(d.state, sel), 6);
+        bool limited = false;
+        std::string err;
+        NoiseParams p;
+        p.x = p.y = false;
+        p.amount = 0.1;
+        CHECK(applyEffect(d.state, sel, [&](Mesh& m, const std::set<Id>& f, EffectResult* r, std::string* e) {
+            return effectNoise(m, f, p, r, e);
+        }, &limited, &err));
+        CHECK(d.state.instances[a].def != oldDef);
+        CHECK_EQ(d.state.instances[b].def, oldDef);
+        CHECK_EQ(d.state.defs[oldDef].mesh.aliveFaceCount(), defFaces);
+        CHECK(d.state.defs[d.state.instances[a].def].mesh.aliveFaceCount() > defFaces);
+        CHECK(d.state.editing == kNone);
+        Vec3 mn, mx;
+        CHECK(instanceBounds(d.state, a, mn, mx));
+        CHECK(near(mn.x, 0, 1e-6) && near(mn.z, 3, 0.11) && near(mx.z, 4, 0.11));
+    });
+
+    // ---- walking --------------------------------------------------------------
+    // A floor, as a large face facing up.
+    auto floorMesh = [](Mesh& m, double s = 30) {
+        m.groundFacesDown = false;
+        m.viewHint = Vec3(0, 0, 10);
+        rect(m, -s, -s, s, s, 0.5);
+    };
+    auto walkFor = [](Walker& w, double seconds, double fwd, double strafe = 0, bool jump = false, bool run = false) {
+        WalkInput in;
+        in.forward = fwd;
+        in.strafe = strafe;
+        in.jump = jump;
+        in.run = run;
+        w.advance(seconds, in);
+    };
+    auto worldOf = [](const Mesh& m, CollisionWorld& world) {
+        ModelState st;
+        st.mesh = m;
+        world.buildFromModel(st);
+    };
+    test("walker: capsule is 1.80 m by 0.30 m and lands on a floor", [&] {
+        WalkerParams defaults;
+        CHECK(near(defaults.height, 1.80) && near(defaults.radius * 2, 0.30));
+        Mesh m;
+        floorMesh(m);
+        CollisionWorld world;
+        worldOf(m, world);
+        Walker w(world);
+        w.spawn(Vec3(0, 0, 3));
+        CHECK(!w.grounded());
+        walkFor(w, 2, 0);
+        CHECK(w.grounded());
+        CHECK(near(w.feet().z, 0.5, 0.01));
+        CHECK(near(w.eye().z - w.feet().z, defaults.eyeHeight, 1e-2));
+        CHECK(w.overlaps(Vec3(0, 0, 0.0)));
+        CHECK(!w.overlaps(w.feet() + Vec3(0, 0, 0.01)));
+    });
+    test("walker: W moves where it looks, A/D sideways, at walking speed", [&] {
+        Mesh m;
+        floorMesh(m);
+        CollisionWorld world;
+        worldOf(m, world);
+        Walker w(world);
+        w.spawn(Vec3(0, 0, 0.5));
+        w.setYaw(0);
+        walkFor(w, 0.5, 0);
+        Vec3 s = w.feet();
+        walkFor(w, 2, 1);
+        Vec3 d = w.feet() - s;
+        CHECK(d.x > 5 && d.x < 6.1 && std::fabs(d.y) < 1e-6 && near(d.z, 0, 0.01));
+        walkFor(w, 0.5, 0);
+        s = w.feet();
+        walkFor(w, 1, 0, 1); // D: to the right of +X is -Y
+        d = w.feet() - s;
+        CHECK(d.y < -2 && std::fabs(d.x) < 1e-6);
+        w.look(kPi / 2, 0); // now looking along +Y
+        walkFor(w, 0.5, 0);
+        s = w.feet();
+        walkFor(w, 1, 1);
+        d = w.feet() - s;
+        CHECK(d.y > 2 && std::fabs(d.x) < 1e-6);
+        walkFor(w, 0.5, 0);
+        s = w.feet();
+        walkFor(w, 1, 1, 0, false, true);
+        CHECK((w.feet() - s).length() > 4.5);
+    });
+    test("walker: a wall stops it at its radius, also a thin one-sided plane", [&] {
+        Mesh m;
+        floorMesh(m);
+        m.drawPolyline({{3, -10, 0.5}, {3, 10, 0.5}, {3, 10, 4}, {3, -10, 4}}, true);
+        CollisionWorld world;
+        worldOf(m, world);
+        Walker w(world);
+        w.spawn(Vec3(0, 0, 0.5));
+        walkFor(w, 3, 1, 0, false, true);
+        CHECK(w.feet().x < 3 - 0.149 && w.feet().x > 2.8);
+        // Sliding along the wall.
+        const double y0 = w.feet().y;
+        w.look(0.5, 0);
+        walkFor(w, 1, 1);
+        CHECK(w.feet().y > y0 + 0.5);
+        CHECK(w.feet().x < 3);
+        // From the other side as well.
+        Walker other(world);
+        other.spawn(Vec3(6, 0, 0.5));
+        other.setYaw(kPi);
+        walkFor(other, 3, 1, 0, false, true);
+        CHECK(other.feet().x > 3 + 0.149);
+    });
+    test("walker: fast falls do not pass through a thin floor", [&] {
+        Mesh m;
+        floorMesh(m);
+        CollisionWorld world;
+        worldOf(m, world);
+        Walker w(world);
+        w.spawn(Vec3(0, 0, 200));
+        walkFor(w, 8, 0);
+        CHECK(near(w.feet().z, 0.5, 0.01));
+        CHECK(w.grounded());
+    });
+    test("walker: climbs steps but not walls, jumps up a little more", [&] {
+        Mesh m;
+        floorMesh(m);
+        // Stairs of 0.2 m along +X, starting at x = 2.
+        double z = 0.5;
+        for (int i = 0; i < 5; ++i) {
+            solidBox(m, Vec3(2 + i * 0.3, -3, z), Vec3(2.0 + 1.5, 3, z + 0.2));
+            z += 0.2;
+        }
+        CollisionWorld world;
+        worldOf(m, world);
+        Walker w(world);
+        w.spawn(Vec3(0, 0, 0.5));
+        walkFor(w, 1.15, 1); // five steps up, at the top of the stairs
+        CHECK(w.feet().z > 0.5 + 0.9);
+        CHECK(w.grounded());
+
+        Mesh tall;
+        floorMesh(tall);
+        solidBox(tall, Vec3(2, -3, 0.5), Vec3(4, 3, 1.5));
+        CollisionWorld tallWorld;
+        worldOf(tall, tallWorld);
+        Walker blocked(tallWorld);
+        blocked.spawn(Vec3(0, 0, 0.5));
+        walkFor(blocked, 2, 1);
+        CHECK(blocked.feet().x < 2 - 0.14 && near(blocked.feet().z, 0.5, 0.01));
+
+        // A 0.6 m ledge: too high to step, reachable with a jump.
+        Mesh ledge;
+        floorMesh(ledge);
+        solidBox(ledge, Vec3(2, -3, 0.5), Vec3(4, 3, 1.1));
+        CollisionWorld ledgeWorld;
+        worldOf(ledge, ledgeWorld);
+        Walker j(ledgeWorld);
+        j.spawn(Vec3(0, 0, 0.5));
+        walkFor(j, 2, 1);
+        CHECK(near(j.feet().z, 0.5, 0.01));
+        walkFor(j, 0.05, 1, 0, true);
+        for (int i = 0; i < 300 && (i < 5 || !j.grounded()); ++i) walkFor(j, 0.01, 1);
+        CHECK(j.feet().x > 2 && near(j.feet().z, 1.1, 0.02));
+    });
+    test("walker: walks slopes up to the limit and follows them down", [&] {
+        auto ramp = [](Mesh& m, double degrees) {
+            const double run = 4 / std::tan(degrees * kPi / 180);
+            m.groundFacesDown = false;
+            m.viewHint = Vec3(0, 0, 100);
+            m.drawPolyline({{1, -5, 0.5}, {1 + run, -5, 4.5}, {1 + run, 5, 4.5}, {1, 5, 0.5}}, true);
+        };
+        Mesh gentle;
+        floorMesh(gentle);
+        ramp(gentle, 30);
+        CollisionWorld gw;
+        worldOf(gentle, gw);
+        Walker up(gw);
+        up.spawn(Vec3(0, 0, 0.5));
+        walkFor(up, 2.5, 1);
+        CHECK(up.feet().z > 2.0);
+        CHECK(up.grounded());
+        // Standing on the slope it does not creep.
+        walkFor(up, 0.3, 0);
+        const Vec3 rest = up.feet();
+        walkFor(up, 3, 0);
+        CHECK((up.feet() - rest).length() < 1e-3);
+        // Downhill it stays on the ground instead of hopping.
+        up.setYaw(kPi);
+        bool alwaysGrounded = true;
+        for (int i = 0; i < 40; ++i) {
+            walkFor(up, 0.02, 1);
+            alwaysGrounded = alwaysGrounded && up.grounded();
+        }
+        CHECK(alwaysGrounded);
+
+        Mesh steep;
+        floorMesh(steep);
+        ramp(steep, 70);
+        CollisionWorld sw;
+        worldOf(steep, sw);
+        Walker no(sw);
+        no.spawn(Vec3(0, 0, 0.5));
+        walkFor(no, 4, 1);
+        CHECK(no.feet().z < 1.2);
+    });
+    test("walker: walks off an edge and falls; floor below everything", [&] {
+        Mesh m;
+        solidBox(m, Vec3(-2, -2, 3), Vec3(2, 2, 4));
+        CollisionWorld world;
+        worldOf(m, world);
+        Walker w(world);
+        w.spawn(Vec3(0, 0, 4));
+        walkFor(w, 0.2, 0);
+        CHECK(w.grounded() && near(w.feet().z, 4, 0.01));
+        walkFor(w, 3, 1);
+        CHECK(w.feet().x > 2);
+        CHECK(near(w.feet().z, 0, 0.01)); // landed on the ground plane
+        CHECK(w.grounded());
+        // Empty models still have the ground.
+        CollisionWorld empty;
+        empty.build();
+        Walker e(empty);
+        e.spawn(Vec3(5, 5, 1));
+        walkFor(e, 2, 1);
+        CHECK(near(e.feet().z, 0, 0.01));
+
+        Mesh pit;
+        solidBox(pit, Vec3(-2, -2, -5), Vec3(2, 2, -4));
+        CollisionWorld pw;
+        worldOf(pit, pw);
+        CHECK(near(pw.floorZ(), -5));
+    });
+    test("walker: head hits a ceiling; a low gap keeps it out", [&] {
+        Mesh m;
+        floorMesh(m);
+        // A ceiling plate 2.1 m above the floor.
+        solidBox(m, Vec3(-5, -5, 2.6), Vec3(5, 5, 3));
+        CollisionWorld world;
+        worldOf(m, world);
+        Walker w(world);
+        w.spawn(Vec3(0, 0, 0.5));
+        walkFor(w, 0.2, 0);
+        walkFor(w, 0.05, 0, 0, true);
+        double top = 0;
+        for (int i = 0; i < 60; ++i) {
+            walkFor(w, 0.01, 0);
+            top = std::max(top, w.feet().z + w.params().height);
+        }
+        CHECK(top <= 2.6 + 1e-3);
+        walkFor(w, 1, 0);
+        CHECK(w.grounded() && near(w.feet().z, 0.5, 0.01));
+
+        Mesh gap;
+        floorMesh(gap);
+        solidBox(gap, Vec3(2, -5, 2.0), Vec3(4, 5, 3)); // only 1.5 m of room under it
+        CollisionWorld gw;
+        worldOf(gap, gw);
+        Walker g(gw);
+        g.spawn(Vec3(0, 0, 0.5));
+        walkFor(g, 3, 1);
+        CHECK(g.feet().x < 2);
+    });
+    test("walker: collides with moved component instances, not hidden ones", [&] {
+        Document d;
+        solidBox(d.mesh(), Vec3(0, 0, 0), Vec3(1, 1, 3));
+        Selection all;
+        all.faces = allFaces(d.mesh());
+        Id a = makeComponent(d.state, all, "Post");
+        Id b = cloneInstance(d.state, a);
+        d.state.instances[a].xf = Mat4::translation(Vec3(5, -0.5, 0));
+        d.state.instances[b].xf = Mat4::translation(Vec3(-6, -0.5, 0));
+        d.state.instances[b].hidden = true;
+        CollisionWorld world;
+        world.buildFromModel(d.state);
+        Walker w(world);
+        w.spawn(Vec3(0, 0, 0));
+        walkFor(w, 3, 1);
+        CHECK(w.feet().x < 5 - 0.14);
+        Walker back(world);
+        back.spawn(Vec3(0, 0, 0));
+        back.setYaw(kPi);
+        walkFor(back, 3, 1);
+        CHECK(back.feet().x < -7);
+    });
+    test("walker: terrain from the noise effect is walkable", [&] {
+        Mesh m;
+        floorMesh(m, 15);
+        NoiseParams n;
+        n.x = n.y = false;
+        n.amount = 0.3;
+        n.scale = 4;
+        n.octaves = 2;
+        n.detail = 0.5;
+        CHECK(effectNoise(m, allFaces(m), n));
+        CollisionWorld world;
+        worldOf(m, world);
+        Walker w(world);
+        w.spawn(Vec3(-10, 0, 2));
+        walkFor(w, 1, 0);
+        CHECK(w.grounded());
+        walkFor(w, 5, 1);
+        CHECK(w.feet().x > 0);
+        CHECK(w.feet().z > 0.5 - 0.4 && w.feet().z < 0.5 + 0.4);
     });
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);

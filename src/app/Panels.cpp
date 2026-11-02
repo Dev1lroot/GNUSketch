@@ -25,6 +25,7 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
 #include <QTextBrowser>
@@ -915,6 +916,75 @@ void StylesPanel::refresh() {
 }
 
 // ===========================================================================
+// Sun
+// ===========================================================================
+
+SunPanel::SunPanel(Document* doc, Viewport* vp, QWidget* parent) : QWidget(parent), doc_(doc), vp_(vp) {
+    auto* form = new QFormLayout(this);
+    form->setContentsMargins(8, 6, 8, 8);
+    sun_ = new QCheckBox(QStringLiteral("Sun"), this);
+    shadows_ = new QCheckBox(QStringLiteral("Shadows"), this);
+    auto* checks = new QHBoxLayout();
+    checks->addWidget(sun_);
+    checks->addWidget(shadows_);
+    checks->addStretch(1);
+    form->addRow(checks);
+    auto row = [&](const QString& label, const QString& tip, double lo, double hi, QSlider*& slider, QDoubleSpinBox*& spin, const QString& suffix, int scale) {
+        auto* w = new QWidget(this);
+        auto* h = new QHBoxLayout(w);
+        h->setContentsMargins(0, 0, 0, 0);
+        slider = new QSlider(Qt::Horizontal, w);
+        slider->setRange(int(lo * scale), int(hi * scale));
+        spin = new QDoubleSpinBox(w);
+        spin->setRange(lo, hi);
+        spin->setDecimals(scale > 1 ? 2 : 0);
+        spin->setSuffix(suffix);
+        h->addWidget(slider, 1);
+        h->addWidget(spin);
+        w->setToolTip(tip);
+        form->addRow(label, w);
+        QDoubleSpinBox* sp = spin;
+        QSlider* sl = slider;
+        connect(sl, &QSlider::valueChanged, sp, [sp, scale](int v) { sp->setValue(double(v) / scale); });
+        connect(sp, &QDoubleSpinBox::valueChanged, this, [this, sl, scale](double v) {
+            QSignalBlocker b(sl);
+            sl->setValue((int)std::lround(v * scale));
+            apply();
+        });
+    };
+    QSlider* a; QSlider* e; QSlider* i;
+    row(QStringLiteral("Direction:"), QStringLiteral("Compass direction of the sun: 0° along the green axis, 90° along the red axis."), 0, 360, a, azimuth_, QStringLiteral("°"), 1);
+    row(QStringLiteral("Height:"), QStringLiteral("Height of the sun above the horizon: low for evening light, below 0° for night."), -30, 90, e, altitude_, QStringLiteral("°"), 1);
+    row(QStringLiteral("Brightness:"), QStringLiteral("Strength of the direct sunlight."), 0, 2, i, intensity_, QString(), 100);
+    connect(sun_, &QCheckBox::toggled, this, [this] { apply(); });
+    connect(shadows_, &QCheckBox::toggled, this, [this] { apply(); });
+    refresh();
+}
+
+void SunPanel::apply() {
+    if (updating_) return;
+    RenderStyle& s = doc_->style;
+    s.sun = sun_->isChecked();
+    s.shadows = shadows_->isChecked();
+    s.sunAzimuth = azimuth_->value();
+    s.sunAltitude = altitude_->value();
+    s.sunIntensity = intensity_->value();
+    vp_->update();
+    emit styleChanged();
+}
+
+void SunPanel::refresh() {
+    updating_ = true;
+    const RenderStyle& s = doc_->style;
+    sun_->setChecked(s.sun);
+    shadows_->setChecked(s.shadows);
+    azimuth_->setValue(s.sunAzimuth);
+    altitude_->setValue(s.sunAltitude);
+    intensity_->setValue(s.sunIntensity);
+    updating_ = false;
+}
+
+// ===========================================================================
 // Terraform
 // ===========================================================================
 
@@ -1051,6 +1121,9 @@ void InstructorPanel::showTool(ToolId id) {
     case ToolId::Pan: i = {"Pan", "Moves the camera sideways.", "Drag in the viewport. Shift + middle mouse pans with any tool.", ""}; break;
     case ToolId::Zoom: i = {"Zoom", "Moves the camera closer or farther.", "Drag up/down, or use the mouse wheel with any tool. Type a field of view in degrees.", "Shift + drag: change field of view"}; break;
     case ToolId::ZoomWindow: i = {"Zoom Window", "Zooms to a rectangular area.", "Drag a window around the area of interest.", ""}; break;
+    case ToolId::PlaceCharacter: i = {"Game Mode", "Puts a character on the model and walks it around in a separate game window. It is 1.80 m tall and 0.30 m across, and collides with every visible face.",
+        "Click the spot to stand on; the green capsule shows the character. In the game window click to capture the mouse, then walk. The game works on a copy of the model: to see later edits, close it and place the character again.",
+        "WASD: walk &nbsp; Mouse or arrow keys: look &nbsp; Shift: run &nbsp; Space: jump &nbsp; R: back to the start &nbsp; Tab: edges &nbsp; F11: full screen &nbsp; Esc: free the mouse, then leave"}; break;
     case ToolId::Mountain: i = {"Mountain", "Raises the surface like a 3D brush. Faces under the brush turn into a smooth triangle mesh that keeps subdividing as it stretches.",
         "Press and hold on a face; the longer you hold, the higher it grows (Force = cm per second). Drag to paint along a ridge. The circle shows the radius, the dashed circle the hard core.",
         "Shift: vertical axis only &nbsp; Ctrl+wheel: radius &nbsp; Alt+wheel: hardness &nbsp; Type a value to set the radius &nbsp; Settings: Window &gt; Terraform &nbsp; Esc: cancel the stroke"}; break;

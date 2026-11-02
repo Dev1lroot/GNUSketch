@@ -22,7 +22,8 @@ enum class ToolId {
     Select, Eraser, Paint, Line, Freehand, Rectangle, Circle, Polygon, Arc,
     PushPull, Move, Rotate, Scale, Offset, FollowMe, Tape, Orbit, Pan, Zoom, ZoomWindow,
     Mountain, Pit, Flatten, TextureBrush,
-    SolidUnion, SolidIntersect, SolidSubtract, SolidTrim, SolidSplit
+    SolidUnion, SolidIntersect, SolidSubtract, SolidTrim, SolidSplit,
+    PlaceCharacter
 };
 
 struct MouseEvent {

@@ -924,6 +924,24 @@ void Mesh::eraseEdge(Id e, bool heal) {
     removeOrphanVertices();
 }
 
+void Mesh::removeEdgesWithoutFaces(const std::vector<Id>& candidates) {
+    ensureAdjacency();
+    bool any = false;
+    for (Id e : candidates) {
+        if (e < 0 || e >= (Id)edges.size() || !edges[e].alive) continue;
+        bool used = false;
+        for (Id f : eFaces_[e]) used = used || faces[f].alive;
+        if (used) continue;
+        edgeMapErase(e);
+        edges[e].alive = false;
+        any = true;
+    }
+    if (any) {
+        adjDirty_ = true;
+        revision = nextMeshRevision();
+    }
+}
+
 void Mesh::removeOrphanVertices() {
     std::vector<int> deg(vertices.size(), 0);
     for (const Edge& e : edges)

@@ -342,4 +342,66 @@ bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* 
     return true;
 }
 
+namespace {
+QJsonArray colorJson(const Color& c) { return QJsonArray{c.r, c.g, c.b, c.a}; }
+Color colorFrom(const QJsonValue& j, const Color& def) {
+    QJsonArray a = j.toArray();
+    return a.size() == 4 ? Color((float)a[0].toDouble(), (float)a[1].toDouble(), (float)a[2].toDouble(), (float)a[3].toDouble()) : def;
+}
+} // namespace
+
+QJsonObject styleToJson(const RenderStyle& s) {
+    QJsonObject st;
+    st["faceStyle"] = (int)s.faceStyle;
+    st["xray"] = s.xray;
+    st["edges"] = s.edges;
+    st["backEdges"] = s.backEdges;
+    st["profiles"] = s.profiles;
+    st["profileWidth"] = s.profileWidth;
+    st["axes"] = s.showAxes;
+    st["guides"] = s.showGuides;
+    st["sky"] = s.sky;
+    st["ground"] = s.ground;
+    st["shadows"] = s.shadows;
+    st["ambientOcclusion"] = s.ambientOcclusion;
+    st["antialiasing"] = s.antialiasing;
+    st["backfaceCulling"] = s.backfaceCulling;
+    st["sun"] = s.sun;
+    st["sunAzimuth"] = s.sunAzimuth;
+    st["sunAltitude"] = s.sunAltitude;
+    st["sunIntensity"] = s.sunIntensity;
+    st["skyColor"] = colorJson(s.skyColor);
+    st["groundColor"] = colorJson(s.groundColor);
+    st["background"] = colorJson(s.background);
+    st["frontColor"] = colorJson(s.frontColor);
+    st["backColor"] = colorJson(s.backColor);
+    return st;
+}
+
+void styleFromJson(const QJsonObject& st, RenderStyle& s) {
+    s.faceStyle = (RenderStyle::FaceStyle)std::clamp(st["faceStyle"].toInt((int)s.faceStyle), 0, 4);
+    s.xray = st["xray"].toBool(s.xray);
+    s.edges = st["edges"].toBool(s.edges);
+    s.backEdges = st["backEdges"].toBool(s.backEdges);
+    s.profiles = st["profiles"].toBool(s.profiles);
+    s.profileWidth = (float)st["profileWidth"].toDouble(s.profileWidth);
+    s.showAxes = st["axes"].toBool(s.showAxes);
+    s.showGuides = st["guides"].toBool(s.showGuides);
+    s.sky = st["sky"].toBool(s.sky);
+    s.ground = st["ground"].toBool(s.ground);
+    s.shadows = st["shadows"].toBool(s.shadows);
+    s.ambientOcclusion = st["ambientOcclusion"].toBool(s.ambientOcclusion);
+    s.antialiasing = st["antialiasing"].toBool(s.antialiasing);
+    s.backfaceCulling = st["backfaceCulling"].toBool(s.backfaceCulling);
+    s.sun = st["sun"].toBool(s.sun);
+    s.sunAzimuth = st["sunAzimuth"].toDouble(s.sunAzimuth);
+    s.sunAltitude = st["sunAltitude"].toDouble(s.sunAltitude);
+    s.sunIntensity = st["sunIntensity"].toDouble(s.sunIntensity);
+    s.skyColor = colorFrom(st["skyColor"], s.skyColor);
+    s.groundColor = colorFrom(st["groundColor"], s.groundColor);
+    s.background = colorFrom(st["background"], s.background);
+    s.frontColor = colorFrom(st["frontColor"], s.frontColor);
+    s.backColor = colorFrom(st["backColor"], s.backColor);
+}
+
 } // namespace gs

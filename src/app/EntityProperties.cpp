@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "EntityProperties.h"
+#include "Plugins.h"
 
 #include "Viewport.h"
 #include "core/Animation.h"
@@ -199,6 +200,12 @@ EntityProperties::EntityProperties(Document* doc, Viewport* vp, QWidget* parent)
     addRow->addWidget(addSourceBtn);
     sl->addLayout(addRow);
     tabs_->addTab(sourcesPage, QStringLiteral("Sources"));
+    for (const LoadedPlugin& lp : Plugins::all()) // (a format's own: an Open Block Model's tags)
+        if (const QString title = lp.format->propertiesTabTitle(); !title.isEmpty())
+            if (QWidget* page = lp.format->createPropertiesTab(*doc_, tabs_)) {
+                tabs_->addTab(page, title);
+                pluginTabs_.push_back({lp.format, page});
+            }
     connect(addSourceBtn, &QPushButton::clicked, this, [this] {
         if (addSource_->currentIndex() >= 0) addSource(addSource_->currentData().toInt());
     });
@@ -330,6 +337,13 @@ void EntityProperties::fillPresets() {
         if (p.classname.isEmpty() || p.classname == cls) preset_->addItem(p.name);
 }
 
+void EntityProperties::refreshPluginTabs() {
+    for (const PluginTab& t : pluginTabs_) {
+        const bool shown = t.plugin->showInPropertiesTab(t.page, *doc_, inst_);
+        tabs_->setTabVisible(tabs_->indexOf(t.page), shown);
+    }
+}
+
 void EntityProperties::refresh() {
     if (doc_->inOp()) return;
     updating_ = true;
@@ -342,6 +356,7 @@ void EntityProperties::refresh() {
         return;
     }
     title_->setText(QString::fromStdString(def->name));
+    refreshPluginTabs();
     const EntityProps& e = in->entity;
     class_->setCurrentIndex(std::max(0, class_->findData(QString::fromStdString(e.classname))));
     if (!name_->hasFocus()) name_->setText(QString::fromStdString(e.targetname));

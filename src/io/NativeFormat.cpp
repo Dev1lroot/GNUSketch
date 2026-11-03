@@ -310,6 +310,15 @@ bool meshFromJson(const QJsonObject& root, Mesh& mesh) {
     return true;
 }
 
+// A plugin's extra data: kept in the file as the text it is (not re-parsed: the order
+// of its keys, which the format it came from may care about, stays as it was).
+static QJsonValue extraToJson(const std::string& text) { return QString::fromStdString(text); }
+static std::string extraFromJson(const QJsonValue& v) {
+    if (v.isObject()) return QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact).toStdString();
+    if (v.isArray()) return QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact).toStdString();
+    return v.toString().toStdString();
+}
+
 QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
     const ModelState state = closedState(stateIn);
     QJsonObject root = meshToJson(state.mesh);
@@ -321,6 +330,7 @@ QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
     QJsonArray mats;
     for (const Material& m : state.materials) mats.append(materialToJson(m));
     root["materials"] = mats;
+    if (!state.extra.empty()) root["extra"] = extraToJson(state.extra);
 
     QJsonArray guides;
     for (const Guide& g : state.guides) {
@@ -369,6 +379,7 @@ QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
         QJsonObject c = meshToJson(d.mesh);
         c["name"] = QString::fromStdString(d.name);
         c["uid"] = QString::fromStdString(d.uid);
+        if (!d.extra.empty()) c["extra"] = extraToJson(d.extra);
         if (!d.prefab.empty()) c["prefab"] = QString::fromStdString(d.prefab);
         if (!d.states.empty()) {
             // Vertex ids as in the file, which holds the mesh compacted.
@@ -472,6 +483,7 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
     }
     st = ModelState();
     meshFromJson(root, st.mesh);
+    st.extra = extraFromJson(root["extra"]);
     for (const auto& mj : root["materials"].toArray()) st.materials.push_back(materialFromJson(mj.toObject()));
     // Drop dangling material references.
     for (Face& fc : st.mesh.faces) {
@@ -485,6 +497,7 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
         d.name = o["name"].toString().toStdString();
         d.uid = o["uid"].toString().toStdString();
         d.prefab = o["prefab"].toString().toStdString();
+        d.extra = extraFromJson(o["extra"]);
         if (d.uid.empty()) d.uid = newComponentUid();
         for (Face& fc : d.mesh.faces) {
             if (fc.front.material >= (Id)st.materials.size()) fc.front.material = kNone;

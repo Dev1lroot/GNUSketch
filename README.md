@@ -45,6 +45,24 @@ tools/headless-selftest.sh        # drives the real UI with synthetic input on X
 If the window does not open, run `./build/gnusketch --gl-probe` from a terminal and
 include its output in the bug report.
 
+## Plugins
+
+File formats can come as plugins: shared libraries GNUSketch loads at start from
+`GNUSKETCH_PLUGIN_PATH`, `~/.local/share/GNUSketch/GNUSketch/plugins`,
+`<prefix>/lib/gnusketch/plugins` and `plugins/` beside the executable (Help > Plugins
+lists what was found). A plugin adds File > Open / Import / Export entries for its
+format, and may add a tab of its own to a component's Properties. See
+`src/plugin/FormatPlugin.h`.
+
+**Open Block Model** (`plugins/obm`, GNUBlocks' `.obm`): groups become components,
+cubes become textured boxes, pictures come from the game's `textures` folder (beside
+the model's `models` folder, or `GNUSKETCH_OBM_TEXTURES`). A picture that isn't
+found is asked about ("Missing texture", Fix it: pick the file); picked from inside
+a textures folder, that folder is remembered for the rest. Properties > OBM shows
+and edits the group's, its cubes' and the model's tags. Exported, every box (and
+lone rectangle) is a cube again; what wasn't changed is written back exactly as it
+was read, tags, props and animations included.
+
 ## Geometry model
 
 * **Edges are first-class; faces are planar n-gons** with an outer loop and any

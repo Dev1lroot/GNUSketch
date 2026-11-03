@@ -24,6 +24,8 @@ class QTemporaryDir;
 
 namespace gs {
 
+class FormatPlugin;
+
 class Viewport;
 class EntityInfoPanel;
 class MaterialsPanel;
@@ -85,6 +87,11 @@ private:
     void exportObj();
     void exportGltf();
     void exportStl();
+    // file format plugins (Plugins.h): File > Import / Export entries, Help > Plugins
+    bool importWithPlugin(FormatPlugin* f, const QString& path, bool intoEmpty);
+    void importPlugin(FormatPlugin* f);
+    void exportPlugin(FormatPlugin* f);
+    void showPlugins();
 
     void copySelection(bool cut);
     void paste();

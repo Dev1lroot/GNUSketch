@@ -11,6 +11,7 @@
 #include "render/OffscreenRenderer.h"
 
 #include "EffectsUi.h"
+#include "Plugins.h"
 #include "GameMode.h"
 #include "Icons.h"
 #include "ModifyTools.h"
@@ -414,10 +415,16 @@ void MainWindow::buildMenus() {
     file->addAction(acts_["saveas"]);
     file->addSeparator();
     file->addAction(acts_["importobj"]);
+    for (const LoadedPlugin& p : Plugins::all())   // (formats from plugins)
+        if (FormatPlugin* f = p.format; f->canImport())
+            file->addAction(QStringLiteral("Import %1…").arg(f->formatName()), this, [this, f] { importPlugin(f); });
     QMenu* exp = file->addMenu(QStringLiteral("&Export"));
     exp->addAction(acts_["exportobj"]);
     exp->addAction(acts_["exportgltf"]);
     exp->addAction(acts_["exportstl"]);
+    for (const LoadedPlugin& p : Plugins::all())
+        if (FormatPlugin* f = p.format; f->canExport())
+            exp->addAction(QStringLiteral("Export %1…").arg(f->formatName()), this, [this, f] { exportPlugin(f); });
     file->addSeparator();
     file->addAction(acts_["quit"]);
 
@@ -573,6 +580,7 @@ void MainWindow::buildMenus() {
     QMenu* help = menuBar()->addMenu(QStringLiteral("&Help"));
     help->addAction(acts_["instructor"]);
     help->addAction(acts_["shortcuts"]);
+    help->addAction(QStringLiteral("&Plugins…"), this, [this] { showPlugins(); });
     help->addSeparator();
     help->addAction(acts_["about"]);
 }
@@ -852,7 +860,8 @@ void MainWindow::open() {
     if (!maybeSave()) return;
     QSettings s;
     QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Model"), s.value("files/lastDir").toString(),
-                                                QStringLiteral("GNUSketch Model (*.gsketch);;Wavefront OBJ (*.obj)"));
+                                                QStringLiteral("GNUSketch Model (*.gsketch);;Wavefront OBJ (*.obj)") +
+                                                    (Plugins::fileFilters(false).isEmpty() ? QString() : ";;" + Plugins::fileFilters(false)));
     if (path.isEmpty()) return;
     s.setValue("files/lastDir", QFileInfo(path).absolutePath());
     openFile(path);
@@ -861,6 +870,7 @@ void MainWindow::open() {
 bool MainWindow::openFile(const QString& path) {
     viewport_->cancelTool();
     QString err;
+    if (FormatPlugin* f = Plugins::forFile(path, false)) return importWithPlugin(f, path, true);
     if (path.endsWith(".obj", Qt::CaseInsensitive)) {
         doc_.reset();
         if (gs::importObj(doc_, path, true, 1.0, &err) < 0) {
@@ -926,6 +936,80 @@ void MainWindow::importObj() {
     doc_.commitOp();
     viewport_->zoomExtents();
     statusLabel_->setText(QStringLiteral("Imported %1 faces").arg(n));
+}
+
+bool MainWindow::importWithPlugin(FormatPlugin* f, const QString& path, bool intoEmpty) {
+    viewport_->cancelTool();
+    if (intoEmpty) doc_.reset();
+    QStringList msgs;
+    doc_.beginOp(QStringLiteral("Import %1").arg(f->formatName()).toStdString());
+    if (!f->importFile(doc_, path, &msgs)) {
+        doc_.cancelOp();
+        QMessageBox::warning(this, intoEmpty ? QStringLiteral("Open") : QStringLiteral("Import"),
+                             QStringLiteral("Could not read %1:\n%2").arg(path, msgs.join('\n')));
+        return false;
+    }
+    doc_.commitOp();
+    if (intoEmpty) doc_.clearHistory();
+    doc_.modified = true;
+    viewport_->zoomExtents();
+    onDocChanged();
+    onSelectionChanged();
+    if (!msgs.isEmpty()) QMessageBox::information(this, f->formatName(), msgs.join('\n'));
+    statusLabel_->setText(QStringLiteral("Read %1").arg(QFileInfo(path).fileName()));
+    return true;
+}
+
+void MainWindow::importPlugin(FormatPlugin* f) {
+    QSettings s;
+    QStringList pats;
+    for (const QString& e : f->extensions()) pats << "*." + e;
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Import %1").arg(f->formatName()), s.value("files/lastDir").toString(),
+                                                      QStringLiteral("%1 (%2)").arg(f->formatName(), pats.join(' ')));
+    if (path.isEmpty()) return;
+    s.setValue("files/lastDir", QFileInfo(path).absolutePath());
+    importWithPlugin(f, path, false);
+}
+
+void MainWindow::exportPlugin(FormatPlugin* f) {
+    QSettings s;
+    QStringList pats;
+    for (const QString& e : f->extensions()) pats << "*." + e;
+    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export %1").arg(f->formatName()), s.value("files/lastDir").toString(),
+                                                QStringLiteral("%1 (%2)").arg(f->formatName(), pats.join(' ')));
+    if (path.isEmpty()) return;
+    if (!f->extensions().isEmpty() && !f->extensions().contains(QFileInfo(path).suffix().toLower())) path += "." + f->extensions().first();
+    s.setValue("files/lastDir", QFileInfo(path).absolutePath());
+    QStringList msgs;
+    if (!f->exportFile(doc_, path, &msgs)) {
+        QMessageBox::warning(this, QStringLiteral("Export"), QStringLiteral("Could not write %1:\n%2").arg(path, msgs.join('\n')));
+        return;
+    }
+    if (!msgs.isEmpty()) QMessageBox::information(this, f->formatName(), msgs.join('\n'));
+    statusLabel_->setText(QStringLiteral("Exported %1").arg(path));
+}
+
+void MainWindow::showPlugins() {
+    QString html = QStringLiteral("<h3>Plugins</h3>");
+    if (Plugins::all().empty()) html += QStringLiteral("<p>None loaded.</p>");
+    else {
+        html += QStringLiteral("<table cellpadding=3>");
+        for (const LoadedPlugin& p : Plugins::all()) {
+            QStringList can;
+            if (p.format->canImport()) can << QStringLiteral("open, import");
+            if (p.format->canExport()) can << QStringLiteral("export");
+            html += QStringLiteral("<tr><td><b>%1</b> (.%2)</td><td>%3</td></tr><tr><td colspan=2><small>%4<br>%5</small></td></tr>")
+                        .arg(p.format->formatName().toHtmlEscaped(), p.format->extensions().join(", ."), can.join(", "),
+                             p.format->description().toHtmlEscaped(), p.file.toHtmlEscaped());
+        }
+        html += QStringLiteral("</table>");
+    }
+    QStringList folders;
+    for (const QString& d : Plugins::folders()) folders << d.toHtmlEscaped();
+    html += QStringLiteral("<p>Looked in:<br><small>%1</small></p>").arg(folders.join("<br>"));
+    if (!Plugins::problems().isEmpty())
+        html += QStringLiteral("<p>Not loaded:<br><small>%1</small></p>").arg(Plugins::problems().join('\n').toHtmlEscaped().replace('\n', "<br>"));
+    QMessageBox::information(this, QStringLiteral("Plugins"), html);
 }
 
 void MainWindow::exportObj() {
@@ -2061,7 +2145,8 @@ void MainWindow::dragEnterEvent(QDragEnterEvent* e) {
     if (e->mimeData()->hasUrls())
         for (const QUrl& u : e->mimeData()->urls()) {
             QString p = u.toLocalFile();
-            if (p.endsWith(".gsketch", Qt::CaseInsensitive) || p.endsWith(".obj", Qt::CaseInsensitive) || isImageFile(p)) {
+            if (p.endsWith(".gsketch", Qt::CaseInsensitive) || p.endsWith(".obj", Qt::CaseInsensitive) || isImageFile(p) ||
+                Plugins::forFile(p, false)) {
                 e->acceptProposedAction();
                 return;
             }
@@ -2082,6 +2167,10 @@ void MainWindow::dropEvent(QDropEvent* e) {
             if (gs::importObj(doc_, p, true, 1.0, &err) < 0) doc_.cancelOp();
             else doc_.commitOp();
             viewport_->zoomExtents();
+            break;
+        }
+        if (FormatPlugin* f = Plugins::forFile(p, false)) {   // (into what is open, as an OBJ is)
+            importWithPlugin(f, p, false);
             break;
         }
         if (isImageFile(p)) materials_->addImageMaterial(p);

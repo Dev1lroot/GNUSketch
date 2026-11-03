@@ -23,6 +23,7 @@ class QTabWidget;
 
 namespace gs {
 
+class FormatPlugin;
 class Viewport;
 
 class EntityProperties : public QWidget {
@@ -89,6 +90,10 @@ private:
     QComboBox* preset_;
     QPlainTextEdit* script_;
     QLabel* message_;
+    // tabs of plugins (plugin/FormatPlugin.h): each its own page, hidden when it has nothing to show
+    struct PluginTab { FormatPlugin* plugin; QWidget* page; };
+    std::vector<PluginTab> pluginTabs_;
+    void refreshPluginTabs();
     bool updating_ = false;
 };
 

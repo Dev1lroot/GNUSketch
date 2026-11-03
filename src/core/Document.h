@@ -74,6 +74,9 @@ struct ComponentDef {
     Mesh mesh;
     std::vector<AnimState> states;
     std::string prefab; // the prefab it was placed from, for showing that
+    // What a file format keeps with it that GNUSketch has no place for (JSON text,
+    // saved with the model): an Open Block Model group's tags and cubes, for one.
+    std::string extra;
 };
 
 // One placement of a component definition.
@@ -117,6 +120,9 @@ struct ModelState {
     std::vector<ComponentDef> defs;
     std::vector<Instance> instances;
     std::vector<SceneObject> objects;
+    // What a file format (a plugin) keeps with the whole model that GNUSketch has
+    // no place for: JSON text, saved with it (see ComponentDef::extra).
+    std::string extra;
     // Instance open for editing (kNone = top level). While open, its
     // definition mesh and the transforms of the components inside it hold world
     // coordinates (the instance transform is baked in) so every tool edits it

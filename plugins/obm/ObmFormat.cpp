@@ -765,7 +765,7 @@ bool importObm(Document& doc, const QString& path, QStringList* msgs, std::vecto
         return false;
     }
     Reader rd{doc, msgs, {}, 16, 16, {}, 0, false};
-    rd.conv.entity = m.value("kind", "") == "entity";
+    rd.conv.entity = m.value("kind", "") == "entity" || m.value("kind", "") == "item";   // (an item's box model: drawn as an entity's is)
     if (m.contains("texture_size") && m["texture_size"].is_array() && m["texture_size"].size() >= 2)
         rd.texW = std::max(1.0, m["texture_size"][0].get<double>()), rd.texH = std::max(1.0, m["texture_size"][1].get<double>());
     const QString folder = texturesFolder(path);
@@ -855,7 +855,7 @@ bool exportObm(const Document& doc, const QString& path, QStringList* msgs) {
         model = {{"format", "obm"}, {"version", 1}, {"kind", "other"}, {"anchor", "corner"}, {"texture_size", ojson::array({16, 16})},
                  {"textures", ojson::array()}, {"groups", ojson()}, {"cubes", ojson()}};
     Writer w{doc, msgs, {}, 16, 16, ojson::array(), {}, 0, 0, {}, {}};
-    w.conv.entity = model.value("kind", "") == "entity";
+    w.conv.entity = model.value("kind", "") == "entity" || model.value("kind", "") == "item";
     w.folder = texturesFolder(path);
     if (model.contains("texture_size") && model["texture_size"].is_array() && model["texture_size"].size() >= 2)
         w.texW = std::max(1.0, model["texture_size"][0].get<double>()), w.texH = std::max(1.0, model["texture_size"][1].get<double>());

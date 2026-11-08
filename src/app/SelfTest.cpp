@@ -1,11 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SelfTest.h"
 
+#include "Browsers.h"
+#include "EffectsUi.h"
+#include "Hierarchy.h"
+#include "EntityProperties.h"
+#include "core/Animation.h"
+#include "core/Effects.h"
 #include "GameMode.h"
+#include "MaterialEditor.h"
+#include "Panels.h"
+#include "io/ArchMaterials.h"
 #include "TextureTool.h"
+#include "io/AssetLibrary.h"
+#include "render/OffscreenRenderer.h"
 #include "core/TextureMapping.h"
 
 #include <QDialog>
+#include <QDragEnterEvent>
+#include <QDir>
+#include <QJsonDocument>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QPlainTextEdit>
+#include <QTemporaryDir>
+#include <QTreeWidget>
+#include <QThread>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QEventLoop>
@@ -19,6 +39,7 @@
 #include "TerrainTools.h"
 #include "Viewport.h"
 #include "core/Components.h"
+#include "core/Primitives.h"
 #include "core/Solids.h"
 #include "io/ImageUtil.h"
 #include "io/NativeFormat.h"
@@ -833,6 +854,126 @@ int runSelfTest(MainWindow& w) {
         d.check(doc.state.guides.size() == guides + 1 && std::fabs(std::fabs(doc.state.guides.back().dir.x) - 1) < 1e-9,
                 "Tape double-click on a component edge makes a guide along it");
         vp->setTool(ToolId::Select);
+        eng.resetMemory();
+    }
+
+    // Two components cutting through each other: the line where their faces
+    // meet snaps like an edge, a line can be drawn along it, and Rotate sticks
+    // to a component's face.
+    {
+        auto boxInst = [&](Vec3 mn, Vec3 mx, const char* name) {
+            doc.beginOp("Box");
+            Mesh& m = d.mesh();
+            m.drawPolyline({{mn.x, mn.y, mn.z}, {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mn.x, mx.y, mn.z}}, true);
+            const Vec3 c((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mn.z);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && m.facePlane(f).contains(c) && m.pointInFace(f, c)) {
+                    m.pushPull(f, (mx.z - mn.z) * m.faces[f].normal.z);
+                    break;
+                }
+            Selection s;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+                const Vec3 p = m.faceInteriorPoint(f);
+                if (m.faces[f].alive && p.x > mn.x - 1e-6 && p.x < mx.x + 1e-6 && p.y > mn.y - 1e-6 && p.y < mx.y + 1e-6 &&
+                    p.z > mn.z - 1e-6 && p.z < mx.z + 1e-6)
+                    s.faces.insert(f);
+            }
+            Id inst = makeComponent(doc.state, s, name);
+            doc.commitOp();
+            return inst;
+        };
+        InferenceEngine& eng = vp->inference();
+        InferenceEngine::Options none;
+        boxInst(Vec3(200, 0, 0), Vec3(202, 2, 2), "Wall");
+        const Id peg = boxInst(Vec3(201, 1, 0.5), Vec3(203.5, 3, 1.5), "Peg");
+        doc.selection.clear();
+        doc.notifySelection();
+        vp->setStandardView(Vec3(-1, 1, -0.8));
+        vp->camera().zoomExtents(Vec3(199.5, -0.5, 0), Vec3(204, 3.5, 2));
+        d.pump();
+        eng.resetMemory();
+        const Vec3 seamA(202, 1, 0.5), seamB(202, 1, 1.5);
+        QPointF q = d.screen(Vec3(202, 1, 0.9)) + QPointF(1, 1);
+        InferenceResult on = eng.infer(q.x(), q.y(), none);
+        d.check(on.type == InferenceResult::OnIntersection && std::fabs(on.p.x - 202) < 1e-6 && std::fabs(on.p.y - 1) < 1e-6 &&
+                    on.hasEdge && ((on.edgeA.nearlyEquals(seamA, 1e-6) && on.edgeB.nearlyEquals(seamB, 1e-6)) ||
+                                   (on.edgeA.nearlyEquals(seamB, 1e-6) && on.edgeB.nearlyEquals(seamA, 1e-6))),
+                "snaps onto the line where two components' faces cut through each other");
+        q = d.screen(seamB) + QPointF(1, 1);
+        InferenceResult end = eng.infer(q.x(), q.y(), none);
+        d.check(end.type == InferenceResult::Intersection && end.p.nearlyEquals(seamB, 1e-6), "and onto its ends");
+
+        vp->setTool(ToolId::Line);
+        d.click(d.screen(seamA) + QPointF(1, 1));
+        d.click(d.screen(seamB) + QPointF(1, 1));
+        vp->setTool(ToolId::Select);
+        const Id va = d.mesh().findVertex(seamA, 1e-6), vb = d.mesh().findVertex(seamB, 1e-6);
+        d.check(va != kNone && vb != kNone && d.mesh().findEdge(va, vb) != kNone, "Line draws along the intersection of two components");
+
+        // Rotate the peg about a point on the wall's side face: around the red axis.
+        doc.selection.clear();
+        doc.selection.instances.insert(peg);
+        doc.notifySelection();
+        vp->setTool(ToolId::Rotate);
+        const Vec3 c(202, 0.5, 0.3);
+        d.move(d.screen(c) + QPointF(1, 1));
+        d.click(d.screen(c) + QPointF(1, 1));
+        d.click(d.screen(c + Vec3(0, 0.5, 0)));
+        d.move(d.screen(c + Vec3(0, 0, 0.5)));
+        d.type("90");
+        const Mat4& xf = doc.state.instances[peg].xf;
+        d.check(doc.undoName() == "Rotate" && std::fabs(xf.transformDir(Vec3(1, 0, 0)).x - 1) < 1e-6 &&
+                    std::fabs(std::fabs(xf.transformDir(Vec3(0, 0, 1)).y) - 1) < 1e-6,
+                "Rotate sticks to a component's face and turns about its normal");
+        // Inside an open component, what is around it still snaps: the loose
+        // geometry of the model and the other components.
+        {
+            vp->setTool(ToolId::Select);
+            doc.undo(); // the rotation: the peg back where it was
+            doc.beginOp("Outer Box");
+            Mesh cube;
+            PrimitiveParams bp;
+            bp.kind = PrimitiveKind::Box;
+            buildPrimitive(bp, cube); // 1 x 1 x 1 on the ground
+            appendMesh(d.mesh(), cube, Mat4::translation(Vec3(205.5, 0.5, 0)));
+            doc.commitOp();
+            vp->setStandardView(Vec3(-1, 1, -0.8));
+            vp->camera().zoomExtents(Vec3(199.5, -0.5, 0), Vec3(206.5, 3.5, 2));
+            doc.selection.clear();
+            doc.openComponent(peg);
+            d.pump();
+            eng.resetMemory();
+            const Vec3 corner(206, 0, 1);
+            q = d.screen(corner) + QPointF(1, 1);
+            InferenceResult oc = eng.infer(q.x(), q.y(), none);
+            d.check(doc.editingComponent() && oc.type == InferenceResult::Endpoint && oc.p.nearlyEquals(corner, 1e-6),
+                    "inside a component: snaps to the corners of loose geometry outside it");
+            q = d.screen(Vec3(205.5, 0, 1)) + QPointF(1, 1);
+            InferenceResult om = eng.infer(q.x(), q.y(), none);
+            d.check(om.type == InferenceResult::Midpoint && om.p.nearlyEquals(Vec3(205.5, 0, 1), 1e-6), "and to their midpoints");
+            q = d.screen(Vec3(205.6, 0.4, 1));
+            InferenceResult of = eng.infer(q.x(), q.y(), none);
+            d.check(of.type == InferenceResult::OnFace && std::fabs(of.p.z - 1) < 1e-6, "and onto their faces");
+            q = d.screen(Vec3(201, 0.3, 2)) + QPointF(1, 1);
+            InferenceResult wc = eng.infer(q.x(), q.y(), none);
+            d.check(wc.type == InferenceResult::OnFace && std::fabs(wc.p.z - 2) < 1e-6, "and onto the faces of other components");
+            vp->setTool(ToolId::Line);
+            const size_t edgesBefore = d.mesh().edges.size();
+            d.click(d.screen(Vec3(203.5, 1, 1.5)) + QPointF(1, 1));
+            d.click(d.screen(corner) + QPointF(1, 1));
+            vp->setTool(ToolId::Select);
+            const Id v0 = d.mesh().findVertex(Vec3(203.5, 1, 1.5), 1e-6), v1 = d.mesh().findVertex(corner, 1e-6);
+            d.check(d.mesh().edges.size() > edgesBefore && v0 != kNone && v1 != kNone && d.mesh().findEdge(v0, v1) != kNone,
+                    "a line in the component ends on the loose geometry's corner");
+            doc.closeComponent();
+            doc.undo(); // the line
+            doc.undo(); // the outer box
+        }
+
+        vp->setTool(ToolId::Select);
+        for (int i = 0; i < 3; ++i) doc.undo(); // two boxes and the line along their intersection
+        doc.selection.clear();
+        doc.notifySelection();
         eng.resetMemory();
     }
 
@@ -1678,6 +1819,1117 @@ int runSelfTest(MainWindow& w) {
         vp->setTool(ToolId::Select);
     }
 
+    // Physically based materials, world lights and cameras, browsers, prefabs.
+    {
+        QTemporaryDir data; // nothing lands in the user's real library
+        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+        vp->camera().eye = Vec3(0.5, -4, 5);
+        vp->camera().target = Vec3(0, 0, 0);
+        vp->camera().perspective = true;
+        vp->camera().fovY = 35;
+        doc.style.showAxes = false;
+        Mesh& m = d.mesh();
+        m.viewHint = Vec3(0, 0, 10);
+        m.groundFacesDown = false;
+        m.drawPolyline({{-3, -3, 0}, {3, -3, 0}, {3, 3, 0}, {-3, 3, 0}}, true);
+        Id face = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) face = f;
+        // Up towards the camera.
+        if (m.faces[face].normal.z < 0) m.reverseFace(face);
+        m.touch();
+        const QPointF centre = d.screen(Vec3(0, 0, 0));
+        auto frame = [&] {
+            vp->update();
+            d.pump();
+            return vp->grabFramebuffer().convertToFormat(QImage::Format_RGB32);
+        };
+        const qreal dpr = vp->devicePixelRatioF();
+        auto pixel = [&](const QImage& im, const QPointF& p) { return QColor(im.pixel(int(p.x() * dpr), int(p.y() * dpr))); };
+        auto setMat = [&](const Material& mat) {
+            doc.state.materials = {mat};
+            d.mesh().faces[face].front.material = 0;
+            d.mesh().touch();
+            ++doc.materialsRevision;
+        };
+        auto variance = [&](const QImage& im, const QPointF& c) {
+            // Largest difference of brightness in a small area of the face.
+            int lo = 255, hi = 0;
+            for (int y = -30; y <= 30; y += 2)
+                for (int x = -30; x <= 30; x += 2) {
+                    const int g = qGray(im.pixel(int((c.x() + x) * dpr), int((c.y() + y) * dpr)));
+                    lo = std::min(lo, g);
+                    hi = std::max(hi, g);
+                }
+            return hi - lo;
+        };
+
+        // --- Shading
+        Material plain;
+        plain.name = "Paint";
+        plain.color = Color::rgb8(180, 120, 90);
+        setMat(plain);
+        const QColor legacy = pixel(frame(), centre);
+        Material matte = plain;
+        matte.pbr = true;
+        matte.maps[MapRoughness].strength = 1.0f;
+        setMat(matte);
+        const QColor pbrMatte = pixel(frame(), centre);
+        std::printf("    plain %d,%d,%d  matte PBR %d,%d,%d\n", legacy.red(), legacy.green(), legacy.blue(), pbrMatte.red(), pbrMatte.green(), pbrMatte.blue());
+        d.check(std::abs(legacy.red() - pbrMatte.red()) < 40 && std::abs(legacy.green() - pbrMatte.green()) < 40, "a matte PBR material looks like the plain one under the sun");
+        Material metal = plain;
+        metal.pbr = true;
+        metal.maps[MapMetallic].strength = 1.0f;
+        metal.maps[MapRoughness].strength = 0.2f;
+        setMat(metal);
+        const QColor pbrMetal = pixel(frame(), centre);
+        d.check(pbrMetal != pbrMatte, "metallic changes the look");
+
+        // Normal map: a bumpy image on a flat face, strength 0 turns it off.
+        {
+            QImage n(64, 64, QImage::Format_RGB32);
+            for (int y = 0; y < 64; ++y)
+                for (int x = 0; x < 64; ++x) {
+                    const double a = std::sin(x * 2 * kPi / 16) * 0.7;
+                    n.setPixel(x, y, qRgb(int((a * 0.5 + 0.5) * 255), 128, int((std::sqrt(1 - a * a) * 0.5 + 0.5) * 255)));
+                }
+            Material bumpy = plain;
+            bumpy.maps[MapNormal].tex = textureFromImage(n);
+            setMat(bumpy);
+            const int on = variance(frame(), centre);
+            bumpy.maps[MapNormal].strength = 0;
+            setMat(bumpy);
+            const int off = variance(frame(), centre);
+            std::printf("    normal map contrast: %d, at strength 0: %d\n", on, off);
+            d.check(on > off + 15, "a normal map shades a flat face, its strength controls it");
+        }
+        // Maps tile with a material that has no base image.
+        {
+            QImage rough(32, 32, QImage::Format_RGB32);
+            for (int y = 0; y < 32; ++y)
+                for (int x = 0; x < 32; ++x) rough.setPixel(x, y, (x / 8 + y / 8) % 2 ? qRgb(255, 255, 255) : qRgb(10, 10, 10));
+            Material mapped = plain;
+            mapped.maps[MapRoughness].tex = textureFromImage(rough);
+            mapped.setTileSize(0.5, 0.5);
+            setMat(mapped);
+            frame();
+            d.check(true, "roughness map renders");
+            // Opacity map: see through to the background.
+            QImage hole(32, 32, QImage::Format_RGB32);
+            hole.fill(Qt::black);
+            Material clear = plain;
+            clear.maps[MapOpacity].tex = textureFromImage(hole);
+            setMat(clear);
+            const QColor through = pixel(frame(), centre);
+            clear.maps[MapOpacity].strength = 0;
+            setMat(clear);
+            const QColor solid = pixel(frame(), centre);
+            d.check(through != solid, "an opacity map makes the face see-through");
+            // Emission glows even at night.
+            doc.style.sunAltitude = -20;
+            Material dark = plain;
+            dark.pbr = true;
+            setMat(dark);
+            const int night = qGray(pixel(frame(), centre).rgb());
+            dark.emission = Color(1, 1, 1);
+            setMat(dark);
+            const int glowing = qGray(pixel(frame(), centre).rgb());
+            std::printf("    night %d, with emission %d\n", night, glowing);
+            d.check(glowing > night + 80, "emission shines by itself");
+            doc.style.sunAltitude = 48;
+        }
+
+        // --- Custom shaders
+        {
+            Material custom = plain;
+            custom.shaderOn = true;
+            custom.shader = "uniform vec3 _Glow; // color default(0, 1, 0)\nvoid surface(inout Surface s) {\n    s.albedo = vec3(0.0);\n    s.metallic = 0.0;\n    s.roughness = 1.0;\n    s.emission = _Glow;\n}\n";
+            setMat(custom);
+            QColor c = pixel(frame(), centre);
+            std::printf("    custom shader pixel %d,%d,%d\n", c.red(), c.green(), c.blue());
+            d.check(c.green() > 200 && c.red() < 90 && c.blue() < 90, "a custom shader decides the colour, a property's default applies");
+            custom.shaderProps["_Glow"] = {1, 0, 0, 1};
+            setMat(custom);
+            c = pixel(frame(), centre);
+            d.check(c.red() > 200 && c.green() < 90, "a shader property changes the result");
+            custom.shaderOn = false;
+            setMat(custom);
+            c = pixel(frame(), centre);
+            d.check(!(c.red() > 200 && c.green() < 90), "switching the shader off restores the standard look");
+            // A broken one: the message says the line, the model keeps rendering.
+            QString log;
+            d.check(!OffscreenRenderer::instance().compileShader("void surface(inout Surface s) {\n    s.albedo = nope;\n}\n", &log), "a broken shader does not compile");
+            std::printf("    compiler said: %s\n", qPrintable(log.section('\n', 0, 0)));
+            d.check(log.contains(QStringLiteral(":2")) || log.contains(QStringLiteral("(2)")), "the compiler's message counts lines of the shader's code");
+            custom.shaderOn = true;
+            custom.shader = "void surface(inout Surface s) { s.albedo = nope; }\n";
+            setMat(custom);
+            const QColor fallback = pixel(frame(), centre);
+            d.check(fallback.isValid() && fallback != QColor(Qt::black), "a material with a broken shader falls back to the standard look");
+            QString okLog;
+            d.check(OffscreenRenderer::instance().compileShader(surfaceShaderTemplate(), &okLog), "the shader template compiles");
+            if (!okLog.isEmpty()) std::printf("%s\n", qPrintable(okLog));
+            custom.shader = surfaceShaderTemplate();
+            custom.shaderProps.clear();
+            setMat(custom);
+            frame();
+            custom.shader = "void surface(inout Surface s) { s.emission = vec3(0.5 + 0.5 * sin(_Time)); }\n";
+            setMat(custom);
+            frame();
+            custom.shader = "void surface(inout Surface s) { s.albedo = vec3(1.0, 0.0, 0.0); }\n";
+            setMat(custom);
+            frame();
+            d.check(true, "shaders using _Time render");
+        }
+
+        // --- Lights
+        Material white;
+        white.name = "White";
+        white.color = Color(1, 1, 1);
+        setMat(white);
+        doc.style.sunAltitude = -30; // night: only the lamps
+        const QPointF near_ = d.screen(Vec3(0, 0, 0)), far_ = d.screen(Vec3(-2.5, 2.5, 0));
+        QImage dark = frame();
+        const int base = qGray(pixel(dark, near_).rgb());
+        doc.beginOp("light");
+        SceneObject lamp;
+        lamp.pos = Vec3(0, 0, 1);
+        lamp.intensity = 1.5;
+        lamp.range = 2.0;
+        const Id lampId = doc.addObject(lamp);
+        doc.commitOp();
+        QImage lit = frame();
+        const int nearLit = qGray(pixel(lit, near_).rgb()), farLit = qGray(pixel(lit, far_).rgb());
+        std::printf("    night %d, under the lamp %d, out of its range %d\n", base, nearLit, farLit);
+        d.check(nearLit > base + 30, "a point light brightens what is near it");
+        d.check(std::abs(farLit - qGray(pixel(dark, far_).rgb())) <= 2, "its range limits it");
+        doc.state.objects[lampId].color = Color(1, 0, 0);
+        QColor red = pixel(frame(), near_);
+        d.check(red.red() > red.blue() + 20, "a light's colour shows");
+        doc.state.objects[lampId].enabled = false;
+        d.check(std::abs(qGray(pixel(frame(), near_).rgb()) - base) <= 2, "switched off it adds nothing");
+        // Also on PBR materials.
+        doc.state.objects[lampId].enabled = true;
+        doc.state.objects[lampId].color = Color(1, 1, 1);
+        Material pbrWhite = white;
+        pbrWhite.pbr = true;
+        setMat(pbrWhite);
+        QImage pbrLit = frame();
+        doc.state.objects[lampId].enabled = false;
+        QImage pbrDark = frame();
+        d.check(qGray(pixel(pbrLit, near_).rgb()) > qGray(pixel(pbrDark, near_).rgb()) + 30, "lights shine on PBR materials too");
+        setMat(white);
+        // Spot: inside the cone, outside it.
+        doc.state.objects[lampId].alive = false;
+        SceneObject spot;
+        spot.kind = SceneObject::SpotLight;
+        spot.pos = Vec3(0, 0, 2);
+        spot.target = Vec3(0, 0, 0);
+        spot.coneAngle = 30;
+        spot.intensity = 10;
+        spot.range = 50;
+        const Id spotId = doc.addObject(spot);
+        QImage spotted = frame();
+        const QPointF side = d.screen(Vec3(1.5, 0, 0));
+        d.check(qGray(pixel(spotted, near_).rgb()) > qGray(pixel(spotted, side).rgb()) + 30, "a spot light stays inside its cone");
+        doc.state.objects[spotId].alive = false;
+        // Directional: same everywhere.
+        SceneObject dir;
+        dir.kind = SceneObject::DirectionalLight;
+        dir.pos = Vec3(0, 0, 5);
+        dir.target = Vec3(0, 0, 0);
+        dir.intensity = 0.4;
+        const Id dirId = doc.addObject(dir);
+        QImage dirLit = frame();
+        d.check(qGray(pixel(dirLit, far_).rgb()) > qGray(pixel(dark, far_).rgb()) + 20, "a directional light reaches everywhere");
+        doc.state.objects[dirId].alive = false;
+        // More lamps than the shader takes must not break anything.
+        for (int i = 0; i < 30; ++i) {
+            SceneObject many;
+            many.pos = Vec3(i * 0.1, 0, 1);
+            many.intensity = 0.05;
+            doc.addObject(many);
+        }
+        d.check(!frame().isNull(), "many lights render");
+        for (SceneObject& o : doc.state.objects) o.alive = false;
+        doc.style.sunAltitude = 48;
+        setMat(plain);
+
+        // --- Placing and editing them with the mouse
+        auto* act = [&](ToolId id) {
+            vp->setTool(id);
+            return vp->tool();
+        }(ToolId::PlacePointLight);
+        d.check(act && act->id() == ToolId::PlacePointLight, "the light tool activates");
+        const size_t objs0 = doc.state.objects.size();
+        d.click(d.screen(Vec3(1, 1, 0)));
+        d.pump();
+        d.check(doc.state.objects.size() == objs0 + 1, "a click places a point light");
+        const Id placed = (Id)doc.state.objects.size() - 1;
+        d.check(doc.state.objects[placed].pos.nearlyEquals(Vec3(1, 1, 2), 1e-3), "it stands above the clicked point");
+        d.check(doc.selection.objects.count(placed) == 1 && vp->toolId() == ToolId::Select, "it ends up selected, back in the Select tool");
+        d.check(doc.undoName() == "Add Point Light", "placing it is one undo step");
+
+        d.click(d.screen(Vec3(-2, -2, 0)));
+        d.check(doc.selection.objects.empty(), "clicking elsewhere deselects it");
+        d.click(d.screen(doc.state.objects[placed].pos));
+        d.check(doc.selection.objects.count(placed) == 1 && doc.selection.faces.empty(), "clicking its marker selects it");
+
+        // Move it, then undo.
+        vp->setTool(ToolId::Move);
+        const Vec3 before = doc.state.objects[placed].pos;
+        const QPointF from = d.screen(before);
+        d.move(from);
+        d.click(from);
+        d.click(from + QPointF(60, 0));
+        d.pump();
+        d.check((doc.state.objects[placed].pos - before).length() > 0.01, "the Move tool moves it");
+        doc.undo();
+        d.check(doc.state.objects[placed].pos.nearlyEquals(before, 1e-9), "undo puts it back");
+        vp->setTool(ToolId::Select);
+
+        // Cameras aim with a second click, and can be looked through.
+        vp->setTool(ToolId::PlaceCamera);
+        d.click(d.screen(Vec3(2, -2, 0)));
+        d.check(vp->tool()->busy() && doc.state.objects.size() == objs0 + 1, "the first click places the camera's foot, nothing is added yet");
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.pump();
+        d.check(doc.state.objects.size() == objs0 + 2 && doc.state.objects.back().kind == SceneObject::ViewCamera, "the second click adds the camera");
+        const Id camId = (Id)doc.state.objects.size() - 1;
+        doc.state.objects[camId].fov = 50;
+        d.check(doc.state.objects[camId].target.nearlyEquals(Vec3(0, 0, 0), 1e-2), "it aims at the second point");
+        const Camera savedView = vp->camera();
+        const QPointF camPos = d.screen(doc.state.objects[camId].pos);
+        vp->setTool(ToolId::Select);
+        d.move(camPos);
+        d.send(QEvent::MouseButtonDblClick, camPos, Qt::LeftButton, Qt::LeftButton);
+        d.pump();
+        d.check(vp->camera().eye.nearlyEquals(doc.state.objects[camId].pos, 1e-9) && vp->camera().fovY == 50, "double-clicking a camera looks through it");
+        vp->camera() = savedView;
+        d.send(QEvent::MouseButtonRelease, camPos, Qt::LeftButton, Qt::NoButton);
+
+        // Saved with the model; markers do not show up in Game Mode style.
+        {
+            ModelState back;
+            d.check(modelFromJson(modelToJson(doc.state), back) && back.objects.size() == 2, "lights and cameras save with the model");
+        }
+        // Erasing.
+        doc.selection.clear();
+        doc.selection.objects.insert(placed);
+        doc.notifySelection();
+        vp->setTool(ToolId::Eraser);
+        d.click(d.screen(doc.state.objects[camId].pos));
+        d.check(!doc.state.objects[camId].alive, "the Eraser removes a marker it is clicked on");
+        doc.undo();
+        d.check(doc.state.objects[camId].alive, "and undo restores it");
+        vp->setTool(ToolId::Select);
+        for (SceneObject& o : doc.state.objects) o.alive = false;
+        doc.selection.clear();
+
+        // A whole drag: Qt delivers a drop only to the widget that took its enter.
+        auto dropOn = [&](const QMimeData* md, const QPointF& at) {
+            QDragEnterEvent enter(at.toPoint(), Qt::CopyAction, md, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(vp, &enter);
+            QDropEvent drop(at, Qt::CopyAction, md, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(vp, &drop);
+            d.pump();
+        };
+
+        // --- Prefabs
+        Material prefabMat;
+        prefabMat.name = "Prefab Paint";
+        prefabMat.pbr = true;
+        prefabMat.color = Color(0.8f, 0.1f, 0.1f);
+        doc.beginOp("Box");
+        const Id pmat = doc.addMaterial(prefabMat);
+        std::vector<Vec3> boxLoop = {{10, 10, 0}, {11, 10, 0}, {11, 11, 0}, {10, 11, 0}};
+        d.mesh().drawPolyline(boxLoop, true);
+        Id boxFace = kNone;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive && f != face) boxFace = f;
+        if (d.mesh().faces[boxFace].normal.z < 0) d.mesh().reverseFace(boxFace);
+        d.mesh().pushPull(boxFace, 1.0);
+        Selection boxSel;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive && f != face) {
+                d.mesh().faces[f].front.material = pmat;
+                boxSel.faces.insert(f);
+            }
+        const Id boxInst = makeComponent(doc.state, boxSel, "Crate");
+        doc.commitOp();
+        d.check(boxInst != kNone, "a component to make a prefab of");
+        const QString prefabPath = w.savePrefabOf(boxInst, QStringLiteral("Crate"));
+        d.check(!prefabPath.isEmpty() && prefabPath.startsWith(data.path()), "Save as Prefab writes a file in the data directory");
+        d.check(QFileInfo(prefabPath).suffix() == QLatin1String("gsketch"), "the prefab is a .gsketch file");
+        {
+            ModelState st;
+            QString name;
+            QImage thumb;
+            d.check(loadPrefab(prefabPath, st, &name, &thumb), "the file loads as a prefab");
+            d.check(name == QLatin1String("Crate") && !thumb.isNull(), "it knows its name and picture");
+            QSet<QRgb> shades;
+            for (int y = 0; y < thumb.height(); y += 8)
+                for (int x = 0; x < thumb.width(); x += 8) shades.insert(thumb.pixel(x, y));
+            d.check(shades.size() > 3, "the picture shows the model");
+        }
+
+        PrefabBrowser* pb = w.prefabBrowser();
+        pb->show();
+        d.pump();
+        d.check(pb->prefabCount() == 1 && pb->list()->count() == 1, "the Prefab Browser lists it");
+        pb->searchBox()->setText(QStringLiteral("nothing like it"));
+        d.check(pb->list()->item(0)->isHidden(), "search hides what does not match");
+        pb->searchBox()->setText(QStringLiteral("CRA"));
+        d.check(!pb->list()->item(0)->isHidden(), "search ignores case");
+        pb->searchBox()->clear();
+        {
+            // What a drag from the browser carries.
+            auto* lw = pb->list();
+            const QList<QListWidgetItem*> items{lw->item(0)};
+            struct Peek : QListWidget {
+                using QListWidget::mimeData;
+            };
+            std::unique_ptr<QMimeData> md(static_cast<Peek*>(lw)->mimeData(items));
+            d.check(md && md->hasFormat(Viewport::prefabMime()) && QString::fromUtf8(md->data(Viewport::prefabMime())) == prefabPath, "a drag from the browser carries the prefab");
+            if (md) {
+                const int insts0 = (int)doc.state.instances.size();
+                const QPointF dropAt = d.screen(Vec3(-1, 1, 0));
+                QDragEnterEvent enter(dropAt.toPoint(), Qt::CopyAction, md.get(), Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(vp, &enter);
+                d.check(enter.isAccepted(), "the viewport takes the drag");
+                QDragMoveEvent mv(dropAt.toPoint(), Qt::CopyAction, md.get(), Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(vp, &mv);
+                d.check(mv.isAccepted() && !frame().isNull(), "a box follows the drag");
+                QDropEvent drop(dropAt, Qt::CopyAction, md.get(), Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(vp, &drop);
+                d.pump();
+                d.check((int)doc.state.instances.size() == insts0 + 1, "dropping places it");
+                const Id ni = (Id)doc.state.instances.size() - 1;
+                d.check(doc.state.instances[ni].def == doc.state.instances[boxInst].def, "it stays linked to the component of the same origin");
+                Vec3 mn, mx;
+                d.check(instanceBounds(doc.state, ni, mn, mx), "it has a size");
+                const Vec3 c = (mn + mx) * 0.5;
+                std::printf("    dropped at %.3f %.3f %.3f\n", c.x, c.y, mn.z);
+                d.check(std::fabs(c.x + 1) < 0.02 && std::fabs(c.y - 1) < 0.02 && std::fabs(mn.z) < 1e-6, "it stands with its base centre at the drop point");
+                d.check(doc.selection.instances == std::set<Id>{ni}, "the new one is selected");
+
+                // In another, empty model the materials come along.
+                doc.undo();
+                d.check(!doc.state.instances[ni < (Id)doc.state.instances.size() ? ni : 0].alive || (int)doc.state.instances.size() == insts0, "undo removes it in one step");
+                doc.reset();
+                vp->camera() = savedView;
+                d.pump();
+                dropOn(md.get(), dropAt);
+                d.check(doc.state.instances.size() == 1 && doc.state.defs.size() == 1, "it drops into a new model");
+                d.check(doc.state.materials.size() == 1 && doc.state.materials[0].name == "Prefab Paint" && doc.state.materials[0].pbr, "with its materials");
+                dropOn(md.get(), d.screen(Vec3(3, 3, 0)));
+                d.check(doc.state.instances.size() == 2 && doc.state.defs.size() == 1 && doc.state.materials.size() == 1, "a second one shares geometry and materials");
+                // Not while a component is open.
+                doc.openComponent(0);
+                dropOn(md.get(), dropAt);
+                d.check(doc.state.instances.size() == 2 && doc.editingComponent(), "a component cannot go inside itself");
+                doc.closeComponent();
+            }
+        }
+        // Double-click style placing: follows the cursor, the click sets it down.
+        {
+            const size_t n = doc.state.instances.size();
+            d.check(w.startPrefabPlacement(prefabPath) && doc.state.instances.size() == n + 1 && doc.inOp(), "placing with the mouse attaches it to the cursor");
+            const QPointF at = d.screen(Vec3(-2, -2, 0));
+            d.move(at);
+            d.click(at);
+            d.pump();
+            d.check(!doc.inOp() && doc.state.instances.size() == n + 1, "a click sets it down");
+            Vec3 mn, mx;
+            instanceBounds(doc.state, (Id)n, mn, mx);
+            d.check(std::fabs(mn.z) < 1e-6 && (((mn + mx) * 0.5) - Vec3(-2, -2, 0.5)).length() < 0.1, "where the cursor was");
+            vp->setTool(ToolId::Select);
+            d.check(w.startPrefabPlacement(prefabPath), "starts again");
+            QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            vp->setFocus();
+            QApplication::sendEvent(vp, &esc);
+            d.pump();
+            d.check(!doc.inOp() && doc.state.instances.size() == n + 1, "Esc cancels the placing");
+            d.check(!w.startPrefabPlacement(QStringLiteral("/nonexistent/file.gsketch")) && !doc.inOp(), "a missing file is refused");
+        }
+        // Primitives: built as a component that follows the cursor like a prefab.
+        {
+            const size_t n = doc.state.instances.size(), defs = doc.state.defs.size();
+            PrimitiveParams pp;
+            pp.kind = PrimitiveKind::Dodecahedron;
+            pp.radius = 1;
+            d.check(w.startPrimitivePlacement(pp) && doc.state.instances.size() == n + 1 && doc.state.defs.size() == defs + 1 && doc.inOp(),
+                    "a primitive attaches to the cursor");
+            const QPointF at = d.screen(Vec3(2, 2, 0));
+            d.move(at);
+            d.click(at);
+            d.pump();
+            d.check(!doc.inOp() && doc.undoName() == "Add Dodecahedron", "a click places the primitive as one undo step");
+            const Mesh& dm = doc.state.defs[defs].mesh;
+            d.check(dm.aliveFaceCount() == 12 && isSolid(dm), "the dodecahedron is a closed solid of 12 faces");
+            Vec3 mn, mx;
+            instanceBounds(doc.state, (Id)n, mn, mx);
+            d.check(std::fabs(mn.z) < 1e-6, "it stands on the ground");
+            pp.kind = PrimitiveKind::Torus;
+            pp.radius2 = 2; // tube wider than the ring
+            d.check(!w.startPrimitivePlacement(pp) && !doc.inOp() && doc.state.instances.size() == n + 1, "bad sizes are refused");
+            vp->setTool(ToolId::Select);
+        }
+        pb->close();
+        vp->setTool(ToolId::Select);
+
+        // --- Material browser
+        doc.reset();
+        vp->camera().eye = Vec3(0.5, -4, 5);
+        vp->camera().target = Vec3(0, 0, 0);
+        Mesh& fm = d.mesh();
+        fm.viewHint = Vec3(0, 0, 10);
+        fm.groundFacesDown = false;
+        fm.drawPolyline({{-3, -3, 0}, {3, -3, 0}, {3, 3, 0}, {-3, 3, 0}}, true);
+        Id ff = kNone;
+        for (Id f = 0; f < (Id)fm.faces.size(); ++f)
+            if (fm.faces[f].alive) ff = f;
+        if (fm.faces[ff].normal.z < 0) fm.reverseFace(ff);
+        fm.touch();
+        MaterialBrowser* mb = w.materialBrowser();
+        mb->show();
+        d.pump();
+        const int everything = mb->visibleCount();
+        d.check(everything > 80, "the Material Browser lists materials, textures and colours");
+        mb->searchBox()->setText(QStringLiteral("gold"));
+        d.check(mb->visibleCount() == 1, "search finds one material");
+        int goldRow = -1;
+        for (int i = 0; i < mb->list()->count(); ++i)
+            if (!mb->list()->item(i)->isHidden()) goldRow = i;
+        for (int i = 0; i < 60; ++i) d.pump(); // pictures are made in the background
+        {
+            const QImage icon = mb->list()->item(goldRow)->icon().pixmap(64, 64).toImage();
+            QSet<QRgb> shades;
+            for (int y = 0; y < icon.height(); y += 3)
+                for (int x = 0; x < icon.width(); x += 3) shades.insert(icon.pixel(x, y));
+            d.check(shades.size() > 10, "PBR entries get a rendered picture");
+        }
+        // Drop it on a face: added once, painted, one undo step.
+        {
+            struct Peek : QListWidget {
+                using QListWidget::mimeData;
+            };
+            std::unique_ptr<QMimeData> md(static_cast<Peek*>(mb->list())->mimeData({mb->list()->item(goldRow)}));
+            d.check(md && md->hasFormat(Viewport::materialMime()), "a drag carries the material");
+            const QPointF at = d.screen(Vec3(0, 0, 0));
+            dropOn(md.get(), at);
+            d.check(doc.state.materials.size() == 1 && doc.state.materials[0].name == "Gold", "dropping adds the material");
+            d.check(vp->toolId() == ToolId::Select, "dropping leaves the active tool alone");
+            d.check(d.mesh().faces[ff].front.material == 0 || d.mesh().faces[ff].back.material == 0, "and paints the face");
+            const std::string undo0 = doc.undoName();
+            dropOn(md.get(), at);
+            d.check(doc.state.materials.size() == 1 && doc.undoName() == undo0, "dropping it again does not add a copy");
+            doc.undo(); // the second drop
+            d.check(doc.state.materials.size() == 1, "each drop undoes by itself");
+            doc.undo(); // the first: material and paint together
+            d.check(doc.state.materials.empty() && d.mesh().faces[ff].front.material == kNone && d.mesh().faces[ff].back.material == kNone, "undo removes the material and the paint at once");
+            d.check(!doc.canUndo() || doc.undoName() != "Add Material", "there is no separate step for adding it");
+            dropOn(md.get(), d.screen(Vec3(20, 20, 0)));
+            d.check(doc.state.materials.empty(), "a drop beside the model adds nothing");
+        }
+        mb->choose(goldRow);
+        d.check(doc.currentMaterial == 0 && doc.state.materials[0].name == "Gold" && vp->toolId() != ToolId::Paint, "clicking an entry makes it the current material, the tool stays");
+        mb->searchBox()->clear();
+        d.check(mb->visibleCount() > everything, "the model's material now shows in it");
+        mb->close();
+
+        // --- Sidebar
+        {
+            MaterialsPanel* panel = w.findChild<MaterialsPanel*>();
+            vp->setTool(ToolId::Select);
+            doc.currentMaterial = kNone;
+            panel->showLibrary(MaterialsPanel::Architectural);
+            d.check(panel->list()->count() == architecturalMaterialCount() && architecturalMaterialCount() >= 12, "the sidebar lists the architectural materials");
+            for (int i = 0; i < 40; ++i) {
+                QThread::msleep(40);
+                d.pump();
+            }
+            const QImage globe = panel->list()->item(3)->icon().pixmap(58, 58).toImage();
+            QSet<QRgb> shades;
+            for (int y = 0; y < globe.height(); y += 2)
+                for (int x = 0; x < globe.width(); x += 2) shades.insert(globe.pixel(x, y));
+            d.check(shades.size() > 20, "they show as globes");
+            const size_t mats0 = doc.state.materials.size();
+            panel->chooseRow(3);
+            d.check(doc.state.materials.size() == mats0 + 1 && doc.currentMaterial == (Id)mats0 && vp->toolId() == ToolId::Select, "choosing one makes it current without switching to the Paint Bucket");
+            const Material& brickM = doc.state.materials[mats0];
+            d.check(brickM.name == "Red Brick" && brickM.hasTexture() && brickM.hasMap(MapNormal) && brickM.hasMap(MapRoughness) && brickM.hasMap(MapOcclusion), "with its maps");
+            panel->chooseRow(3);
+            d.check(doc.state.materials.size() == mats0 + 1, "choosing it again adds no copy");
+            vp->setTool(ToolId::TextureBrush);
+            panel->chooseRow(5);
+            d.check(vp->toolId() == ToolId::TextureBrush, "the Texture Brush stays active");
+            vp->setTool(ToolId::Select);
+            const Id made = panel->createMaterial();
+            d.check(made != kNone && doc.currentMaterial == made && doc.state.materials[made].pbr, "Create Material makes one to edit");
+            d.check(panel->editor()->isVisible() && vp->toolId() == ToolId::Select, "and shows the editor in the sidebar");
+            d.pump();
+            d.check(panel->editor()->loadMap(MapSlotCount, QStringLiteral("/nonexistent.png")) == false, "the sidebar editor refuses a bad file");
+            doc.undo();
+            panel->refresh();
+            d.check(doc.currentMaterial == kNone, "undoing it leaves no dangling current material");
+            doc.currentMaterial = 0;
+        }
+
+        // --- Editor
+        {
+            MaterialEditor* ed = w.materialEditor();
+            ed->show();
+            ed->refresh();
+            d.pump();
+            QTemporaryDir imgs;
+            QImage flat(8, 8, QImage::Format_RGB32);
+            flat.fill(qRgb(128, 128, 255));
+            QStringList paths;
+            for (const char* n : {"bark_albedo.png", "bark_normal.png", "bark_roughness.png", "mystery.png"}) {
+                paths << QDir(imgs.path()).filePath(QString::fromLatin1(n));
+                flat.save(paths.back());
+            }
+            d.check(ed->addMaps(paths) == 3, "images go to their maps by name, unknown ones are left out");
+            const Material& mm = doc.state.materials[0];
+            d.check(mm.hasTexture() && mm.hasMap(MapNormal) && mm.hasMap(MapRoughness) && !mm.hasMap(MapHeight), "the right maps are set");
+            d.check(mm.maps[MapRoughness].strength == 1, "a roughness map starts at full strength");
+            d.check(ed->loadMap(MapHeight, paths[3]) && doc.state.materials[0].hasMap(MapHeight), "a map can be set directly");
+            d.check(!ed->loadMap(MapHeight, QStringLiteral("/nonexistent.png")), "a bad file is refused");
+            doc.undo();
+            d.check(!doc.state.materials[0].hasMap(MapHeight), "setting a map undoes");
+            d.pump();
+            ed->refresh();
+            ed->shaderEdit()->setPlainText(QStringLiteral("void surface(inout Surface s) { s.albedo = oops; }"));
+            d.check(!ed->compileShader() && !doc.state.materials[0].customShader() && ed->shaderLog().contains(QStringLiteral("oops")), "a broken shader shows its error and changes nothing");
+            ed->shaderEdit()->setPlainText(QString::fromLatin1(surfaceShaderTemplate()));
+            d.check(ed->compileShader() && doc.state.materials[0].customShader(), "a good one applies");
+            d.check(doc.state.materials[0].shaderProps.count("_Speed") == 1 && doc.state.materials[0].shaderProps["_Speed"][0] == 1.0f, "its properties start at their defaults");
+            doc.undo();
+            d.check(!doc.state.materials[0].customShader(), "and undoes");
+            d.pump();
+            ed->close();
+        }
+        d.check(OffscreenRenderer::instance().materialBall(doc.state.materials[0], 32).width() == 32, "the offscreen renderer still works");
+        qunsetenv("GNUSKETCH_DATA_DIR");
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+    }
+
+    // --- Animation: states with F5, Properties, and playing in Game Mode.
+    {
+        QTemporaryDir data;
+        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+        vp->camera() = Camera();
+        vp->camera().setViewport(vp->width(), vp->height());
+        Mesh& m = d.mesh();
+        m.viewHint = Vec3(0, 0, 10);
+        m.groundFacesDown = false;
+        // A floor, and a door and a button as components.
+        doc.beginOp("Scene");
+        m.drawPolyline({{-10, -10, 0}, {10, -10, 0}, {10, 10, 0}, {-10, 10, 0}}, true);
+        std::set<Id> floorFaces;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) floorFaces.insert(f);
+        auto makeBox = [&](const std::vector<Vec3>& loop, const char* name) {
+            std::set<Id> before;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) before.insert(f);
+            d.mesh().drawPolyline(loop, true);
+            Selection sel;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && !before.count(f)) sel.faces.insert(f);
+            return makeComponent(doc.state, sel, name);
+        };
+        const Id door = makeBox({{3, -1, 0.01}, {3, 1, 0.01}, {3, 1, 2.2}, {3, -1, 2.2}}, "Door");
+        const Id button = makeBox({{1, 2, 1}, {1.2, 2, 1}, {1.2, 2, 1.2}, {1, 2, 1.2}}, "Button");
+        doc.commitOp();
+
+        d.check(!w.recordState(QStringLiteral("CLOSED")), "F5 needs an open component");
+        EntityProperties* props = w.entityProperties();
+        props->setInstance(door);
+        props->show();
+        d.pump();
+        props->setClass(QStringLiteral("func_door"));
+        d.check(doc.state.instances[door].entity.classname == "func_door" && !doc.state.instances[door].entity.script.empty(), "choosing a class gives it a script");
+        d.check(props->scriptEdit()->toPlainText().contains(QStringLiteral("self.tween")), "shown in the Properties window");
+
+        // Door: closed, then slid up.
+        doc.openComponent(door);
+        d.check(w.recordState(QStringLiteral("CLOSED")), "F5 records the first state");
+        {
+            Mesh& open = doc.mesh();
+            std::set<Id> all;
+            for (Id v = 0; v < (Id)open.vertices.size(); ++v)
+                if (open.vertices[v].alive) all.insert(v);
+            open.transformVertices(all, Mat4::translation(Vec3(0, 0, 2.3)), false);
+            open.touch();
+        }
+        d.check(w.recordState(QStringLiteral("OPEN")), "and the second");
+        const Id doorDef = doc.state.instances[door].def;
+        d.check(doc.state.defs[doorDef].states.size() == 2, "the door has two states");
+        doc.undo();
+        d.check(doc.state.defs[doorDef].states.size() == 1, "recording undoes");
+        doc.redo();
+        applyState(doc.state, doorDef, "CLOSED");
+        doc.closeComponent();
+        d.check(!doc.editingComponent(), "the component closes");
+
+        // Button.
+        props->setInstance(button);
+        props->setClass(QStringLiteral("func_button"));
+        d.check(doc.state.instances[button].entity.script.find("self.fire") != std::string::npos, "a button's script fires its target");
+        props->choosePreset(QStringLiteral("Button: latching switch"));
+        d.check(doc.state.instances[button].entity.script.find("pressed = !pressed") != std::string::npos, "a preset replaces the script");
+        props->choosePreset(QStringLiteral("Button: press and return"));
+        doc.openComponent(button);
+        w.recordState(QStringLiteral("IDLE"));
+        {
+            Mesh& open = doc.mesh();
+            std::set<Id> all;
+            for (Id v = 0; v < (Id)open.vertices.size(); ++v)
+                if (open.vertices[v].alive) all.insert(v);
+            open.transformVertices(all, Mat4::translation(Vec3(0, 0.04, 0)), false);
+            open.touch();
+        }
+        w.recordState(QStringLiteral("PRESSED"));
+        applyState(doc.state, doc.state.instances[button].def, "IDLE");
+        doc.closeComponent();
+        doc.beginOp("Link");
+        doc.state.instances[door].entity.targetname = "door1";
+        doc.state.instances[button].entity.targets = {{"door1", 0}};
+        doc.commitOp();
+        props->refresh();
+        d.pump();
+        props->close();
+
+        // --- Tabs of the Properties window: one button, several targets with delays.
+        {
+            props->setInstance(button);
+            props->show();
+            d.pump();
+            props->addTarget("door1", 0);
+            d.check(doc.state.instances[button].entity.targets.size() == 2 && props->targetRows() == 2, "Targets lists what a button fires");
+            props->setTarget(1, "door1", 2.5);
+            d.check(doc.state.instances[button].entity.targets[1].delay == 2.5, "a target has its delay");
+            doc.undo();
+            d.check(doc.state.instances[button].entity.targets[1].delay == 0, "and undoes");
+            props->removeTarget(1);
+            d.check(doc.state.instances[button].entity.targets.size() == 1 && props->targetRows() == 1, "a target can be removed");
+            props->setInstance(door);
+            d.pump();
+            d.check(props->sources() == std::vector<Id>{button} && props->sourceRows() == 1, "Sources shows who fires the door");
+            props->removeSource(button);
+            d.check(doc.state.instances[button].entity.targets.empty() && props->sourceRows() == 0, "removing a source stops it firing");
+            props->addSource(button);
+            d.check(doc.state.instances[button].entity.targets.size() == 1 && doc.state.instances[button].entity.targets[0].name == "door1", "adding one makes it fire this name");
+            props->close();
+        }
+
+        // Edited scripts are kept and checked.
+        props->setInstance(door);
+        props->scriptEdit()->setPlainText(QStringLiteral("var x = ;"));
+        props->applyScript();
+        d.check(doc.state.instances[door].entity.script == "var x = ;", "typed scripts are applied");
+        doc.undo();
+        d.check(doc.state.instances[door].entity.script != "var x = ;", "and undo");
+        props->refresh();
+
+        const QString path = QDir(data.path()).filePath(QStringLiteral("anim.gsketch"));
+        QString err;
+        d.check(saveNative(doc, path, {}, &err), "the model with its entities saves");
+
+        GameWindow game;
+        d.check(game.load(path, Vec3(1.1, 1.0, 0.01), kPi / 2, &err), "Game Mode loads it");
+        game.show();
+        d.pump();
+        d.check(game.entities() && game.entities()->count() == 2, "with two entities");
+        if (game.entities() && game.entities()->count() == 2) {
+            EntityWorld* ents = game.entities();
+            d.check(ents->errors().isEmpty(), "their scripts start without errors");
+            if (!ents->errors().isEmpty()) std::printf("%s\n", qPrintable(ents->errors().join('\n')));
+            const int gameDoor = ents->entity(0).props.classname == "func_door" ? 0 : 1;
+            const int gameButton = 1 - gameDoor;
+            d.check(ents->linked(gameDoor) && !ents->usable(gameDoor) && ents->usable(gameButton), "the door is linked, only the button can be pressed");
+            auto keys = [&](QEvent::Type t, int k, const QString& text = {}) {
+                QKeyEvent e(t, k, Qt::NoModifier, text);
+                QApplication::sendEvent(&game, &e);
+            };
+            game.simulate(0.3);
+            // A closed door stops the walker.
+            game.walker().setYaw(0);
+            game.walker().spawn(Vec3(2.2, 0, 0.01));
+            keys(QEvent::KeyPress, Qt::Key_W, QStringLiteral("w"));
+            game.simulate(1.0);
+            keys(QEvent::KeyRelease, Qt::Key_W, QStringLiteral("w"));
+            const double blockedX = game.walker().feet().x;
+            d.check(blockedX < 3.0 && blockedX > 2.5, "the closed door blocks the way");
+            // Touching did not open it: it is linked.
+            game.simulate(0.5);
+            Vec3 mn, mx;
+            CollisionWorld& world = const_cast<CollisionWorld&>(game.world());
+            world.bodyBounds(ents->entity(gameDoor).parts[0].body, mn, mx);
+            d.check(mn.z < 0.1, "walking into a linked door does not open it");
+            // Look at the button and press E.
+            game.walker().spawn(Vec3(1.1, 1.0, 0.01));
+            game.walker().setYaw(kPi / 2);
+            game.walker().look(0, -0.25);
+            game.simulate(0.05);
+            int aim = -1;
+            for (double pitch = 0; pitch < 0.6 && aim != gameButton; pitch += 0.02) {
+                game.walker().look(0, -0.02);
+                aim = game.aimedEntity();
+            }
+            d.check(aim == gameButton, "the character can aim at the button");
+            // E itself: in this process the editor's Eraser shortcut would take the
+            // key before the game window; the real game is a process of its own.
+            struct KeyPeek : GameWindow {
+                using GameWindow::keyPressEvent;
+            };
+            {
+                QKeyEvent e(QEvent::KeyPress, Qt::Key_E, Qt::NoModifier, QStringLiteral("e"));
+                (game.*(&KeyPeek::keyPressEvent))(&e);
+            }
+            game.simulate(0.2);
+            game.simulate(1.2);
+            world.bodyBounds(ents->entity(gameDoor).parts[0].body, mn, mx);
+            d.check(mn.z > 2.0, "E on the button opens the door");
+            // Now the way is free.
+            game.walker().setYaw(0);
+            game.walker().spawn(Vec3(2.2, 0, 0.01));
+            keys(QEvent::KeyPress, Qt::Key_W, QStringLiteral("w"));
+            game.simulate(0.9);
+            keys(QEvent::KeyRelease, Qt::Key_W, QStringLiteral("w"));
+            d.check(game.walker().feet().x > 3.2, "the character walks through the open door");
+            QImage frame = game.grabFramebuffer();
+            d.check(!frame.isNull(), "the moved door renders");
+            d.check(ents->errors().isEmpty(), "no script errors while playing");
+            if (!ents->errors().isEmpty()) std::printf("%s\n", qPrintable(ents->errors().join('\n')));
+        }
+        game.close();
+        qunsetenv("GNUSKETCH_DATA_DIR");
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+    }
+
+    // --- Components inside components, in the real UI.
+    {
+        QTemporaryDir data;
+        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        doc.reset();
+        doc.style = RenderStyle();
+        doc.style.showAxes = false;
+        vp->setTool(ToolId::Select);
+        vp->camera() = Camera();
+        vp->camera().eye = Vec3(0, -12, 6);
+        vp->camera().target = Vec3(0, 0, 0);
+        vp->camera().setViewport(vp->width(), vp->height());
+        Mesh& m = d.mesh();
+        m.viewHint = Vec3(0, -10, 10);
+        m.groundFacesDown = false;
+        auto makeBox = [&](const Vec3& o, double w, const char* name) {
+            std::set<Id> before;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) before.insert(f);
+            d.mesh().drawPolyline({o, o + Vec3(w, 0, 0), o + Vec3(w, w, 0), o + Vec3(0, w, 0)}, true);
+            Selection sel;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && !before.count(f)) sel.faces.insert(f);
+            return makeComponent(doc.state, sel, name);
+        };
+        doc.beginOp("Boxes");
+        const Id a = makeBox(Vec3(-2, 0, 0), 1, "A");
+        const Id b = makeBox(Vec3(2, 0, 0), 1, "B");
+        doc.commitOp();
+        d.pump();
+        doc.selection.instances = {a, b};
+        doc.notifySelection();
+        doc.beginOp("Make Component");
+        const Id whole = makeComponent(doc.state, doc.selection, "Whole");
+        doc.selection.clear();
+        doc.selection.instances.insert(whole);
+        doc.commitOp();
+        doc.notifySelection();
+        const QImage closedFrame = vp->grabFramebuffer();
+        d.check(!closedFrame.isNull(), "a component of components renders");
+        // A click on what is inside picks the outer one while it is closed.
+        doc.selection.clear();
+        d.click(d.screen(Vec3(-1.5, 0.5, 0)));
+        d.check(doc.selection.instances == std::set<Id>{whole}, "a click on a part selects the component it is in");
+        // Double-click opens one level, then the next.
+        const QPointF inner = d.screen(Vec3(-1.5, 0.5, 0));
+        d.send(QEvent::MouseButtonDblClick, inner, Qt::LeftButton, Qt::LeftButton);
+        d.send(QEvent::MouseButtonRelease, inner, Qt::LeftButton, Qt::NoButton);
+        d.pump();
+        d.check(doc.state.editing == whole, "double-click opens the outer component");
+        QApplication::processEvents();
+        QThread::msleep(QApplication::doubleClickInterval() + 30);
+        doc.selection.clear();
+        d.click(inner);
+        d.check(doc.selection.instances == std::set<Id>{a}, "inside it, a click selects a part");
+        // Moving the part inside with the real tool.
+        vp->setTool(ToolId::Move);
+        Vec3 mnBefore, mxBefore, mn2, mx2;
+        instanceBounds(doc.state, a, mnBefore, mxBefore);
+        d.click(inner);
+        d.click(inner + QPointF(40, 0));
+        d.pump();
+        instanceBounds(doc.state, a, mn2, mx2);
+        d.check((mn2 - mnBefore).length() > 0.05, "the Move tool moves a part inside");
+        doc.undo();
+        vp->setTool(ToolId::Select);
+        d.check(doc.state.editing == whole, "undo keeps it open");
+        QThread::msleep(QApplication::doubleClickInterval() + 30);
+        d.send(QEvent::MouseButtonDblClick, inner, Qt::LeftButton, Qt::LeftButton);
+        d.send(QEvent::MouseButtonRelease, inner, Qt::LeftButton, Qt::NoButton);
+        d.pump();
+        d.check(doc.state.editing == a && doc.state.outerOpen == std::vector<Id>{whole}, "double-click opens the part inside");
+        d.check(!vp->grabFramebuffer().isNull(), "two levels open render");
+        QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        vp->setFocus();
+        QApplication::sendEvent(vp, &esc);
+        d.check(doc.state.editing == whole, "Esc closes one level");
+        QKeyEvent esc2(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(vp, &esc2);
+        d.check(doc.state.editing == kNone, "and the next");
+        // A prefab dropped into an open component goes inside it.
+        const QString path = w.savePrefabOf(whole, QStringLiteral("Whole"));
+        d.check(!path.isEmpty(), "the nested component saves as one prefab");
+        doc.reset();
+        vp->camera() = Camera();
+        vp->camera().eye = Vec3(0, -12, 6);
+        vp->camera().target = Vec3(0, 0, 0);
+        ModelState pre;
+        d.check(loadPrefab(path, pre), "and loads");
+        const Id placed = vp->placePrefab(pre, Vec3(0, 0, 0));
+        d.check(placed != kNone && doc.state.defs.size() == 3 && doc.state.instances.size() == 3, "placed, it brings what is inside");
+        doc.beginOp("Room");
+        const Id room = makeBox(Vec3(-8, -8, 0), 1, "Room");
+        doc.commitOp();
+        doc.openComponent(room);
+        const Id nested = vp->placePrefab(pre, Vec3(-7.5, -7.5, 0));
+        d.check(nested != kNone && doc.state.instances[nested].parent == doc.state.instances[room].def, "a prefab placed in an open component goes inside it");
+        doc.closeComponent();
+        Vec3 mn, mx;
+        instanceBounds(doc.state, room, mn, mx);
+        d.check(mn.x < -9.9 && mx.x > -5.1, "the outer component's box includes it");
+        ModelState saved;
+        d.check(modelFromJson(modelToJson(doc.state), saved) && saved.defs.size() == 4 && saved.instances.size() == 5, "all of it saves");
+        qunsetenv("GNUSKETCH_DATA_DIR");
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+    }
+
+    // --- Hierarchy panel and physics in the real window.
+    {
+        QTemporaryDir data;
+        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        doc.reset();
+        doc.style = RenderStyle();
+        doc.style.showAxes = false;
+        vp->setTool(ToolId::Select);
+        vp->camera() = Camera();
+        vp->camera().eye = Vec3(0, -12, 6);
+        vp->camera().target = Vec3(0, 0, 0);
+        Mesh& m = d.mesh();
+        m.viewHint = Vec3(0, -10, 10);
+        m.groundFacesDown = false;
+        auto* hp = w.findChild<HierarchyPanel*>();
+        d.check(hp != nullptr, "the window has a Hierarchy panel");
+        auto makeBox = [&](const Vec3& o, const char* name) {
+            std::set<Id> before;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) before.insert(f);
+            d.mesh().drawPolyline({o, o + Vec3(1, 0, 0), o + Vec3(1, 1, 0), o + Vec3(0, 1, 0)}, true);
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && !before.count(f)) d.mesh().pushPull(f, 1.0);
+            Selection sel;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && !before.count(f)) sel.faces.insert(f);
+            return makeComponent(doc.state, sel, name);
+        };
+        doc.beginOp("Boxes");
+        const Id a = makeBox(Vec3(-3, 0, 0), "A"), b = makeBox(Vec3(3, 0, 0), "B");
+        d.mesh().drawPolyline({{-9, -9, 0}, {-8, -9, 0}, {-8, -8, 0}, {-9, -8, 0}}, true);
+        SceneObject lamp;
+        lamp.name = "Lamp";
+        lamp.pos = Vec3(0, 0, 3);
+        const Id lampId = doc.addObject(lamp);
+        doc.commitOp();
+        d.pump();
+        QTreeWidget* tree = hp->tree();
+        d.check(tree->topLevelItemCount() == 4, "it lists geometry, components and lights");
+        d.check(hp->findInstance(a) && hp->findInstance(b) && hp->findObject(lampId) && hp->geometryRow(), "each with a row");
+        // Selecting goes both ways.
+        hp->findInstance(a)->setSelected(true);
+        d.pump();
+        d.check(doc.selection.instances == std::set<Id>{a}, "a row selects the component");
+        doc.selection.clear();
+        doc.selection.instances.insert(b);
+        doc.notifySelection();
+        d.check(hp->findInstance(b)->isSelected() && !hp->findInstance(a)->isSelected(), "selecting in the model marks its row");
+        tree->clearSelection();
+        hp->findObject(lampId)->setSelected(true);
+        d.check(doc.selection.objects == std::set<Id>{lampId}, "lights too");
+        tree->clearSelection();
+        hp->geometryRow()->setSelected(true);
+        d.check(doc.selection.faces.size() == 1, "the geometry row selects loose geometry");
+        tree->clearSelection();
+        // Hiding and back, with undo.
+        hp->findInstance(a)->setCheckState(1, Qt::Unchecked);
+        d.check(doc.state.instances[a].hidden, "unticking hides a component");
+        d.check(!hp->findInstance(a)->isDisabled() && hp->findInstance(a)->checkState(1) == Qt::Unchecked, "the row stays, unticked");
+        doc.undo();
+        d.check(!doc.state.instances[a].hidden && hp->findInstance(a)->checkState(1) == Qt::Checked, "undo shows it and ticks the row");
+        hp->findObject(lampId)->setCheckState(1, Qt::Unchecked);
+        d.check(doc.state.objects[lampId].hidden, "unticking hides a light");
+        hp->findObject(lampId)->setCheckState(1, Qt::Checked);
+        hp->geometryRow()->setCheckState(1, Qt::Unchecked);
+        bool allHidden = true;
+        for (const Face& f : doc.state.mesh.faces) allHidden = allHidden && (!f.alive || f.hidden);
+        d.check(allHidden, "unticking Geometry hides the loose faces");
+        hp->geometryRow()->setCheckState(1, Qt::Checked);
+        // Renaming.
+        hp->findInstance(a)->setText(0, QStringLiteral("Crate"));
+        d.check(doc.state.defs[doc.state.instances[a].def].name == "Crate", "renaming a row renames the component");
+        hp->findObject(lampId)->setText(0, QStringLiteral("Key Light"));
+        d.check(doc.state.objects[lampId].name == "Key Light", "and a light");
+        // Grouping and taking apart.
+        tree->clearSelection();
+        hp->findInstance(a)->setSelected(true);
+        hp->findInstance(b)->setSelected(true);
+        d.check(doc.selection.instances.size() == 2, "two rows select both");
+        const Id grp = hp->groupSelection();
+        d.check(grp != kNone && doc.state.instances[a].parent == doc.state.instances[grp].def && doc.state.instances[b].parent == doc.state.instances[grp].def, "Group puts them in one");
+        QTreeWidgetItem* grpRow = hp->findInstance(grp);
+        d.check(grpRow && grpRow->childCount() == 2, "the tree shows them inside it");
+        // A row inside: opens the way to it.
+        tree->clearSelection();
+        hp->findInstance(a)->setSelected(true);
+        d.check(doc.state.editing == grp && doc.selection.instances == std::set<Id>{a}, "a row inside a group opens the group and selects it");
+        tree->clearSelection();
+        hp->findInstance(grp)->setSelected(true);
+        d.check(doc.state.editing == kNone && doc.selection.instances == std::set<Id>{grp}, "the group's own row comes back out");
+        // Search.
+        hp->findChild<QLineEdit*>()->setText(QStringLiteral("key"));
+        d.check(!hp->findObject(lampId)->isHidden() && hp->findInstance(grp)->isHidden(), "search narrows the tree");
+        hp->findChild<QLineEdit*>()->clear();
+        d.check(!hp->findInstance(grp)->isHidden(), "and clears");
+        doc.undo();
+        d.check(doc.state.instances[a].parent == kNone, "undo takes the group apart");
+
+        // Physics, from the Properties window to the game.
+        EntityProperties* props = w.entityProperties();
+        props->setInstance(a);
+        props->show();
+        d.pump();
+        props->setPhysics(true, 25);
+        d.check(doc.state.instances[a].entity.physics && doc.state.instances[a].entity.mass == 25 && !doc.state.instances[a].entity.isEntity(), "plain geometry can have physics");
+        d.check(hp->findInstance(a)->text(0).contains(QStringLiteral("physics")), "the tree says so");
+        props->close();
+        // Up in the air, a heavy one on the ground beside it.
+        doc.beginOp("Lift");
+        doc.state.instances[a].xf = Mat4::translation(Vec3(0, 0, 3)) * doc.state.instances[a].xf;
+        doc.state.instances[b].entity.physics = true;
+        doc.state.instances[b].entity.mass = 5000;
+        doc.commitOp();
+        const QString path = QDir(data.path()).filePath(QStringLiteral("phys.gsketch"));
+        QString err;
+        d.check(saveNative(doc, path, {}, &err), "it saves");
+        GameWindow game;
+        d.check(game.load(path, Vec3(-2.5, -3, 0.01), 0.0, &err), "Game Mode loads it");
+        game.show();
+        d.pump();
+        EntityWorld* ents = game.entities();
+        d.check(ents && ents->count() == 2 && ents->physics().count() == 2, "with two rigid bodies");
+        if (ents && ents->count() == 2) {
+            const int light = ents->entity(0).props.mass == 25 ? 0 : 1, heavy = 1 - light;
+            auto bodyMin = [&](int e) {
+                Vec3 lo, hi;
+                game.world().bodyBounds(ents->entity(e).parts[0].body, lo, hi);
+                return lo;
+            };
+            auto frames = [&](double seconds) {
+                for (double t = 0; t < seconds; t += 1.0 / 60) game.simulate(1.0 / 60);
+            };
+            d.check(bodyMin(light).z > 2.5, "it starts in the air");
+            frames(1.5);
+            d.check(std::fabs(bodyMin(light).z) < 0.1, "it falls to the ground");
+            frames(1.0);
+            // The character shoves the light one by walking into it, and not the heavy one.
+            const Vec3 lightStart = bodyMin(light), heavyStart = bodyMin(heavy);
+            struct KeyPeek : GameWindow {
+                using GameWindow::keyPressEvent;
+                using GameWindow::keyReleaseEvent;
+            };
+            auto key = [&](bool down) {
+                QKeyEvent e(down ? QEvent::KeyPress : QEvent::KeyRelease, Qt::Key_W, Qt::NoModifier, QStringLiteral("w"));
+                if (down) (game.*(&KeyPeek::keyPressEvent))(&e);
+                else (game.*(&KeyPeek::keyReleaseEvent))(&e);
+            };
+            game.walker().setYaw(0);
+            game.walker().spawn(Vec3(lightStart.x - 0.5, lightStart.y + 0.5, 0.01));
+            key(true);
+            frames(1.5);
+            key(false);
+            std::printf("    light box moved %.2f m\n", bodyMin(light).x - lightStart.x);
+            d.check(bodyMin(light).x > lightStart.x + 0.3, "walking into a light box pushes it");
+            game.walker().spawn(Vec3(heavyStart.x - 0.5, heavyStart.y + 0.5, 0.01));
+            key(true);
+            frames(1.5);
+            key(false);
+            d.check(std::fabs(bodyMin(heavy).x - heavyStart.x) < 0.05, "a heavy one stays put");
+            d.check(ents->errors().isEmpty(), "no errors");
+            d.check(!game.grabFramebuffer().isNull(), "it renders");
+        }
+        game.close();
+        qunsetenv("GNUSKETCH_DATA_DIR");
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->setTool(ToolId::Select);
+    }
+
+    // --- Voxelate from the Effects menu's registry, on a real selection.
+    {
+        doc.reset();
+        vp->setTool(ToolId::Select);
+        d.mesh().viewHint = Vec3(0, 0, 10);
+        d.mesh().groundFacesDown = false;
+        d.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) doc.selection.faces.insert(f);
+        doc.notifySelection();
+        d.check(w.findChild<QAction*>(QStringLiteral("effect_voxelate")) != nullptr, "Voxelate is in the Effects menu");
+        d.check(w.findChild<QAction*>(QStringLiteral("effect_voxelate"))->isEnabled(), "and enabled with faces selected");
+        for (const EffectDef& def : effectRegistry())
+            if (def.name == QLatin1String("Voxelate")) {
+                QVariantMap v;
+                v["size"] = 0.25;
+                v["fill"] = true;
+                v["merge"] = false;
+                doc.beginOp("Voxelate");
+                Selection sel = doc.selection;
+                std::string err;
+                const bool ok = applyEffect(doc.state, sel, [&](Mesh& m, const std::set<Id>& f, EffectResult* r, std::string* e) { return def.apply(m, f, v, r, e); }, nullptr, &err);
+                doc.selection = sel;
+                doc.commitOp();
+                d.check(ok && d.mesh().aliveFaceCount() > 16, "it runs on the selection");
+            }
+        d.check(!vp->grabFramebuffer().isNull(), "the cubes render");
+        doc.undo();
+        d.check(d.mesh().aliveFaceCount() == 1, "one undo restores the face");
+        doc.reset();
+    }
+
     std::printf("selftest: %d faces, %d edges, %zu materials, %d failures\n", d.mesh().aliveFaceCount(),
                 d.mesh().aliveEdgeCount(), doc.state.materials.size(), d.failures);
     doc.modified = false;
@@ -1706,13 +2958,13 @@ int runGlProbe() {
     ff.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
     ff.setSamples(4);
     QOpenGLFramebufferObject fbo(800, 600, ff);
-    fbo.bind();
     Renderer r;
     QString log;
     if (!r.initialize(&log)) {
         std::printf("gl-probe: renderer FAILED:\n%s\n", qPrintable(log));
         return 1;
     }
+    fbo.bind(); // after initialize(), which leaves framebuffer 0 bound
     Document doc;
     doc.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 1, 0}, {0, 1, 0}}, true);
     for (Id i = 0; i < (Id)doc.mesh().faces.size(); ++i)

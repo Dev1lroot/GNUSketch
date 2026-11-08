@@ -127,6 +127,29 @@ Id Document::addMaterial(const Material& m) {
     return (Id)state.materials.size() - 1;
 }
 
+const char* sceneObjectTypeName(SceneObject::Kind k) {
+    switch (k) {
+    case SceneObject::PointLight: return "Point Light";
+    case SceneObject::SpotLight: return "Spot Light";
+    case SceneObject::DirectionalLight: return "Directional Light";
+    case SceneObject::ViewCamera: return "Camera";
+    }
+    return "Object";
+}
+
+Id Document::addObject(SceneObject o) {
+    const std::string base = o.name.empty() ? std::string(sceneObjectTypeName(o.kind)) : o.name;
+    auto taken = [&](const std::string& n) {
+        for (const SceneObject& e : state.objects)
+            if (e.alive && e.name == n) return true;
+        return false;
+    };
+    o.name = base;
+    for (int i = 2; taken(o.name); ++i) o.name = base + " " + std::to_string(i);
+    state.objects.push_back(std::move(o));
+    return (Id)state.objects.size() - 1;
+}
+
 void Document::validateSelection() {
     Selection before = selection;
     const Mesh& m = state.activeMesh();
@@ -136,7 +159,10 @@ void Document::validateSelection() {
         it = (*it < 0 || *it >= (Id)m.edges.size() || !m.edges[*it].alive) ? selection.edges.erase(it) : ++it;
     const auto& insts = state.instances;
     for (auto it = selection.instances.begin(); it != selection.instances.end();)
-        it = (state.editing != kNone || *it < 0 || *it >= (Id)insts.size() || !insts[*it].alive) ? selection.instances.erase(it) : ++it;
+        it = (*it < 0 || *it >= (Id)insts.size() || !insts[*it].alive || insts[*it].parent != state.activeDef()) ? selection.instances.erase(it) : ++it;
+    const auto& objs = state.objects;
+    for (auto it = selection.objects.begin(); it != selection.objects.end();)
+        it = (state.editing != kNone || *it < 0 || *it >= (Id)objs.size() || !objs[*it].alive) ? selection.objects.erase(it) : ++it;
     if (!(before == selection)) notifySelection();
 }
 

@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Headless tests for the geometry kernel.
+#include "core/Animation.h"
+#include "core/Physics.h"
 #include "core/Components.h"
 #include "core/Document.h"
 #include "core/Effects.h"
 #include "core/Walker.h"
 #include "core/Mesh.h"
+#include "core/Primitives.h"
 #include "core/RoundCorners.h"
 #include "core/Solids.h"
 #include "core/Terrain.h"
@@ -2423,6 +2426,893 @@ int main() {
         CHECK(near(t.u.dot(t.v), 0, 1e-9));
         CHECK(near(1 / t.u.length(), 4, 1e-9) && near(1 / t.v.length(), 1, 1e-9));
         CHECK(near(plane.angleOf(c, Vec3(2, 5, 0)), kPi / 2, 1e-9));
+    });
+
+    test("materials: map names", [] {
+        CHECK(guessMapSlot("oak_Roughness_2k.png") == MapRoughness);
+        CHECK(guessMapSlot("/tmp/wood_floor/Wood-Normal.jpg") == MapNormal);
+        CHECK(guessMapSlot("woodNormalGL.png") == MapNormal);
+        CHECK(guessMapSlot("brick_albedo.png") == MapSlotCount);
+        CHECK(guessMapSlot("rock_AO.tga") == MapOcclusion);
+        CHECK(guessMapSlot("metal_plate_Metalness.png") == MapMetallic);
+        CHECK(guessMapSlot("x_disp.png") == MapHeight);
+        CHECK(guessMapSlot("holiday.jpg") == -1);
+        CHECK(guessMapSlot("broadcast.png") == -1); // "ao" and "col" only count as whole words
+    });
+
+    test("materials: shader properties", [] {
+        const auto p = parseShaderProps(
+            "uniform float _Speed;  // range(0, 10) default(2.5)\n"
+            "  uniform vec3 _Tint; // color default(1, 0.5, 0.25)\r\n"
+            "uniform vec2 _Offset;\n"
+            "uniform sampler2D _Mask;\n"
+            "uniform float _Bad; // range(a,b) default(zz)\n"
+            "void surface(inout Surface s) { float uniform_like = 1.0; }\n");
+        CHECK(p.size() == 4);
+        CHECK(p[0].name == "_Speed" && p[0].components == 1 && p[0].max == 10 && p[0].def[0] == 2.5f);
+        CHECK(p[1].name == "_Tint" && p[1].isColor && p[1].components == 3 && p[1].def[1] == 0.5f);
+        CHECK(p[2].name == "_Offset" && p[2].components == 2 && !p[2].isColor);
+        CHECK(p[3].name == "_Bad" && p[3].max > p[3].min);
+    });
+
+    test("materials: advanced flag, tile size, comparison", [] {
+        Material m;
+        CHECK(!m.advanced() && !m.blended());
+        double w, h;
+        m.tileSize(w, h);
+        CHECK(w == 1 && h == 1);
+        auto bytes = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3});
+        m.maps[MapNormal].tex.data = bytes;
+        m.maps[MapNormal].tex.worldWidth = 2;
+        m.maps[MapNormal].tex.worldHeight = 3;
+        CHECK(m.advanced());
+        m.tileSize(w, h);
+        CHECK(w == 2 && h == 3); // no base image: the map decides
+        m.setTileSize(4, 5);
+        m.tileSize(w, h);
+        CHECK(w == 4 && h == 5);
+        Material a = m;
+        a.maps[MapNormal].tex.data = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3});
+        CHECK(sameMaterial(a, m)); // equal bytes in another buffer
+        a.maps[MapNormal].strength = 0.5f;
+        CHECK(!sameMaterial(a, m));
+        Material b = m;
+        b.maps[MapOpacity].tex.data = bytes;
+        CHECK(b.blended() && !sameMaterial(b, m));
+        Material sh;
+        sh.shader = "x";
+        CHECK(!sh.advanced() && !sh.customShader()); // written but switched off
+        sh.shaderOn = true;
+        CHECK(sh.advanced() && sh.customShader());
+    });
+
+    test("scene objects: names and selection", [] {
+        Document d;
+        SceneObject o;
+        Id a = d.addObject(o), b = d.addObject(o);
+        CHECK(d.state.objects[a].name == "Point Light" && d.state.objects[b].name == "Point Light 2");
+        o.kind = SceneObject::ViewCamera;
+        CHECK(d.state.objects[d.addObject(o)].name == "Camera");
+        d.selection.objects = {a, b, 99};
+        CHECK(d.selection.count() == 3 && !d.selection.empty());
+        d.beginOp("Erase");
+        d.state.objects[a].alive = false;
+        d.commitOp();
+        CHECK(d.selection.objects == std::set<Id>{b}); // the deleted and the invalid are gone
+        d.undo();
+        CHECK(d.state.objects[a].alive);
+    });
+
+    test("components: extract and import a definition", [] {
+        Document d;
+        Mesh& m = d.mesh();
+        m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        Material unused, used;
+        unused.name = "Unused";
+        used.name = "Used";
+        used.pbr = true;
+        d.addMaterial(unused);
+        const Id mid = d.addMaterial(used);
+        Selection s;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) {
+                m.faces[f].front.material = mid;
+                s.faces.insert(f);
+            }
+        const Id inst = makeComponent(d.state, s, "Tile");
+        const Id def = d.state.instances[inst].def;
+        ModelState pre = extractDefinition(d.state, def);
+        CHECK(pre.defs.size() == 1 && pre.instances.size() == 1 && pre.materials.size() == 1);
+        CHECK(pre.materials[0].name == "Used");
+        bool mapped = false;
+        for (const Face& f : pre.defs[0].mesh.faces) mapped = mapped || (f.alive && f.front.material == 0);
+        CHECK(mapped);
+        CHECK(pre.instances[0].xf.isIdentity());
+
+        Document other;
+        Material first;
+        first.name = "Something else";
+        other.addMaterial(first);
+        const Id d0 = importDefinition(other, pre, 0);
+        CHECK(d0 == 0 && other.state.materials.size() == 2);
+        bool remapped = false;
+        for (const Face& f : other.state.defs[0].mesh.faces) remapped = remapped || (f.alive && f.front.material == 1);
+        CHECK(remapped);
+        // Placing it again reuses the definition and its materials.
+        CHECK(importDefinition(other, pre, 0) == d0);
+        CHECK(other.state.defs.size() == 1 && other.state.materials.size() == 2);
+        // With a different identity the equal material is still merged.
+        ModelState variant = pre;
+        variant.defs[0].uid = "another";
+        CHECK(importDefinition(other, variant, 0) == 1);
+        CHECK(other.state.materials.size() == 2);
+        CHECK(importDefinition(other, pre, 5) == kNone);
+    });
+
+    test("animation: rigid fit and screw motion", [&] {
+        // A door 1 m wide hinged on the Z axis through (2, 3): a quarter turn.
+        const std::vector<Vec3> rest = {{2, 3, 0}, {3, 3, 0}, {3, 3, 2}, {2, 3, 2}};
+        std::vector<Vec3> open = {{2, 3, 0}, {2, 4, 0}, {2, 4, 2}, {2, 3, 2}};
+        double residual = 1;
+        const Mat4 fit = fitRigid(rest, open, &residual);
+        CHECK(residual < 1e-9);
+        for (size_t i = 0; i < rest.size(); ++i) CHECK(fit.transformPoint(rest[i]).nearlyEquals(open[i], 1e-9));
+        // Half way the free edge is on the arc, not on the straight line between.
+        const Mat4 half = interpolateRigid(Mat4(), fit, 0.5);
+        const Vec3 edge = half.transformPoint(Vec3(3, 3, 1));
+        CHECK(near((edge - Vec3(2, 3, 1)).length(), 1.0, 1e-9));
+        CHECK(edge.nearlyEquals(Vec3(2 + std::sqrt(0.5), 3 + std::sqrt(0.5), 1), 1e-9));
+        CHECK(half.transformPoint(Vec3(2, 3, 1)).nearlyEquals(Vec3(2, 3, 1), 1e-9)); // the hinge stays put
+        CHECK(interpolateRigid(Mat4(), fit, 0).isIdentity());
+        CHECK(interpolateRigid(Mat4(), fit, 1).transformPoint(rest[1]).nearlyEquals(open[1], 1e-9));
+        // Between two non-identity poses.
+        const Mat4 from = Mat4::translation(Vec3(5, 0, 0));
+        CHECK(interpolateRigid(from, Mat4::translation(Vec3(5, 0, 4)), 0.25).transformPoint(Vec3()).nearlyEquals(Vec3(5, 0, 1), 1e-9));
+        // A half turn is handled, and a turn plus a slide.
+        const Mat4 turn = Mat4::translation(Vec3(1, 0, 3)) * Mat4::rotation(Vec3(0, 0, 1), kPi);
+        const Mat4 end = interpolateRigid(Mat4(), turn, 1);
+        CHECK(end.transformPoint(Vec3(2, 5, 1)).nearlyEquals(turn.transformPoint(Vec3(2, 5, 1)), 1e-6));
+        const Vec3 mid = interpolateRigid(Mat4(), turn, 0.5).transformPoint(Vec3(0.5, 0, 0));
+        CHECK(near(mid.z, 1.5, 1e-6)); // half the slide
+        // A scaled shape is no rigid motion.
+        std::vector<Vec3> big;
+        for (const Vec3& p : rest) big.push_back(p * 2.0);
+        fitRigid(rest, big, &residual);
+        CHECK(residual > 0.1);
+        // Mirror-free fit of a flat, three-point set still works.
+        const std::vector<Vec3> tri = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+        const Mat4 q = Mat4::rotation(Vec3(1, 0, 0), 0.7);
+        std::vector<Vec3> tri2;
+        for (const Vec3& p : tri) tri2.push_back(q.transformPoint(p));
+        fitRigid(tri, tri2, &residual);
+        CHECK(residual < 1e-9);
+    });
+
+    test("animation: states of a component", [&] {
+        Document d;
+        Mesh& m = d.mesh();
+        m.drawPolyline({{1, 1, 0}, {2, 1, 0}, {2, 2, 0}, {1, 2, 0}}, true);
+        Selection s;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) s.faces.insert(f);
+        const Id inst = makeComponent(d.state, s, "Door");
+        ModelState& st = d.state;
+        const Id def = st.instances[inst].def;
+        CHECK(!recordState(st, "CLOSED")); // nothing open
+        d.state.instances[inst].xf = Mat4::translation(Vec3(10, 0, 0)) * d.state.instances[inst].xf;
+        d.openComponent(inst);
+        CHECK(recordState(st, "CLOSED"));
+        CHECK(st.defs[def].states.size() == 1);
+        // States are in the definition's own coordinates, not the world's.
+        Vec3 mn(1e9, 1e9, 1e9);
+        for (const Vec3& p : st.defs[def].states[0].pos) mn = Vec3(std::min(mn.x, p.x), std::min(mn.y, p.y), std::min(mn.z, p.z));
+        CHECK(mn.nearlyEquals(Vec3(0, 0, 0), 1e-9));
+        std::set<Id> all;
+        Mesh& open = st.activeMesh();
+        for (Id v = 0; v < (Id)open.vertices.size(); ++v)
+            if (open.vertices[v].alive) all.insert(v);
+        open.transformVertices(all, Mat4::translation(Vec3(0, 0, 2)), false);
+        CHECK(recordState(st, "UP"));
+        CHECK(st.defs[def].states.size() == 2);
+        CHECK(recordState(st, "UP")); // same name: updates it
+        CHECK(st.defs[def].states.size() == 2 && findState(st.defs[def], "UP") == 1);
+        CHECK(!recordState(st, ""));
+        // Going to a state while open keeps world placement right.
+        CHECK(applyState(st, def, "CLOSED"));
+        Vec3 a, b;
+        bool any = false;
+        st.activeMesh().bounds(a, b, any);
+        CHECK(a.nearlyEquals(Vec3(11, 1, 0), 1e-9));
+        CHECK(!applyState(st, def, "NOPE"));
+        CHECK(applyState(st, def, "UP"));
+        d.closeComponent();
+        CHECK(instanceBounds(st, inst, a, b));
+        CHECK(near(a.z, 2, 1e-9));
+        CHECK(applyState(st, def, "CLOSED")); // closed: in its own coordinates
+        CHECK(instanceBounds(st, inst, a, b));
+        CHECK(near(a.z, 0, 1e-9) && near(a.x, 11, 1e-9));
+    });
+
+    test("animation: parts of an entity", [&] {
+        ModelState st;
+        // Two separate pieces in one component: a frame that stays and a panel that swings.
+        ComponentDef def;
+        def.name = "Gate";
+        def.mesh.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 0, 2}, {0, 0, 2}}, true);
+        def.mesh.drawPolyline({{5, 0, 0}, {6, 0, 0}, {6, 0, 2}, {5, 0, 2}}, true);
+        CHECK(meshIslands(def.mesh).size() == 2);
+        AnimState closed, open;
+        closed.name = "CLOSED";
+        open.name = "OPEN";
+        const Mat4 swing = Mat4::translation(Vec3(5, 0, 0)) * Mat4::rotation(Vec3(0, 0, 1), kPi / 2) * Mat4::translation(Vec3(-5, 0, 0));
+        for (Id v = 0; v < (Id)def.mesh.vertices.size(); ++v) {
+            const Vec3 p = def.mesh.vertices[v].p;
+            closed.verts.push_back(v);
+            closed.pos.push_back(p);
+            open.verts.push_back(v);
+            open.pos.push_back(p.x >= 5 ? swing.transformPoint(p) : p);
+        }
+        def.states = {closed, open};
+        st.defs.push_back(def);
+        Instance in;
+        in.def = 0;
+        in.xf = Mat4::translation(Vec3(0, 7, 0));
+        in.entity.classname = "func_door";
+        st.instances.push_back(in);
+        Instance plain;
+        plain.def = 0;
+        st.instances.push_back(plain);
+        auto ents = prepareEntities(st);
+        CHECK(ents.size() == 1 && ents[0].parts.size() == 2 && ents[0].states.size() == 2);
+        CHECK(!st.instances[0].alive && st.instances[1].alive); // plain geometry stays as it is
+        const AnimEntity& e = ents[0];
+        CHECK(st.instances[e.parts[0].instance].dynamic && st.defs[e.parts[0].def].mesh.aliveFaceCount() == 1);
+        poseEntity(st, e, 0, 1, 1.0);
+        const AnimPart* panel = nullptr;
+        const AnimPart* frame = nullptr;
+        for (const AnimPart& p : e.parts) (st.defs[p.def].mesh.vertices[4].alive ? panel : frame) = &p;
+        CHECK(panel && frame);
+        if (panel && frame) {
+            CHECK(st.instances[frame->instance].xf.isIdentity() == false); // the instance's place
+            CHECK(st.instances[frame->instance].xf.transformPoint(Vec3(1, 0, 0)).nearlyEquals(Vec3(1, 7, 0), 1e-9));
+            CHECK(st.instances[panel->instance].xf.transformPoint(Vec3(6, 0, 0)).nearlyEquals(Vec3(5, 8, 0), 1e-9));
+            poseEntity(st, e, 0, 1, 0.5);
+            const Vec3 mid = st.instances[panel->instance].xf.transformPoint(Vec3(6, 0, 0));
+            CHECK(near((mid - Vec3(5, 7, 0)).length(), 1.0, 1e-9)); // on the arc
+            CHECK(!poseEntity(st, e, 0, 0, 0)); // rigid parts leave the meshes alone
+        }
+        // A state that changes the shape blends the vertices instead.
+        ModelState st2;
+        ComponentDef def2 = def;
+        for (Vec3& p : def2.states[1].pos) p = p * 2.0;
+        st2.defs.push_back(def2);
+        Instance in2;
+        in2.def = 0;
+        in2.entity.classname = "func_actor";
+        st2.instances.push_back(in2);
+        auto ents2 = prepareEntities(st2);
+        CHECK(ents2[0].parts[0].deforms);
+        CHECK(poseEntity(st2, ents2[0], 0, 1, 0.5));
+        CHECK(poseEntity(st2, ents2[0], 0, 0, 0)); // and back to the rest shape
+        // Collision bodies move with their transform and are hit by rays.
+        CollisionWorld w;
+        w.buildFromModel(st);
+        const int body = w.addBody(st.defs[e.parts[0].def].mesh, st.instances[e.parts[0].instance].xf);
+        CHECK(w.bodyCount() == 1 && !w.bodyTriangles(body).empty());
+        double t = 0;
+        int hit = -5;
+        Vec3 mn, mx;
+        w.bodyBounds(body, mn, mx);
+        const Vec3 c = (mn + mx) * 0.5;
+        CHECK(w.raycast(c + Vec3(0.05, -3, 0.1), Vec3(0, 1, 0), 10, t, hit) && hit == body);
+        CHECK(!w.raycast(c + Vec3(0.05, -3, 0.1), Vec3(0, 1, 0), 1, t, hit));
+        w.setBodyTransform(body, Mat4::translation(Vec3(0, 0, 100)));
+        hit = -5;
+        CHECK(!w.raycast(c + Vec3(0.05, -3, 0.1), Vec3(0, 1, 0), 10, t, hit) || hit != body);
+    });
+
+    test("components inside components", [&] {
+        auto boxAt = [](Document& d, const Vec3& o, const char* name) {
+            Mesh& m = d.mesh();
+            std::set<Id> before;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) before.insert(f);
+            m.drawPolyline({o, o + Vec3(1, 0, 0), o + Vec3(1, 1, 0), o + Vec3(0, 1, 0)}, true);
+            Selection s;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && !before.count(f)) s.faces.insert(f);
+            return makeComponent(d.state, s, name);
+        };
+        Document d;
+        ModelState& st = d.state;
+        const Id handle = boxAt(d, Vec3(5, 0, 0), "Handle");
+        const Id door = boxAt(d, Vec3(0, 0, 0), "Door");
+        // A component made of components.
+        Selection both;
+        both.instances = {handle, door};
+        const Id whole = makeComponent(st, both, "Whole");
+        CHECK(whole != kNone && st.instances[whole].parent == kNone);
+        const Id wholeDef = st.instances[whole].def;
+        CHECK(st.instances[handle].parent == wholeDef && st.instances[door].parent == wholeDef);
+        CHECK(childrenOf(st, wholeDef).size() == 2);
+        Vec3 a, b;
+        CHECK(instanceBounds(st, whole, a, b));
+        CHECK(a.nearlyEquals(Vec3(0, 0, 0), 1e-9) && b.nearlyEquals(Vec3(6, 1, 0), 1e-9));
+        CHECK(placedInstances(st).size() == 3);
+        CHECK(flattenModel(st).aliveFaceCount() == 2);
+        // Placed elsewhere, what is inside goes along, and copies share it.
+        st.instances[whole].xf = Mat4::translation(Vec3(0, 10, 0));
+        const Id copy = cloneInstance(st, whole);
+        st.instances[copy].xf = Mat4::translation(Vec3(0, 20, 0));
+        auto placedDoorAt = [&](Id root) {
+            for (const PlacedInstance& p : placedInstances(st))
+                if (p.root == root && p.inst == door) return p.xf.transformPoint(Vec3());
+            return Vec3(-99, -99, -99);
+        };
+        CHECK(placedDoorAt(whole).nearlyEquals(Vec3(0, 10, 0), 1e-9) && placedDoorAt(copy).nearlyEquals(Vec3(0, 20, 0), 1e-9));
+        // Nothing can go inside itself.
+        CHECK(definitionContains(st, wholeDef, st.instances[door].def) && !definitionContains(st, st.instances[door].def, wholeDef));
+        CHECK(canPlaceInActive(st, wholeDef));
+        // Opening stacks: the frame, then the door in it.
+        const ModelState closed = st;
+        d.openComponent(whole);
+        CHECK(st.editing == whole && st.activeDef() == wholeDef);
+        CHECK(!canPlaceInActive(st, wholeDef) && canPlaceInActive(st, st.instances[door].def));
+        CHECK(st.instances[door].xf.transformPoint(Vec3()).nearlyEquals(Vec3(0, 10, 0), 1e-9)); // world, for the tools
+        d.selection.instances = {door};
+        d.validateSelection();
+        CHECK(d.selection.instances == std::set<Id>{door}); // what is inside can be selected now
+        d.selection.instances = {whole};
+        d.validateSelection();
+        CHECK(d.selection.instances.empty());
+        d.openComponent(door);
+        CHECK(st.editing == door && st.outerOpen == std::vector<Id>{whole});
+        Vec3 ma, mb;
+        bool any = false;
+        st.activeMesh().bounds(ma, mb, any);
+        CHECK(ma.nearlyEquals(Vec3(0, 10, 0), 1e-9));
+        CHECK(!canPlaceInActive(st, wholeDef) && !canPlaceInActive(st, st.instances[door].def));
+        // The other copy's door still is where it belongs.
+        bool otherOk = false;
+        for (const PlacedInstance& p : placedInstances(st))
+            if (p.inst == door && !p.active) otherOk = otherOk || p.xf.transformPoint(st.activeMesh().vertices[0].p).nearlyEquals(Vec3(0, 20, 0) + (st.activeMesh().vertices[0].p - Vec3(0, 10, 0)), 1e-9);
+        CHECK(otherOk);
+        d.closeComponent();
+        CHECK(st.editing == whole && st.outerOpen.empty());
+        d.closeComponent();
+        CHECK(st.editing == kNone);
+        CHECK(st.instances[door].xf.transformPoint(Vec3()).nearlyEquals(closed.instances[door].xf.transformPoint(Vec3()), 1e-9));
+        // A state records where the components inside are.
+        d.openComponent(whole);
+        CHECK(recordState(st, "A"));
+        CHECK(st.defs[wholeDef].states[0].children.size() == 2);
+        st.instances[door].xf = Mat4::translation(Vec3(0, 0, 3)) * st.instances[door].xf;
+        CHECK(recordState(st, "B"));
+        CHECK(applyState(st, wholeDef, "A"));
+        CHECK(near(st.instances[door].xf.at(2, 3), closed.instances[door].xf.at(2, 3), 1e-9));
+        d.closeComponent();
+        // Made unique, the copy gets its own contents.
+        Document u = Document();
+        u.state = st;
+        makeUnique(u.state, {copy});
+        const Id newDef = u.state.instances[copy].def;
+        CHECK(newDef != wholeDef && childrenOf(u.state, newDef).size() == 2 && childrenOf(u.state, wholeDef).size() == 2);
+        for (const auto& [id, xf] : u.state.defs[newDef].states[0].children) CHECK(u.state.instances[id].parent == newDef);
+        // Exploded, they come out to the level it was on.
+        Selection out;
+        explodeInstance(u.state, copy, &out);
+        CHECK(out.instances.size() == 2);
+        for (Id i : out.instances) CHECK(u.state.instances[i].parent == kNone);
+        CHECK(childrenOf(u.state, wholeDef).size() == 2);
+        // Inside an open component, Make Component nests too.
+        Document n;
+        const Id outer = boxAt(n, Vec3(0, 0, 0), "Outer");
+        n.openComponent(outer);
+        const Id inner = boxAt(n, Vec3(0, 0, 2), "Inner");
+        CHECK(inner != kNone && n.state.instances[inner].parent == n.state.activeDef());
+        CHECK(n.state.instances[inner].xf.transformPoint(Vec3()).nearlyEquals(Vec3(0, 0, 2), 1e-9));
+        n.closeComponent();
+        CHECK(flattenModel(n.state).aliveFaceCount() == 2);
+        // Extraction carries the tree.
+        Material used;
+        used.name = "Oak";
+        const Id mid = d.addMaterial(used);
+        for (Face& f : st.defs[st.instances[door].def].mesh.faces) f.front.material = mid;
+        ModelState pre = extractDefinition(st, wholeDef);
+        CHECK(pre.defs.size() == 3 && pre.instances.size() == 3 && pre.instances[0].def == 0 && pre.instances[0].parent == kNone);
+        CHECK(pre.materials.size() == 1 && childrenOf(pre, 0).size() == 2);
+        CHECK(pre.defs[0].states.size() == 2);
+        for (const auto& [id, xf] : pre.defs[0].states[0].children) CHECK(id >= 0 && pre.instances[id].parent == 0);
+        Document other;
+        const Id imported = importDefinition(other, pre, 0);
+        CHECK(other.state.defs.size() == 3 && other.state.instances.size() == 2 && other.state.materials.size() == 1);
+        CHECK(childrenOf(other.state, imported).size() == 2);
+        for (const auto& [id, xf] : other.state.defs[imported].states[0].children) CHECK(other.state.instances[id].parent == imported);
+        CHECK(importDefinition(other, pre, 0) == imported && other.state.instances.size() == 2);
+    });
+
+    test("entities inside components and inside entities", [&] {
+        // A frame (plain) holding a door (entity) holding a handle (plain), holding a lock (entity).
+        ModelState st;
+        auto plate = [&](const char* name, const Vec3& o) {
+            ComponentDef d;
+            d.name = name;
+            d.mesh.drawPolyline({o, o + Vec3(1, 0, 0), o + Vec3(1, 0, 1), o + Vec3(0, 0, 1)}, true);
+            st.defs.push_back(d);
+            return (Id)st.defs.size() - 1;
+        };
+        const Id frame = plate("Frame", Vec3(-1, 0, 0)), doorDef = plate("Door", Vec3(0, 0, 0)), handleDef = plate("Handle", Vec3(0.5, 0, 0.5)), lockDef = plate("Lock", Vec3(0.7, 0, 0.7));
+        Instance root;
+        root.def = frame;
+        root.xf = Mat4::translation(Vec3(100, 0, 0));
+        st.instances.push_back(root);
+        Instance door;
+        door.def = doorDef;
+        door.parent = frame;
+        door.xf = Mat4::translation(Vec3(2, 0, 0));
+        door.entity.classname = "func_door";
+        st.instances.push_back(door);
+        Instance handle;
+        handle.def = handleDef;
+        handle.parent = doorDef;
+        st.instances.push_back(handle);
+        Instance lock;
+        lock.def = lockDef;
+        lock.parent = handleDef;
+        lock.entity.classname = "func_actor";
+        st.instances.push_back(lock);
+        // Door states: it rises by 2; the handle inside tilts up by 1 more.
+        AnimState closed, open;
+        closed.name = "CLOSED";
+        open.name = "OPEN";
+        for (Id v = 0; v < (Id)st.defs[doorDef].mesh.vertices.size(); ++v) {
+            closed.verts.push_back(v);
+            closed.pos.push_back(st.defs[doorDef].mesh.vertices[v].p);
+            open.verts.push_back(v);
+            open.pos.push_back(st.defs[doorDef].mesh.vertices[v].p + Vec3(0, 0, 2));
+        }
+        closed.children.emplace_back(2, Mat4());
+        open.children.emplace_back(2, Mat4::translation(Vec3(0, 0, 3)));
+        st.defs[doorDef].states = {closed, open};
+        auto ents = prepareEntities(st);
+        CHECK(ents.size() == 2);
+        CHECK(!st.instances[0].alive);
+        const int de = ents[0].props.classname == "func_door" ? 0 : 1, le = 1 - de;
+        CHECK(ents[le].owner == de && ents[de].owner == -1);
+        CHECK(ents[de].parts.size() == 2); // its own plate, and the handle
+        // Everything that is shown is now flat: top level, no children below.
+        CollisionWorld w;
+        w.buildFromModel(st);
+        CHECK(w.triangles().size() == 2); // only the frame is static
+        auto setPose = [&](int a, int b, double t) {
+            ents[de].poseA = a;
+            ents[de].poseB = b;
+            ents[de].poseT = t;
+            poseEntity(st, ents[de], a, b, t);
+            poseMounted(st, ents, de, [](int) {});
+        };
+        setPose(0, 0, 0);
+        const Mat4 lockClosed = st.instances[ents[le].parts[0].instance].xf;
+        CHECK(lockClosed.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 0), 1e-9));
+        setPose(1, 1, 0);
+        CHECK(st.instances[ents[de].parts[0].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 2), 1e-9));
+        CHECK(st.instances[ents[de].parts[1].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 3), 1e-9));
+        CHECK(st.instances[ents[le].parts[0].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 3), 1e-9)); // the lock rides along
+        setPose(0, 1, 0.5);
+        CHECK(st.instances[ents[le].parts[0].instance].xf.transformPoint(Vec3()).nearlyEquals(Vec3(102, 0, 1.5), 1e-9));
+    });
+
+    test("physics: falling, resting, sliding", [&] {
+        // A cube as a mesh, its lowest corner at `o`.
+        auto cube = [](const Vec3& o, double a) {
+            Mesh m;
+            const Vec3 p[8] = {o, o + Vec3(a, 0, 0), o + Vec3(a, a, 0), o + Vec3(0, a, 0),
+                               o + Vec3(0, 0, a), o + Vec3(a, 0, a), o + Vec3(a, a, a), o + Vec3(0, a, a)};
+            Id v[8];
+            for (int i = 0; i < 8; ++i) v[i] = m.addVertexRaw(p[i]);
+            const int F[6][4] = {{3, 2, 1, 0}, {4, 5, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}};
+            for (const auto& f : F) {
+                std::vector<Id> loop;
+                for (int k : f) loop.push_back(v[k]);
+                for (int k = 0; k < 4; ++k) m.addEdgeRaw(loop[k], loop[(k + 1) % 4]);
+                const Vec3 n = (p[f[1]] - p[f[0]]).cross(p[f[2]] - p[f[0]]).normalized();
+                m.addFaceRaw(loop, {}, n);
+            }
+            m.touch();
+            return m;
+        };
+        auto addCube = [&](PhysicsWorld& pw, CollisionWorld& w, const Vec3& o, double a, PhysicsParams params = {}) {
+            const int c = w.addBody(cube(o, a), Mat4());
+            return pw.addBody(params, {c}, w);
+        };
+        auto run = [](PhysicsWorld& pw, CollisionWorld& w, double seconds) {
+            // Each body's triangles were added in world coordinates.
+            for (double t = 0; t < seconds; t += 1.0 / 60)
+                pw.step(1.0 / 60, w, [&](int b) {
+                    for (int c : pw.collisionBodies(b)) w.setBodyTransform(c, pw.transform(b));
+                });
+        };
+        auto lowest = [](const CollisionWorld& w, int c) {
+            Vec3 mn, mx;
+            w.bodyBounds(c, mn, mx);
+            return mn;
+        };
+        {
+            // It falls by the book, lands flat on the ground and comes to rest.
+            CollisionWorld w;
+            w.build();
+            PhysicsWorld pw;
+            const int b = addCube(pw, w, Vec3(0, 0, 20), 1);
+            run(pw, w, 1.0);
+            CHECK(near(lowest(w, 0).z, 20 - 0.5 * 9.81, 0.2));
+            run(pw, w, 3.0);
+            CHECK(near(lowest(w, 0).z, 0, 0.02));
+            run(pw, w, 2.0);
+            CHECK(pw.asleep(b));
+            const Mat4 xf = pw.transform(b);
+            CHECK(near(xf.at(0, 0), 1, 0.01) && near(xf.at(2, 2), 1, 0.01)); // not tipped over
+            CHECK(near(lowest(w, 0).x, 0, 0.05));
+            // Pushed, it wakes up and moves on the ground.
+            pw.applyImpulse(b, Vec3(40, 0, 0), pw.centre(b));
+            CHECK(!pw.asleep(b));
+            run(pw, w, 0.3);
+            CHECK(lowest(w, 0).x > 0.1);
+            CHECK(near(lowest(w, 0).z, 0, 0.1));
+        }
+        auto slope = [](CollisionWorld& w, double degrees) {
+            const double a = degrees * kPi / 180, L = 40;
+            const Vec3 d(std::cos(a) * L, 0, -std::sin(a) * L);
+            const Vec3 o(-5, -5, std::sin(a) * L + 2), s(0, 10, 0);
+            w.addTriangle(o, o + d, o + d + s);
+            w.addTriangle(o, o + d + s, o + s);
+            w.build();
+        };
+        {
+            // Steep and slippery: it slides down.
+            CollisionWorld w;
+            slope(w, 25);
+            PhysicsWorld pw;
+            PhysicsParams slick;
+            slick.friction = 0.1;
+            addCube(pw, w, Vec3(0, -0.5, 18), 1, slick);
+            run(pw, w, 1.0); // lands
+            const double v1 = pw.velocity(0).length();
+            run(pw, w, 2.0);
+            const double v3 = pw.velocity(0).length();
+            // g (sin a - mu cos a) along the slope.
+            const double expected = 9.81 * (std::sin(25 * kPi / 180) - 0.1 * std::cos(25 * kPi / 180));
+            CHECK(near((v3 - v1) / 2, expected, 0.1));
+            const double slid = lowest(w, 0).x;
+            CHECK(slid > 3.0);
+            CHECK(std::fabs(lowest(w, 0).y + 0.5) < 0.5); // straight down the slope
+        }
+        {
+            // Same slope with grip: it stays where it lands.
+            CollisionWorld w;
+            slope(w, 25);
+            PhysicsWorld pw;
+            PhysicsParams grip;
+            grip.friction = 0.9;
+            // Set down gently: its base just above the slope where that is highest, at x = 0.
+            addCube(pw, w, Vec3(0, -0.5, std::sin(25 * kPi / 180) * 40 + 2 - 5 * std::tan(25 * kPi / 180) + 0.03), 1, grip);
+            run(pw, w, 2.5); // tips onto its base
+            const double x1 = lowest(w, 0).x;
+            CHECK(pw.transform(0).at(2, 2) > 0.85); // lying on its side's base, not rolled over
+            run(pw, w, 3.0);
+            CHECK(std::fabs(lowest(w, 0).x - x1) < 0.03);
+            CHECK(pw.asleep(0));
+        }
+        {
+            // Placed sunk into a floor by half its height, it comes out on top.
+            CollisionWorld w;
+            const Vec3 q[4] = {{-5, -5, 3}, {5, -5, 3}, {5, 5, 3}, {-5, 5, 3}};
+            w.addTriangle(q[0], q[1], q[2]);
+            w.addTriangle(q[0], q[2], q[3]);
+            w.build();
+            PhysicsWorld pw;
+            addCube(pw, w, Vec3(0, 0, 2.6), 1); // centre above the floor by 0.1
+            run(pw, w, 3.0);
+            CHECK(near(lowest(w, 0).z, 3, 0.05));
+        }
+        {
+            // It rests on a static block instead of falling through.
+            CollisionWorld w;
+            const Vec3 q[4] = {{-5, -5, 3}, {5, -5, 3}, {5, 5, 3}, {-5, 5, 3}};
+            w.addTriangle(q[0], q[1], q[2]);
+            w.addTriangle(q[0], q[2], q[3]);
+            w.build();
+            PhysicsWorld pw;
+            addCube(pw, w, Vec3(0, 0, 6), 1);
+            run(pw, w, 3.0);
+            CHECK(near(lowest(w, 0).z, 3, 0.03));
+        }
+        {
+            // A corner of the world poking at a flat side: the post test.
+            CollisionWorld w;
+            w.addTriangle(Vec3(0.4, 0.4, 2), Vec3(0.6, 0.4, 0), Vec3(0.4, 0.6, 0));
+            w.build();
+            PhysicsWorld pw;
+            addCube(pw, w, Vec3(0, 0, 4), 1);
+            run(pw, w, 0.8);
+            CHECK(lowest(w, 0).z > 1.5); // stopped by the tip, or tilted off it, not through it at once
+        }
+        {
+            // Mass: a heavy box shoves a light one aside; the other way round it hardly does.
+            auto knock = [&](double hitter, double target) {
+                CollisionWorld w;
+                w.build();
+                PhysicsWorld pw;
+                PhysicsParams a, b;
+                a.mass = hitter;
+                b.mass = target;
+                a.friction = b.friction = 0.05;
+                a.bounce = b.bounce = 0;
+                const int A = addCube(pw, w, Vec3(0, 0, 0), 1, a);
+                addCube(pw, w, Vec3(1.5, 0, 0), 1, b);
+                pw.applyImpulse(A, Vec3(hitter * 4, 0, 0), pw.centre(A));
+                run(pw, w, 0.8);
+                return lowest(w, 1).x - 1.5;
+            };
+            CHECK(knock(100, 5) > knock(5, 100) + 0.5);
+        }
+        {
+            // A stack settles.
+            CollisionWorld w;
+            w.build();
+            PhysicsWorld pw;
+            addCube(pw, w, Vec3(0, 0, 0.5), 1);
+            addCube(pw, w, Vec3(0, 0, 2), 1);
+            run(pw, w, 4.0);
+            CHECK(near(lowest(w, 0).z, 0, 0.05));
+            CHECK(near(lowest(w, 1).z, 1, 0.08));
+        }
+    });
+
+    test("names look in their own group first", [&] {
+        auto entity = [](const char* name, std::vector<std::pair<int, std::string>> scope, int occ) {
+            AnimEntity e;
+            e.props.targetname = name;
+            e.props.classname = "func_door";
+            e.scope = std::move(scope);
+            e.occurrence = occ;
+            return e;
+        };
+        std::vector<AnimEntity> all;
+        all.push_back(entity("button", {{1, "front"}}, 10));
+        all.push_back(entity("door", {{1, "front"}}, 11));
+        all.push_back(entity("button", {{2, "back"}}, 12));
+        all.push_back(entity("door", {{2, "back"}}, 13));
+        all.push_back(entity("master", {}, 14));
+        all.push_back(entity("lamp", {}, 15));
+        using V = std::vector<int>;
+        CHECK(resolveEntityName(all, 0, "door") == V{1});
+        CHECK(resolveEntityName(all, 2, "door") == V{3});
+        CHECK((resolveEntityName(all, 4, "door") == V{1, 3})); // from outside: all of them
+        CHECK(resolveEntityName(all, 4, "front/door") == V{1});
+        CHECK(resolveEntityName(all, 0, "back/door") == V{3}); // reaching across
+        CHECK(resolveEntityName(all, 0, "lamp") == V{5});      // not in the group: further out
+        CHECK(resolveEntityName(all, 0, "nothing").empty());
+        CHECK(resolveEntityName(all, 0, "").empty());
+        CHECK(resolveEntityName(all, -1, "front/door") == V{1});
+    });
+
+    test("effects: voxelate", [&] {
+        {
+            // A box that fits the grid keeps its exact size, 4 x 4 x 4 cubes.
+            Mesh m;
+            cube(m);
+            Material none;
+            EffectResult r;
+            VoxelateParams p;
+            p.size = 0.25;
+            CHECK(effectVoxelate(m, allFaces(m), p, &r));
+            CHECK_EQ(m.aliveFaceCount(), 6 * 16);
+            CHECK_EQ((int)r.faces.size(), m.aliveFaceCount());
+            CHECK(!r.limited);
+            CHECK(isSolid(m));
+            CHECK(near(solidVolume(m), 1.0));
+            Vec3 mn, mx;
+            bool any = false;
+            m.bounds(mn, mx, any);
+            CHECK(mn.nearlyEquals(Vec3(0, 0, 0), 1e-9) && mx.nearlyEquals(Vec3(1, 1, 1), 1e-9));
+            CHECK(m.aliveVertexCount() == 5 * 5 * 5 - 3 * 3 * 3);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) // normals look out
+                if (m.faces[f].alive) CHECK((m.faceInteriorPoint(f) - Vec3(0.5, 0.5, 0.5)).dot(m.faces[f].normal) > 0);
+        }
+        {
+            // Merged, it is a plain box again.
+            Mesh m;
+            cube(m);
+            VoxelateParams p;
+            p.size = 0.25;
+            p.mergeFlat = true;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK_EQ(m.aliveFaceCount(), 6);
+            CHECK(near(solidVolume(m), 1.0));
+        }
+        {
+            // Not filled: a shell, with an inner surface too.
+            Mesh m;
+            cube(m);
+            VoxelateParams p;
+            p.size = 0.25;
+            p.fill = false;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK_EQ(m.aliveFaceCount(), 6 * 16 + 6 * 4);
+            CHECK(near(solidVolume(m), 1.0 - 0.125, 1e-6));
+        }
+        {
+            // A size that does not fit rounds up to whole cubes that cover it.
+            Mesh m;
+            cube(m);
+            VoxelateParams p;
+            p.size = 0.3;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK(near(solidVolume(m), 1.2 * 1.2 * 1.2, 1e-6));
+        }
+        {
+            // A flat face is one layer thick, and open shapes do not fill.
+            Mesh m;
+            m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+            VoxelateParams p;
+            p.size = 0.25;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK(near(solidVolume(m), 0.25, 1e-6));
+            Vec3 mn, mx;
+            bool any = false;
+            m.bounds(mn, mx, any);
+            CHECK(near(mx.z - mn.z, 0.25));
+        }
+        {
+            // A slanted surface becomes stairs of cubes.
+            Mesh m;
+            m.drawPolyline({{0, 0, 0}, {4, 0, 2}, {4, 4, 2}, {0, 4, 0}}, true);
+            VoxelateParams p;
+            p.size = 0.5;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            CHECK(m.aliveFaceCount() > 40);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) // on the grid, along the axes
+                if (m.faces[f].alive) CHECK(near(std::fabs(m.faces[f].normal.x) + std::fabs(m.faces[f].normal.y) + std::fabs(m.faces[f].normal.z), 1));
+        }
+        {
+            // Materials stay; each side takes the source facing its way.
+            Mesh m;
+            cube(m);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) m.faces[f].front.material = m.faces[f].normal.z > 0.5 ? 3 : 1;
+            VoxelateParams p;
+            p.size = 0.25;
+            CHECK(effectVoxelate(m, allFaces(m), p));
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) CHECK_EQ(m.faces[f].front.material, m.faces[f].normal.z > 0.5 ? 3 : 1);
+        }
+        {
+            // Asking too much makes bigger cubes, and says so; bad input changes nothing.
+            Mesh m;
+            cube(m, 100);
+            EffectResult r;
+            VoxelateParams p;
+            p.size = 0.01;
+            CHECK(effectVoxelate(m, allFaces(m), p, &r));
+            CHECK(r.limited);
+            CHECK(m.aliveFaceCount() <= kEffectTriangleLimit);
+            Mesh same;
+            cube(same);
+            p.size = 0;
+            std::string err;
+            CHECK(!effectVoxelate(same, allFaces(same), p, nullptr, &err) && !err.empty());
+            CHECK_EQ(same.aliveFaceCount(), 6);
+            p.size = 0.1;
+            CHECK(!effectVoxelate(same, {}, p, nullptr, &err));
+        }
+        {
+            // Only what is selected changes.
+            Mesh m;
+            cube(m);
+            m.drawPolyline({{5, 0, 0}, {6, 0, 0}, {6, 1, 0}, {5, 1, 0}}, true);
+            std::set<Id> box;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && m.faceInteriorPoint(f).x < 2) box.insert(f);
+            VoxelateParams p;
+            p.size = 0.5;
+            CHECK(effectVoxelate(m, box, p));
+            CHECK_EQ(m.aliveFaceCount(), 6 * 4 + 1);
+        }
+    });
+
+    test("primitives: closed, outward, on the ground", [&] {
+        auto softCount = [](const Mesh& m) {
+            int n = 0;
+            for (const Edge& e : m.edges) n += e.alive && e.soft;
+            return n;
+        };
+        auto check = [&](PrimitiveParams p, int verts, int edges, int faces, double volume, double volTol) {
+            Mesh m;
+            std::string err;
+            CHECK(buildPrimitive(p, m, &err));
+            if (!err.empty()) std::printf("  %s: %s\n", primitiveName(p.kind), err.c_str());
+            CHECK_EQ(m.aliveVertexCount(), verts);
+            CHECK_EQ(m.aliveEdgeCount(), edges);
+            CHECK_EQ(m.aliveFaceCount(), faces);
+            std::string why;
+            const bool solid = isSolid(m, &why);
+            CHECK(solid);
+            if (!solid) std::printf("  %s: %s\n", primitiveName(p.kind), why.c_str());
+            // Positive volume means the faces point outwards.
+            const double v = solidVolume(m);
+            CHECK(std::fabs(v - volume) <= volume * volTol);
+            if (std::fabs(v - volume) > volume * volTol) std::printf("  %s volume %g, expected %g\n", primitiveName(p.kind), v, volume);
+            Vec3 mn, mx;
+            bool any = false;
+            m.bounds(mn, mx, any);
+            CHECK(std::fabs(mn.z) < 1e-9);
+            CHECK(std::fabs(mn.x + mx.x) < 1e-6 && std::fabs(mn.y + mx.y) < 1e-6);
+            return m;
+        };
+        const double r = 1;
+        PrimitiveParams p;
+        p.radius = r;
+        p.kind = PrimitiveKind::Tetrahedron;
+        check(p, 4, 6, 4, 8 * std::sqrt(3.0) / 27, 1e-6);
+        p.kind = PrimitiveKind::Octahedron;
+        check(p, 6, 12, 8, 4.0 / 3, 1e-6);
+        p.kind = PrimitiveKind::Dodecahedron;
+        {
+            Mesh m = check(p, 20, 30, 12, 2.785163863, 1e-6);
+            int pentagons = 0;
+            for (const Face& f : m.faces) pentagons += f.alive && f.outer.size() == 5;
+            CHECK_EQ(pentagons, 12);
+            CHECK_EQ(softCount(m), 0);
+            // It rests on a face: five vertices on the ground.
+            int low = 0;
+            for (const Vertex& v : m.vertices) low += std::fabs(v.p.z) < 1e-9;
+            CHECK_EQ(low, 5);
+        }
+        p.kind = PrimitiveKind::Icosahedron;
+        check(p, 12, 30, 20, 2.536150994, 1e-6);
+        p.kind = PrimitiveKind::Box;
+        p.width = 2; p.depth = 3; p.height = 4;
+        check(p, 8, 12, 6, 24, 1e-9);
+        p.kind = PrimitiveKind::Sphere;
+        p.segments = 24; p.rings = 12;
+        {
+            Mesh m = check(p, 24 * 11 + 2, 24 * 11 + 24 * 12, 24 * 12, 4.0 / 3 * kPi, 0.05);
+            CHECK_EQ(softCount(m), m.aliveEdgeCount());
+            CHECK(std::fabs(m.vertices[0].p.z) < 2 * r + 1e-9);
+        }
+        p.kind = PrimitiveKind::GeoSphere;
+        p.frequency = 3;
+        check(p, 10 * 9 + 2, 30 * 9, 20 * 9, 4.0 / 3 * kPi, 0.08);
+        p.kind = PrimitiveKind::Cylinder;
+        p.height = 2; p.segments = 16;
+        {
+            Mesh m = check(p, 32, 48, 18, kPi * 2, 0.03);
+            CHECK_EQ(softCount(m), 16); // the vertical edges; the rims stay hard
+            std::set<Id> curves;
+            for (const Edge& e : m.edges)
+                if (e.curve != kNone) curves.insert(e.curve);
+            CHECK_EQ((int)curves.size(), 2);
+        }
+        p.kind = PrimitiveKind::Cone;
+        p.radius2 = 0;
+        check(p, 17, 32, 17, kPi * 2 / 3, 0.03);
+        p.radius2 = 0.5; // frustum
+        check(p, 32, 48, 18, kPi * 2 / 3 * (1 + 0.5 + 0.25), 0.03);
+        p.kind = PrimitiveKind::Torus;
+        p.radius = 2; p.radius2 = 0.5; p.segments = 32; p.rings = 16;
+        check(p, 32 * 16, 2 * 32 * 16, 32 * 16, 2 * kPi * kPi * 2 * 0.25, 0.05);
+
+        Mesh bad;
+        std::string err;
+        p.radius2 = 3; // tube wider than the ring
+        CHECK(!buildPrimitive(p, bad, &err) && !err.empty());
+        p.kind = PrimitiveKind::Sphere;
+        p.radius = 0;
+        CHECK(!buildPrimitive(p, bad, &err));
+        p.radius = 1; p.smooth = false;
+        Mesh hard;
+        CHECK(buildPrimitive(p, hard));
+        CHECK_EQ(softCount(hard), 0);
     });
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);

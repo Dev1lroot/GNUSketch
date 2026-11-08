@@ -45,6 +45,24 @@ tools/headless-selftest.sh        # drives the real UI with synthetic input on X
 If the window does not open, run `./build/gnusketch --gl-probe` from a terminal and
 include its output in the bug report.
 
+## Plugins
+
+File formats can come as plugins: shared libraries GNUSketch loads at start from
+`GNUSKETCH_PLUGIN_PATH`, `~/.local/share/GNUSketch/GNUSketch/plugins`,
+`<prefix>/lib/gnusketch/plugins` and `plugins/` beside the executable (Help > Plugins
+lists what was found). A plugin adds File > Open / Import / Export entries for its
+format, and may add a tab of its own to a component's Properties. See
+`src/plugin/FormatPlugin.h`.
+
+**Open Block Model** (`plugins/obm`, GNUBlocks' `.obm`): groups become components,
+cubes become textured boxes, pictures come from the game's `textures` folder (beside
+the model's `models` folder, or `GNUSKETCH_OBM_TEXTURES`). A picture that isn't
+found is asked about ("Missing texture", Fix it: pick the file); picked from inside
+a textures folder, that folder is remembered for the rest. Properties > OBM shows
+and edits the group's, its cubes' and the model's tags. Exported, every box (and
+lone rectangle) is a cube again; what wasn't changed is written back exactly as it
+was read, tags, props and animations included.
+
 ## Geometry model
 
 * **Edges are first-class; faces are planar n-gons** with an outer loop and any
@@ -70,6 +88,12 @@ include its output in the bug report.
   lathed shapes. Select the path and click the profile, or click the profile and
   then a path edge (Alt: a face's outline). Curved paths and profiles come out
   smooth-shaded.
+* **Primitives** (Draw → Primitive…) builds a box, sphere, geodesic sphere,
+  cylinder, cone/frustum, torus or a Platonic solid (tetrahedron, octahedron,
+  dodecahedron, icosahedron) as a closed component of n-gons (the dodecahedron
+  keeps its pentagons) that follows the cursor until a click places it. Sizes are
+  in the model's units; curved surfaces get soft, smooth-shaded edges. Explode it to
+  merge it with loose geometry.
 * **Round Corners** (Tools menu, tool set, right-click) rounds the selected edges
   with a radius in mm and a number of segments, with a live preview. Edges between
   two faces get a rounded strip with mitred or spherical corners; corners of
@@ -95,6 +119,10 @@ include its output in the bug report.
     farthest distance, plus bump size, roughness and pattern.
   * **Soften > Blur**: softens edges and corners, by a distance in meters, optionally
     keeping the volume.
+  * **Polygons > Voxelate**: rebuilds the geometry out of cubes of a chosen size, on a
+    world-aligned grid, as one closed mesh. A shape that fits the grid keeps its exact
+    size; *Solid inside* fills closed shapes; *Merge flat sides* removes the grid lines.
+    It replaces the surface, so it does not stay joined to unselected faces around it.
   * **Polygons**: **Decimate** (a percentage, or polygons per m²), **Subdivide**
     (edges per meter), **Quads / Hexagons / Triangles** (rebuild as a regular pattern,
     in cells per meter), **Triangulate** and **Merge Flat Faces**. Pattern cells are
@@ -122,6 +150,85 @@ include its output in the bug report.
   **Make Unique** gives the selected copies their own definition, and **Explode**
   turns a component back into loose geometry. Exporters write components as
   ordinary geometry.
+* **Components inside components**: select components (with or without geometry) and
+  Make Component, or open a component and paste, drop a prefab or make a component in it.
+  Double-click goes in a level at a time, Esc comes out one. A click on a closed component
+  takes it whole. A state (F5) also remembers where the components inside are, so a handle
+  goes with its door. Scripted components stay alive wherever they are nested: a door
+  with a handle, inside a frame, saved together, is one prefab that still opens. A
+  component cannot go inside itself.
+* **Hierarchy** (Window → Hierarchy, a panel on the left): everything in the model as a
+  tree, with search: loose geometry, groups and components with what is inside them,
+  lights and cameras. Click a row to select it (a row inside a group opens the way to it);
+  the tick shows or hides it; F2 renames; Delete erases; **Group** puts the selected things
+  in a new group, **Ungroup** takes one apart; double-click opens a component or looks
+  through a camera. It stays in step with what you select in the model.
+* **Physics**: in a component's **Properties**, tick *Falls and slides in Game Mode* and set
+  its **mass**, friction and bounce. In Game Mode it falls, slides down slopes, tumbles and
+  lands on other things, and the character pushes it by walking into it: a person's shove
+  moves a light crate, not a five-ton block. It works on plain components and on doors or
+  buttons alike, which then keep their scripts as they fall. Only vertices against
+  triangles collide (edge against edge does not), good for crates and blocks, less so for
+  long thin bars crossing.
+* **Prefabs**: right-click a component (or selected geometry) and choose **Save as
+  Prefab**. It becomes its own `.gsketch` file in `~/.local/share/GNUSketch/prefabs`
+  (with its materials and a picture). **Window → Prefab Browser** lists them with
+  search: **drag one into the model**, where it lands with its base on the surface
+  under the cursor, or double-click it to carry it on the mouse. Everything placed
+  from one prefab shares one definition, as copies of a component do. A prefab holds
+  the component's own geometry, without the scale or rotation of the copy it was saved
+  from. Right-click **Open to Edit** opens the file like any model; any model saved
+  into the folder also works as a prefab.
+* **Lights and cameras in the world** (Draw → Lights, Camera → Place Camera, Window →
+  Scene): click a surface to put a **point light** above it (type a value for the
+  height), click twice to place and aim a **spot** or **directional light** or a
+  **camera**. Camera → **Add Camera From View** keeps the current view. Their markers
+  select, move, rotate, copy and erase like geometry; the Scene panel sets colour,
+  brightness, range, cone angle and field of view. Double-click a camera to look
+  through it. Lights shine on every material, in Game Mode too, and are exported to
+  glTF with the cameras. Only the sun casts shadows; these lights do not, yet.
+* **Animation and game logic**, in the manner of Valve Hammer. Right-click a component →
+  **Properties**: choose the class **func_door**, **func_button** or **func_actor**.
+  Double-click the component to open it, press **F5** to save its geometry as a named
+  state (CLOSED, say), move or rotate the geometry, press **F5** again (OPEN). The whole
+  geometry inside is recorded, so a frame can stay while a panel swings; separate pieces
+  move on their own, along true arcs. Properties also lists the states (Go To, Rename,
+  Delete) and picks the one it starts in.
+
+  **Names are namespaced by the group or component around them.** A target means the
+  nearest of that name: in the same group first, then further out, then the whole model.
+  So a room holding a button and a door can be copied freely, and each button opens its
+  own door. From outside, `door` means every door of that name; give the groups a Name
+  and `front/door` picks the one inside the group called front.
+
+  To link them as in Hammer, give the door a **Name** and list that name in the button's
+  **Targets** tab. A button can have any number of targets, each with its own **delay**
+  in seconds; the **Sources** tab shows who fires an entity, and adds or removes them from
+  that side. A door nothing targets opens by touch or **E**; a door a button targets
+  opens by that button only. In Game Mode, **E** or a click presses what you look at.
+
+  Behaviour is a JavaScript script you can read and change, starting from a preset
+  (Save as Preset keeps yours in `~/.local/share/GNUSketch/scripts`):
+
+  ```js
+  var closed = self.states[0], open = self.states[1];
+  on("trigger", function () {
+      self.tween(open, { duration: 1, easing: "outBounce" }, function () {
+          after(3, function () { self.tween(closed, 1); });
+      });
+  });
+  ```
+
+  `self.tween(state, seconds or {duration, easing, from}, done)`,
+  `self.play([states], {duration, easing, loop}, done)` for keyframes,
+  `self.set(state)`, `self.stop()`, `self.fire(arg)` (all targets, each after its delay),
+  `self.send(event, arg)`;
+  `self.name .classname .targets .target .states .state .moving .linked`; `on("start" | "use" |
+  "touch" | "trigger" | "tick", fn)`; `after(s, fn)`, `every(s, fn)`, `cancel(id)`,
+  `find(name)`, `log(...)`, `game.time`. Easings: linear, inQuad, outQuad, inOutQuad,
+  inCubic, outCubic, inOutCubic, outBack, outBounce, outElastic. Scripts cannot reach
+  files or the network, and one stuck in an endless loop is interrupted after 2 seconds.
+  Errors show in the corner of the game window. Doors collide where they are.
 * **Solid Tools** (Tools → Solid Tools, Solid Tools toolbar, right-click a
   component): boolean operations on closed components ("solids"). Click the
   first solid, then the second:
@@ -249,6 +356,47 @@ material. Right-click → Texture → Fit to Face / Reset Position
 re-maps selected faces. The Materials panel also ships generated textures (brick,
 wood, tiles, grass, concrete, gravel, water, stone) and a colour palette.
 
+## PBR materials and custom shaders
+
+The **Materials** panel starts on **Architectural**: glass (clear, frosted, tinted),
+brick, concrete, plaster, oak, marble, tile, stone, asphalt, slate, corrugated metal
+and steel, all with generated maps, shown as globes. Choosing a material only makes it
+current; the active tool stays (the Paint button takes the Paint Bucket). **Create
+Material** starts a new one and opens the **Edit** tab, right in the sidebar; its
+Window button (or Window → Material Editor) opens a larger editor. A material becomes
+physically based as soon as you change anything here:
+
+* **Maps:** Base Color, Normal, Metallic, Roughness, Ambient Occlusion, Height, Emission
+  and Opacity, each with its own **strength** slider. Without an image, Metallic and
+  Roughness are plain values. **Add Maps** (or dropping files on the editor)
+  takes a whole set at once and sorts it by file name (`oak_Normal.png`,
+  `oak_Roughness.jpg`, ...); dropping on a row sets that map. Tick *DirectX style* for
+  normal maps whose green channel points down.
+* **Custom shaders**, like Unity's surface shaders: the Shader tab holds GLSL with a
+  `surface` function that sets albedo, metallic, roughness, normal, emission, ao and
+  alpha; lighting and shadows stay automatic. An ordinary `uniform` becomes a slider or
+  colour in the editor:
+
+  ```glsl
+  uniform float _Speed; // range(0, 10) default(1)
+  uniform vec3 _Tint;   // color default(1, 0.5, 0.2)
+  void surface(inout Surface s) {
+      s.albedo = texture(_BaseMap, s.uv).rgb * _Tint;
+      s.emission = _Tint * (0.5 + 0.5 * sin(_Time * _Speed));
+  }
+  ```
+
+  Compile errors show their line number and leave the material unchanged. Only surface
+  code is customisable, not the vertex stage. glTF and OBJ carry the maps and values,
+  but other programs cannot run the shader code.
+
+PBR shading shows in the *Shaded With Textures* style. **Window → Material Browser**
+is a large window with search and adjustable picture size for the model's materials,
+ready-made PBR materials, your library, generated and folder textures and colours:
+click to paint with one, **drag one onto a face**. Save to Library (right-click) keeps a
+material in `~/.local/share/GNUSketch/materials`; images in
+`~/.local/share/GNUSketch/textures` or an added folder are listed as textures.
+
 **Images as planes:** drop an image file from the desktop or Dolphin onto **empty
 space** and it becomes a flat rectangle showing the image, at 1 pixel = 1 mm. It lies
 on the axis plane that faces the camera most: the ground in a top view, a vertical
@@ -297,13 +445,13 @@ the image is traced, so on a tiled texture fit the image to the face first.
 
 * **`.gsketch` (native)** is plain, documented JSON (see `src/io/NativeFormat.h`). It
   stores vertices, edges (soft/smooth/hidden/curve flags), n-gon faces with holes,
-  per-side materials and planar UV mappings, guides, camera and style. Textures are
-  embedded as their original PNG/JPEG bytes (base64).
+  per-side materials (with PBR maps and shader code) and planar UV mappings, guides,
+  lights and cameras, view camera and style. Textures are embedded as their original PNG/JPEG bytes (base64).
 * **OBJ + MTL** (export/import) keeps n-gon faces; only faces with holes are
   triangulated, because OBJ cannot express holes. Loose edges are written as `l`.
   Y-up on disk.
 * **glTF 2.0** (export) produces a single self-contained `.gltf`, Y-up, with PBR
-  materials and textures.
+  materials, their maps and textures, lights (`KHR_lights_punctual`) and cameras.
 * **STL** (export) is binary, in millimetres.
 
 **To get FBX:** export OBJ or glTF, then convert with Blender (File → Import, then

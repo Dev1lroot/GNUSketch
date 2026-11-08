@@ -10,10 +10,18 @@ endif()
 
 option(GNUSKETCH_BUILD_TESTS "Build kernel unit tests" ON)
 
+include(GNUInstallDirs)
+# The kernel and the file code are shared libraries: plugins (plugins/, see
+# src/plugin/FormatPlugin.h) use them too, and there must be one of each in the
+# program (one mesh revision counter, one texture revision counter).
+set(CMAKE_INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+set(GNUSKETCH_PLUGIN_BUILD_DIR ${CMAKE_BINARY_DIR}/plugins)
+set(GNUSKETCH_PLUGIN_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/gnusketch/plugins)
+
 # ---- geometry kernel (no Qt dependency) -------------------------------------
-add_library(gs_core STATIC
+add_library(gs_core SHARED
   src/core/Math.h
-  src/core/Material.h
+  src/core/Material.h src/core/Material.cpp
   src/core/Triangulate.h src/core/Triangulate.cpp
   src/core/Mesh.h src/core/Mesh.cpp
   src/core/RoundCorners.h src/core/RoundCorners.cpp
@@ -22,33 +30,40 @@ add_library(gs_core STATIC
   src/core/Units.h src/core/Units.cpp
   src/core/Document.h src/core/Document.cpp
   src/core/Components.h src/core/Components.cpp
+  src/core/Animation.h src/core/Animation.cpp
+  src/core/Physics.h src/core/Physics.cpp
   src/core/Terrain.h src/core/Terrain.cpp
   src/core/Solids.h src/core/Solids.cpp
   src/core/Effects.h src/core/Effects.cpp
   src/core/Walker.h src/core/Walker.cpp
   src/core/TextureMapping.h src/core/TextureMapping.cpp
+  src/core/Primitives.h src/core/Primitives.cpp
 )
 target_include_directories(gs_core PUBLIC src)
 target_compile_options(gs_core PRIVATE -Wall -Wextra)
 
 # ---- application --------------------------------------------------------------
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Svg)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Svg Qml)
 set(CMAKE_AUTOMOC ON)
 
-add_library(gs_io STATIC
+add_library(gs_io SHARED
   src/io/NativeFormat.h src/io/NativeFormat.cpp
   src/io/ObjIO.h src/io/ObjIO.cpp
   src/io/GltfExport.h src/io/GltfExport.cpp
   src/io/StlExport.h src/io/StlExport.cpp
   src/io/ImageUtil.h src/io/ImageUtil.cpp
+  src/io/AssetLibrary.h src/io/AssetLibrary.cpp
+  src/io/ArchMaterials.h src/io/ArchMaterials.cpp
+  src/io/EntityScript.h src/io/EntityScript.cpp
 )
-target_link_libraries(gs_io PUBLIC gs_core Qt6::Core Qt6::Gui)
+target_link_libraries(gs_io PUBLIC gs_core Qt6::Core Qt6::Gui Qt6::Qml)
 target_compile_options(gs_io PRIVATE -Wall -Wextra)
 
 add_executable(gnusketch
   src/main.cpp
   src/render/Camera.h src/render/Camera.cpp
   src/render/Renderer.h src/render/Renderer.cpp
+  src/render/OffscreenRenderer.h src/render/OffscreenRenderer.cpp
   src/app/Inference.h src/app/Inference.cpp
   src/app/Tool.h src/app/Tool.cpp
   src/app/DrawTools.h src/app/DrawTools.cpp
@@ -59,17 +74,29 @@ add_executable(gnusketch
   src/app/BendTool.h src/app/BendTool.cpp
   src/app/TextureTool.h src/app/TextureTool.cpp
   src/app/EffectsUi.h src/app/EffectsUi.cpp
+  src/app/SceneTools.h src/app/SceneTools.cpp
+  src/app/Hierarchy.h src/app/Hierarchy.cpp
+  src/app/EntityProperties.h src/app/EntityProperties.cpp
+  src/app/MaterialEditor.h src/app/MaterialEditor.cpp
+  src/app/Browsers.h src/app/Browsers.cpp
   src/app/CameraTools.h src/app/CameraTools.cpp
   src/app/Viewport.h src/app/Viewport.cpp
   src/app/Icons.h src/app/Icons.cpp
   src/app/Panels.h src/app/Panels.cpp
   src/app/MainWindow.h src/app/MainWindow.cpp
+  src/app/Plugins.h src/app/Plugins.cpp
+  src/plugin/FormatPlugin.h
   src/app/SelfTest.h src/app/SelfTest.cpp
 )
 target_link_libraries(gnusketch PRIVATE gs_io Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Svg)
 target_compile_options(gnusketch PRIVATE -Wall -Wextra)
 
 install(TARGETS gnusketch RUNTIME DESTINATION bin)
+install(TARGETS gs_core gs_io LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES src/plugin/FormatPlugin.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gnusketch/plugin)
+
+# ---- plugins ----------------------------------------------------------------------
+add_subdirectory(plugins/obm)
 install(FILES packaging/gnusketch.desktop DESTINATION share/applications)
 
 if(GNUSKETCH_BUILD_TESTS)
@@ -81,4 +108,8 @@ if(GNUSKETCH_BUILD_TESTS)
   add_executable(gs_io_tests tests/test_io.cpp)
   target_link_libraries(gs_io_tests PRIVATE gs_io)
   add_test(NAME io COMMAND gs_io_tests)
+
+  add_executable(gs_obm_tests tests/test_obm.cpp)
+  target_link_libraries(gs_obm_tests PRIVATE gs_obm_format gs_io)
+  add_test(NAME obm COMMAND gs_obm_tests)
 endif()

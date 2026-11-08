@@ -60,6 +60,23 @@ bool exportObj(const Document& doc, const QString& path, const ObjExportOptions&
                 tf.write(reinterpret_cast<const char*>(mat.texture.data->data()), (qint64)mat.texture.data->size());
             ms << "map_Kd " << tex << "\n";
         }
+        if (mat.advanced()) {
+            // The PBR extension of the MTL format, read by Blender among others.
+            ms << "Pm " << num(mat.maps[MapMetallic].strength) << "\n";
+            ms << "Pr " << num(mat.maps[MapRoughness].strength) << "\n";
+            ms << "Ke " << num(mat.emission.r * mat.maps[MapEmission].strength) << " "
+               << num(mat.emission.g * mat.maps[MapEmission].strength) << " " << num(mat.emission.b * mat.maps[MapEmission].strength) << "\n";
+            static const std::pair<MapSlot, const char*> kKeys[] = {{MapNormal, "norm"}, {MapMetallic, "map_Pm"}, {MapRoughness, "map_Pr"},
+                                                                    {MapHeight, "disp"}, {MapEmission, "map_Ke"}, {MapOpacity, "map_d"}};
+            for (const auto& [slot, key] : kKeys) {
+                if (!mat.hasMap(slot) || !opt.exportTextures) continue;
+                const Texture& t = mat.maps[slot].tex;
+                QString tex = base + "_" + n + "_" + QString::fromLatin1(mapSlotKey(slot)) + "." + QString::fromStdString(t.fileExtension());
+                QFile tf(dir + "/" + tex);
+                if (tf.open(QIODevice::WriteOnly)) tf.write(reinterpret_cast<const char*>(t.data->data()), (qint64)t.data->size());
+                ms << key << " " << tex << "\n";
+            }
+        }
         ms << "\n";
     }
 

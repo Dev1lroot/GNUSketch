@@ -24,6 +24,9 @@ class QTemporaryDir;
 
 namespace gs {
 
+class FormatPlugin;
+struct PrimitiveParams;
+
 class Viewport;
 class EntityInfoPanel;
 class MaterialsPanel;
@@ -31,6 +34,12 @@ class StylesPanel;
 class InstructorPanel;
 class TerrainPanel;
 class SunPanel;
+class ScenePanel;
+class EntityProperties;
+class HierarchyPanel;
+class MaterialEditor;
+class MaterialBrowser;
+class PrefabBrowser;
 struct EffectDef;
 class TraySection;
 
@@ -40,6 +49,19 @@ public:
     MainWindow();
     ~MainWindow() override;
     bool openFile(const QString& path);
+    // Writes a prefab file of the instance's component; returns its path, or
+    // empty with a message in the status bar.
+    QString savePrefabOf(Id instance, const QString& name);
+    // Attaches a prefab to the cursor; the next click places it.
+    bool startPrefabPlacement(const QString& path);
+    // Builds a primitive as a new component and attaches it to the cursor.
+    bool startPrimitivePlacement(const PrimitiveParams& params);
+    // Records the open component's geometry as a state. False if none is open.
+    bool recordState(const QString& name);
+    EntityProperties* entityProperties();
+    MaterialBrowser* materialBrowser();
+    PrefabBrowser* prefabBrowser();
+    MaterialEditor* materialEditor();
 
 protected:
     void closeEvent(QCloseEvent* e) override;
@@ -68,6 +90,11 @@ private:
     void exportObj();
     void exportGltf();
     void exportStl();
+    // file format plugins (Plugins.h): File > Import / Export entries, Help > Plugins
+    bool importWithPlugin(FormatPlugin* f, const QString& path, bool intoEmpty);
+    void importPlugin(FormatPlugin* f);
+    void exportPlugin(FormatPlugin* f);
+    void showPlugins();
 
     void copySelection(bool cut);
     void paste();
@@ -81,7 +108,15 @@ private:
     void deleteGuides();
     void modelInfo();
     void roundCorners();
+    void insertPrimitive();
+    // The new instance (inside an open operation) follows the cursor until a
+    // click places it; commits or cancels the operation.
+    bool attachToCursor(Id inst);
     void makeComponent();
+    void saveAsPrefab();
+    void promptRecordState();
+    void showEntityProperties();
+    void addCameraFromView();
     void makeUnique();
     void explode();
     void editComponent();
@@ -102,6 +137,13 @@ private:
     InstructorPanel* instructor_ = nullptr;
     TerrainPanel* terrain_ = nullptr;
     SunPanel* sun_ = nullptr;
+    ScenePanel* scene_ = nullptr;
+    EntityProperties* entityProps_ = nullptr;
+    HierarchyPanel* hierarchy_ = nullptr;
+    QDockWidget* hierarchyDock_ = nullptr;
+    MaterialEditor* materialEditor_ = nullptr;
+    MaterialBrowser* materialBrowser_ = nullptr;
+    PrefabBrowser* prefabBrowser_ = nullptr;
     const EffectDef* lastEffect_ = nullptr;
     QProcess* game_ = nullptr;
     std::unique_ptr<QTemporaryDir> gameDir_;
@@ -118,7 +160,7 @@ private:
     QAction *perspectiveAct_ = nullptr, *parallelAct_ = nullptr;
     QAction *xrayAct_ = nullptr, *backEdgesAct_ = nullptr, *axesAct_ = nullptr, *guidesAct_ = nullptr,
             *hiddenAct_ = nullptr, *edgesAct_ = nullptr, *profilesAct_ = nullptr, *shadowsAct_ = nullptr, *aoAct_ = nullptr,
-            *antialiasAct_ = nullptr, *sunAct_ = nullptr, *cullAct_ = nullptr;
+            *antialiasAct_ = nullptr, *sunAct_ = nullptr, *cullAct_ = nullptr, *objectsAct_ = nullptr;
     std::map<int, QAction*> faceStyleActs_;
     std::map<QString, QAction*> acts_;
 

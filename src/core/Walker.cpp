@@ -102,6 +102,7 @@ double segmentTriangle(const Vec3& p, const Vec3& q, const CollisionWorld::Tri& 
 } // namespace
 
 void CollisionWorld::clear() {
+    bodies_.clear();
     tris_.clear();
     cells_.clear();
     stamp_.clear();
@@ -157,37 +158,108 @@ void CollisionWorld::build() {
     }
 }
 
+namespace {
+// Triangle corners of the visible faces of a mesh, in order.
+void meshCorners(const Mesh& m, const Mat4* xf, std::vector<Vec3>& out) {
+    for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+        const Face& F = m.faces[f];
+        if (!F.alive || F.hidden) continue;
+        Vec3 u, v;
+        planeBasis(F.normal, u, v);
+        std::vector<std::vector<Vec2>> loops;
+        std::vector<Vec3> pts;
+        auto add = [&](const std::vector<Id>& L) {
+            loops.emplace_back();
+            for (Id id : L) {
+                const Vec3& p = m.pos(id);
+                loops.back().emplace_back(p.dot(u), p.dot(v));
+                pts.push_back(xf ? xf->transformPoint(p) : p);
+            }
+        };
+        add(F.outer);
+        for (const auto& h : F.holes) add(h);
+        for (const auto& t : triangulatePolygon(loops))
+            for (int k : t) out.push_back(pts[k]);
+    }
+}
+} // namespace
+
+int CollisionWorld::addBody(const Mesh& m, const Mat4& xf) {
+    bodies_.emplace_back();
+    setBodyMesh((int)bodies_.size() - 1, m, xf);
+    return (int)bodies_.size() - 1;
+}
+
+void CollisionWorld::setBodyMesh(int body, const Mesh& m, const Mat4& xf) {
+    std::vector<Vec3> c;
+    meshCorners(m, nullptr, c);
+    Body& b = bodies_[body];
+    b.local.clear();
+    for (size_t i = 0; i + 2 < c.size(); i += 3) {
+        const Vec3 n = (c[i + 1] - c[i]).cross(c[i + 2] - c[i]);
+        if (n.length2() < 1e-18) continue;
+        b.local.push_back({c[i], c[i + 1], c[i + 2], n.normalized()});
+    }
+    setBodyTransform(body, xf);
+}
+
+void CollisionWorld::setBodyTransform(int body, const Mat4& xf) {
+    Body& b = bodies_[body];
+    b.world.resize(b.local.size());
+    b.mn = Vec3(1e300, 1e300, 1e300);
+    b.mx = Vec3(-1e300, -1e300, -1e300);
+    for (size_t i = 0; i < b.local.size(); ++i) {
+        Tri& w = b.world[i];
+        w.a = xf.transformPoint(b.local[i].a);
+        w.b = xf.transformPoint(b.local[i].b);
+        w.c = xf.transformPoint(b.local[i].c);
+        const Vec3 n = (w.b - w.a).cross(w.c - w.a);
+        w.n = n.length2() > 1e-18 ? n.normalized() : Vec3(0, 0, 1);
+        for (const Vec3* p : {&w.a, &w.b, &w.c})
+            for (int k = 0; k < 3; ++k) {
+                b.mn[k] = std::min(b.mn[k], (*p)[k]);
+                b.mx[k] = std::max(b.mx[k], (*p)[k]);
+            }
+    }
+}
+
+bool CollisionWorld::raycast(const Vec3& origin, const Vec3& dir, double maxDist, double& tOut, int& bodyOut) const {
+    bool any = false;
+    double best = maxDist;
+    auto test = [&](const Tri& T, int body) {
+        const Vec3 e1 = T.b - T.a, e2 = T.c - T.a, h = dir.cross(e2);
+        const double det = e1.dot(h);
+        if (std::fabs(det) < 1e-14) return;
+        const Vec3 s = origin - T.a;
+        const double u = s.dot(h) / det;
+        if (u < 0 || u > 1) return;
+        const Vec3 q = s.cross(e1);
+        const double v = dir.dot(q) / det;
+        if (v < 0 || u + v > 1) return;
+        const double t = e2.dot(q) / det;
+        if (t > 1e-6 && t < best) {
+            best = t;
+            bodyOut = body;
+            any = true;
+        }
+    };
+    for (const Tri& T : tris_) test(T, -1);
+    for (int b = 0; b < (int)bodies_.size(); ++b)
+        for (const Tri& T : bodies_[b].world) test(T, b);
+    if (any) tOut = best;
+    return any;
+}
+
 void CollisionWorld::buildFromModel(const ModelState& st) {
     clear();
     auto addMesh = [&](const Mesh& m, const Mat4* xf) {
-        for (Id f = 0; f < (Id)m.faces.size(); ++f) {
-            const Face& F = m.faces[f];
-            if (!F.alive || F.hidden) continue;
-            Vec3 u, v;
-            planeBasis(F.normal, u, v);
-            std::vector<std::vector<Vec2>> loops;
-            std::vector<Vec3> pts;
-            auto add = [&](const std::vector<Id>& L) {
-                loops.emplace_back();
-                for (Id id : L) {
-                    const Vec3& p = m.pos(id);
-                    loops.back().emplace_back(p.dot(u), p.dot(v));
-                    pts.push_back(xf ? xf->transformPoint(p) : p);
-                }
-            };
-            add(F.outer);
-            for (const auto& h : F.holes) add(h);
-            for (const auto& t : triangulatePolygon(loops)) addTriangle(pts[t[0]], pts[t[1]], pts[t[2]]);
-        }
+        std::vector<Vec3> c;
+        meshCorners(m, xf, c);
+        for (size_t i = 0; i + 2 < c.size(); i += 3) addTriangle(c[i], c[i + 1], c[i + 2]);
     };
-    addMesh(st.activeMesh(), nullptr);
-    if (st.editing != kNone) addMesh(st.mesh, nullptr);
-    for (Id i = 0; i < (Id)st.instances.size(); ++i) {
-        const Instance& I = st.instances[i];
-        if (!I.alive || I.hidden || i == st.editing || I.def < 0 || I.def >= (Id)st.defs.size()) continue;
-        const Mat4 xf = instanceWorldXf(st, i);
-        addMesh(st.defs[I.def].mesh, &xf);
-    }
+    addMesh(st.mesh, nullptr);
+    for (const PlacedInstance& p : placedInstances(st))
+        if (!st.instances[p.inst].dynamic) addMesh(st.defs[p.def].mesh, &p.xf);
     build();
 }
 
@@ -226,6 +298,19 @@ bool Walker::overlaps(const Vec3& feet) const {
         hit = segmentTriangle(a, b, T, s, t) < p_.radius - kSkin * 0.5;
     });
     return hit;
+}
+
+bool Walker::touches(int body, double margin) const {
+    const Vec3 a = feet_ + Vec3(0, 0, p_.radius), b = feet_ + Vec3(0, 0, p_.height - p_.radius);
+    const double reach = p_.radius + margin;
+    Vec3 mn, mx;
+    world_.bodyBounds(body, mn, mx);
+    if (a.x + reach < mn.x || a.x - reach > mx.x || a.y + reach < mn.y || a.y - reach > mx.y || b.z + reach < mn.z || a.z - reach > mx.z) return false;
+    for (const CollisionWorld::Tri& T : world_.bodyTriangles(body)) {
+        Vec3 s, t;
+        if (segmentTriangle(a, b, T, s, t) < reach) return true;
+    }
+    return false;
 }
 
 Walker::Contact Walker::resolve(Vec3& feet, const Vec3& from) const {

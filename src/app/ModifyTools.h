@@ -128,6 +128,7 @@ protected:
     std::set<Id> verts_;
     std::map<Id, Vec3> orig_;
     std::map<Id, Mat4> instOrig_; // selected component instances: their own transform only
+    std::map<Id, std::pair<Vec3, Vec3>> objOrig_; // selected lights and cameras: position and target
     std::vector<Id> affectedFaces_;
     Selection origSelection_;
     // Last finished copy (for array entry "3x" / "/3").

@@ -82,7 +82,7 @@ std::vector<TextureTool::Target> TextureTool::currentTargets() {
         // The side in view; if only the other one has a texture, that one.
         auto textured = [&](bool front) {
             const Material* mat = d.material((front ? F.front : F.back).material);
-            return mat && mat->hasTexture();
+            return mat && (mat->hasTexture() || mat->hasAnyMap());
         };
         bool front = facing;
         if (!textured(front)) front = !front;

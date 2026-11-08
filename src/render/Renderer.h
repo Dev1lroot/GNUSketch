@@ -5,6 +5,7 @@
 #include "Camera.h"
 #include "core/Document.h"
 
+#include <QElapsedTimer>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QString>
 
@@ -64,7 +65,17 @@ public:
     void cleanup();
     void render(const Document& doc, const Camera& cam, const Preview& preview, double dpr);
 
+    // Forgets per-document GPU data, for rendering a different document next.
+    void invalidate();
+    // Compiles a custom surface shader; false and the compiler's message (line
+    // numbers count from the top of the shader code) when it does not build.
+    bool compileSurfaceShader(const std::string& source, QString* log = nullptr);
+
+    // The last frame drew a custom shader that uses _Time: keep repainting.
+    bool animated() const { return animated_; }
+
     static Color axisColor(int axis);
+    static constexpr int kMaxLights = 16;
 
 private:
     struct Batch {
@@ -73,6 +84,7 @@ private:
         bool texFront = false, texBack = false;
         bool transparent = false;
         bool paint = false; // Texture Brush layer, blended over the faces below
+        bool advFront = false, advBack = false; // that side uses the PBR renderer
     };
     struct GpuTex {
         unsigned id = 0;
@@ -105,7 +117,15 @@ private:
     void drawOverlayFaces(const std::vector<float>& tris, const Camera& cam, const Color& c, bool stipple);
     void drawLines(const std::vector<float>& data, const Camera& cam, float width, Dash dash, double dpr);
     void pushLine(std::vector<float>& d, const Vec3& a, const Vec3& b, const Color& c);
-    unsigned textureFor(Id mat) const;
+    // slot -1 is the base colour image, otherwise a MapSlot.
+    unsigned textureFor(Id mat, int slot = -1) const;
+    QOpenGLShaderProgram* surfaceProgram(const Material& m);
+    // Draws one side of a batch with the PBR renderer.
+    void drawSurfaceSide(const Batch& b, const Material& mat, Id matId, const Camera& cam, const RenderStyle& st, const Mat4& model,
+                         float fade, float alpha);
+    void updateLights(const ModelState& ms);
+    void setLightUniforms(QOpenGLShaderProgram* p);
+    void drawObjects(const Document& doc, const Camera& cam, double dpr);
     // Sun shadow map from the given meshes (with their world transforms).
     void renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Vec3& mn, const Vec3& mx);
     void setShadowUniforms(QOpenGLShaderProgram* p);
@@ -136,7 +156,15 @@ private:
     uint64_t builtMatRevision_ = 0;
     MeshGpu top_;
     std::map<Id, MeshGpu> defs_;
-    std::map<Id, GpuTex> textures_;
+    std::map<std::pair<Id, int>, GpuTex> textures_;
+    std::map<std::string, std::unique_ptr<QOpenGLShaderProgram>> surfaceProgs_; // by source; null = does not compile
+    std::map<std::string, QString> surfaceLogs_;
+    std::map<std::string, std::vector<ShaderProp>> surfaceProps_;
+    std::unique_ptr<QOpenGLShaderProgram> pbrProg_; // the standard PBR shader
+    QElapsedTimer clock_;
+    bool animated_ = false;
+    int lightCount_ = 0;
+    float lightPos_[kMaxLights * 3] = {}, lightAim_[kMaxLights * 3] = {}, lightColor_[kMaxLights * 3] = {}, lightParam_[kMaxLights * 4] = {};
 };
 
 } // namespace gs

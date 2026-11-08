@@ -14,6 +14,10 @@ namespace {
 // All icons use a 24x24 view box. Drawn from scratch for GNUSketch.
 const char* svgFor(const QString& n) {
     static const QHash<QString, const char*> map = {
+        {"light_point", R"svg(<circle cx="12" cy="12" r="5" fill="#f7cd46" stroke="#7d5e0c" stroke-width="1"/><path d="M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 M5 5 L7 7 M17 17 L19 19 M19 5 L17 7 M7 17 L5 19" stroke="#b78a10" stroke-width="1.6" stroke-linecap="round"/>)svg"},
+        {"light_spot", R"svg(<path d="M8 2.5 L16 2.5 L14.5 8 L9.5 8 Z" fill="#556" stroke="#223" stroke-width="1"/><path d="M9.5 8 L14.5 8 L21 21.5 L3 21.5 Z" fill="#f7e08a" stroke="#b78a10" stroke-width="1" stroke-linejoin="round"/>)svg"},
+        {"light_directional", R"svg(<circle cx="5.5" cy="5.5" r="3.5" fill="#f7cd46" stroke="#7d5e0c" stroke-width="1"/><path d="M9 11 L19 21 M13 7 L21 15 M7 13 L15 21" stroke="#b78a10" stroke-width="1.5" stroke-linecap="round"/>)svg"},
+        {"camera_place", R"svg(<rect x="2.5" y="7" width="13" height="10" rx="1.5" fill="#6d7c8e" stroke="#223" stroke-width="1"/><path d="M15.5 10.5 L21.5 7.5 L21.5 16.5 L15.5 13.5 Z" fill="#b9c4d1" stroke="#223" stroke-width="1" stroke-linejoin="round"/><circle cx="6" cy="4.5" r="2.2" fill="none" stroke="#223" stroke-width="1"/><circle cx="11.5" cy="4.5" r="2.2" fill="none" stroke="#223" stroke-width="1"/>)svg"},
         {"select", R"svg(<path d="M6 2.5 L6 19 L10 15.2 L12.8 21.5 L15.6 20.3 L12.9 14.2 L18.2 14.2 Z" fill="#111" stroke="#fff" stroke-width="1.1" stroke-linejoin="round"/>)svg"},
         {"eraser", R"svg(<g transform="rotate(-38 12 12)"><rect x="3" y="8" width="18" height="8.5" rx="1.6" fill="#f08a96" stroke="#7a2a33" stroke-width="1"/><rect x="3" y="8" width="6.5" height="8.5" rx="1.4" fill="#f4f1ec" stroke="#7a2a33" stroke-width="1"/><path d="M11 9.2 L19.5 9.2" stroke="#fbd0d6" stroke-width="1.2"/></g>)svg"},
         {"paint", R"svg(<path d="M4.5 10.5 L11 4 L18.5 11.5 L12 18 Z" fill="#cfd8e3" stroke="#334" stroke-width="1"/><path d="M4.5 10.5 L11 4 L13 6 L6.5 12.5 Z" fill="#9fb2c8"/><path d="M11 4 C9 1.5 6 2 5.5 4" fill="none" stroke="#334" stroke-width="1"/><path d="M18.5 11.5 C21 14.5 21.5 17 19.8 18.4 C18.2 19.6 16.8 17.6 17.5 15.5 Z" fill="#2f7de1" stroke="#1a4f96" stroke-width=".8"/><rect x="3" y="19.5" width="10" height="2.5" rx="1" fill="#2f7de1"/>)svg"},
@@ -35,6 +39,7 @@ const char* svgFor(const QString& n) {
         {"effects", R"svg(<path d="M12 2 L14 9 L21 11 L14 13 L12 20 L10 13 L3 11 L10 9 Z" fill="#f2c230" stroke="#6b5310" stroke-width="1" stroke-linejoin="round"/><path d="M19 16 L20 19 L23 20 L20 21 L19 24 L18 21 L15 20 L18 19 Z" fill="#2f7de1"/>)svg"},
         {"fx_noise", R"svg(<path d="M2 16 L5 10 L8 14 L11 6 L14 13 L17 8 L19.5 12 L22 9" fill="none" stroke="#2f7de1" stroke-width="1.8" stroke-linejoin="round"/><path d="M2 21 L22 21" stroke="#556" stroke-width="1.2"/>)svg"},
         {"fx_blur", R"svg(<path d="M3 20 L3 11 Q3 6 8 6 L21 6 L21 20 Z" fill="#b9c4d1" stroke="#222" stroke-width="1.2"/><path d="M3 11 L3 6 L8 6" fill="none" stroke="#d6262e" stroke-width="1" stroke-dasharray="1.5 1.2"/>)svg"},
+        {"fx_voxelate", R"svg(<g stroke="#223" stroke-width="1" stroke-linejoin="round"><path d="M3 9 L9 6 L15 9 L9 12 Z" fill="#eef2f6"/><path d="M3 9 L3 16 L9 19 L9 12 Z" fill="#b9c4d1"/><path d="M15 9 L15 16 L9 19 L9 12 Z" fill="#8ea0b5"/><path d="M12 7.5 L12 3 L18 1.5 L21 4 L21 11 L15 13" fill="#dfe6ee"/></g>)svg"},
         {"fx_polygons", R"svg(<path d="M12 3 L19.5 7.5 L19.5 16.5 L12 21 L4.5 16.5 L4.5 7.5 Z" fill="#dfe6ee" stroke="#222" stroke-width="1.3"/><path d="M12 3 L12 21 M4.5 7.5 L19.5 16.5 M19.5 7.5 L4.5 16.5" stroke="#6d7c8e" stroke-width=".9"/>)svg"},
         {"mountain", R"svg(<path d="M1.5 21 L8.5 9.5 L11.5 13.5 L15.5 6 L22.5 21 Z" fill="#8fbf6a" stroke="#3d5e26" stroke-width="1" stroke-linejoin="round"/><path d="M13.2 10.3 L15.5 6 L17.6 10.4 L16.2 9.6 L15 11 L14 9.7 Z" fill="#fff"/><path d="M1.5 21 L22.5 21" stroke="#3d5e26" stroke-width="1.2"/><path d="M5 9 L5 2.5" stroke="#d6262e" stroke-width="1.8"/><path d="M2.4 5 L5 1.5 L7.6 5 Z" fill="#d6262e"/>)svg"},
         {"pit", R"svg(<path d="M1.5 12 L6 12 C8 12 8.5 20 12 20 C15.5 20 16 12 18 12 L22.5 12 L22.5 21.5 L1.5 21.5 Z" fill="#b48a5a" stroke="#5e4022" stroke-width="1" stroke-linejoin="round"/><path d="M1.5 12 L6 12 C8 12 8.5 20 12 20 C15.5 20 16 12 18 12 L22.5 12" fill="none" stroke="#3d5e26" stroke-width="1.6"/><path d="M12 2 L12 10.5" stroke="#2f7de1" stroke-width="1.8"/><path d="M9.4 8.2 L12 11.8 L14.6 8.2 Z" fill="#2f7de1"/>)svg"},
@@ -150,6 +155,10 @@ QString toolIconName(ToolId id) {
     case ToolId::PlaceCharacter: return "character";
     case ToolId::Bend: return "bend";
     case ToolId::TexturePosition: return "textureposition";
+    case ToolId::PlacePointLight: return "light_point";
+    case ToolId::PlaceSpotLight: return "light_spot";
+    case ToolId::PlaceDirectionalLight: return "light_directional";
+    case ToolId::PlaceCamera: return "camera_place";
     }
     return "select";
 }

@@ -1,0 +1,5 @@
+{
+  "name": "Open Block Model",
+  "extensions": ["obm"],
+  "description": "GNUBlocks' model format: boxes, groups, pictures from the game's textures folder"
+}

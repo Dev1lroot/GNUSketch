@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Panels.h"
 
+#include "Browsers.h"
 #include "Icons.h"
+#include "MaterialEditor.h"
 #include "TerrainTools.h"
 #include "Viewport.h"
 #include "core/Components.h"
 #include "core/Solids.h"
+#include "io/ArchMaterials.h"
 #include "io/ImageUtil.h"
 
 #include <QButtonGroup>
@@ -29,6 +32,7 @@
 #include <QSlider>
 #include <QStackedWidget>
 #include <QTextBrowser>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -276,6 +280,12 @@ void EntityInfoPanel::refresh() {
     measure_->setVisible(!s.empty());
     if (s.empty()) {
         title_->setText(doc_->editingComponent() ? QStringLiteral("Editing Component") : QStringLiteral("No Selection"));
+    } else if (!s.objects.empty() && s.faces.empty() && s.edges.empty() && s.instances.empty()) {
+        title_->setText(s.objects.size() == 1
+                            ? QString::fromLatin1(sceneObjectTypeName(doc_->state.objects[*s.objects.begin()].kind))
+                            : QStringLiteral("%1 Lights and Cameras").arg(s.objects.size()));
+        measureLabel_->setText(s.objects.size() == 1 ? QString::fromStdString(doc_->state.objects[*s.objects.begin()].name) : QString());
+        measure_->setText(QStringLiteral("See Window > Scene"));
     } else if (!s.instances.empty() && s.faces.empty() && s.edges.empty()) {
         const ModelState& st = doc_->state;
         Id def = st.instances[*s.instances.begin()].def;
@@ -355,35 +365,39 @@ MaterialsPanel::MaterialsPanel(Document* doc, Viewport* vp, QWidget* parent) : Q
     setAcceptDrops(true);
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(6, 6, 6, 6);
-    lay->setSpacing(4);
+    lay->setSpacing(6);
 
+    // The current material: its globe, its name, what to do with it.
     auto* top = new QHBoxLayout();
     preview_ = new QLabel(this);
-    preview_->setFixedSize(64, 64);
-    preview_->setFrameShape(QFrame::Box);
+    preview_->setFixedSize(76, 76);
+    preview_->setAlignment(Qt::AlignCenter);
     top->addWidget(preview_);
     auto* nameCol = new QVBoxLayout();
     name_ = new QLineEdit(this);
     name_->setPlaceholderText(QStringLiteral("Default"));
     nameCol->addWidget(name_);
-    nameCol->addStretch(1);
-    top->addLayout(nameCol, 1);
-    auto* btnCol = new QVBoxLayout();
-    auto* createBtn = new QToolButton(this);
-    createBtn->setIcon(Icons::get("new"));
-    createBtn->setToolTip(QStringLiteral("Create Material"));
-    auto* defaultBtn = new QToolButton(this);
-    defaultBtn->setIcon(Icons::get("delete"));
-    defaultBtn->setToolTip(QStringLiteral("Paint with Default material"));
+    auto* tools = new QHBoxLayout();
     auto* sampleBtn = new QToolButton(this);
     sampleBtn->setIcon(Icons::get("paint"));
-    sampleBtn->setToolTip(QStringLiteral("Paint Bucket (Alt+click in the model samples a material)"));
-    btnCol->addWidget(createBtn);
-    btnCol->addWidget(defaultBtn);
-    btnCol->addWidget(sampleBtn);
-    btnCol->addStretch(1);
-    top->addLayout(btnCol);
+    sampleBtn->setText(QStringLiteral("Paint"));
+    sampleBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    sampleBtn->setToolTip(QStringLiteral("Paint Bucket: click faces to paint them with this material (Alt+click samples one)"));
+    auto* defaultBtn = new QToolButton(this);
+    defaultBtn->setText(QStringLiteral("Default"));
+    defaultBtn->setToolTip(QStringLiteral("Choose no material: painting then restores the default look"));
+    tools->addWidget(sampleBtn);
+    tools->addWidget(defaultBtn);
+    tools->addStretch(1);
+    nameCol->addLayout(tools);
+    nameCol->addStretch(1);
+    top->addLayout(nameCol, 1);
     lay->addLayout(top);
+
+    auto* createBtn = new QPushButton(Icons::get("new"), QStringLiteral("Create Material"), this);
+    createBtn->setObjectName("CreateMaterial");
+    createBtn->setToolTip(QStringLiteral("Start a new material and edit it here"));
+    lay->addWidget(createBtn);
 
     auto* tabs = new QHBoxLayout();
     selectTab_ = new QToolButton(this);
@@ -406,43 +420,34 @@ MaterialsPanel::MaterialsPanel(Document* doc, Viewport* vp, QWidget* parent) : Q
     auto* sl = new QVBoxLayout(sel);
     sl->setContentsMargins(0, 0, 0, 0);
     library_ = new QComboBox(sel);
-    library_->addItems({QStringLiteral("In Model"), QStringLiteral("Colors"), QStringLiteral("Textures")});
-    sl->addWidget(library_);
+    library_->addItems({QStringLiteral("In Model"), QStringLiteral("Architectural"), QStringLiteral("Colors"), QStringLiteral("Textures")});
+    auto* libRow = new QHBoxLayout();
+    libRow->addWidget(library_, 1);
+    auto* browserBtn = new QPushButton(QStringLiteral("Browser…"), sel);
+    browserBtn->setToolTip(QStringLiteral("Open the large Material Browser with search"));
+    libRow->addWidget(browserBtn);
+    sl->addLayout(libRow);
     list_ = new QListWidget(sel);
     list_->setViewMode(QListView::IconMode);
-    list_->setIconSize(QSize(44, 44));
-    list_->setGridSize(QSize(50, 50));
+    list_->setIconSize(QSize(58, 58));
+    list_->setGridSize(QSize(64, 64));
     list_->setMovement(QListView::Static);
     list_->setResizeMode(QListView::Adjust);
     list_->setUniformItemSizes(true);
-    list_->setSpacing(2);
-    list_->setMinimumHeight(170);
+    list_->setSpacing(1);
+    list_->setMinimumHeight(210);
     sl->addWidget(list_);
     pages_->addWidget(sel);
-    // --- Edit page
-    auto* ed = new QWidget(pages_);
-    auto* fl = new QFormLayout(ed);
-    fl->setContentsMargins(0, 4, 0, 0);
-    colorBtn_ = new QPushButton(QStringLiteral("Color…"), ed);
-    fl->addRow(QStringLiteral("Color:"), colorBtn_);
-    opacity_ = new QSlider(Qt::Horizontal, ed);
-    opacity_->setRange(0, 100);
-    fl->addRow(QStringLiteral("Opacity:"), opacity_);
-    useTexture_ = new QCheckBox(QStringLiteral("Use texture image"), ed);
-    browse_ = new QPushButton(QStringLiteral("Browse…"), ed);
-    auto* trow = new QHBoxLayout();
-    trow->addWidget(useTexture_);
-    trow->addWidget(browse_);
-    fl->addRow(trow);
-    texW_ = new QLineEdit(ed);
-    texH_ = new QLineEdit(ed);
-    lockAspect_ = new QCheckBox(QStringLiteral("Lock aspect"), ed);
-    lockAspect_->setChecked(true);
-    fl->addRow(QStringLiteral("Tile width:"), texW_);
-    fl->addRow(QStringLiteral("Tile height:"), texH_);
-    fl->addRow(lockAspect_);
-    pages_->addWidget(ed);
+    // --- Edit page: the editor itself, right here.
+    editor_ = new MaterialEditor(doc_, vp_, MaterialEditor::InSidebar, pages_);
+    editor_->setPreviewLabel(preview_);
+    pages_->addWidget(editor_);
     lay->addWidget(pages_, 1);
+
+    globeTimer_ = new QTimer(this);
+    globeTimer_->setInterval(30);
+    connect(globeTimer_, &QTimer::timeout, this, [this] { fillGlobes(); });
+    prepareArchitecturalMaterials();
 
     // Libraries.
     {
@@ -483,24 +488,17 @@ MaterialsPanel::MaterialsPanel(Document* doc, Viewport* vp, QWidget* parent) : Q
         }
     }
 
-    connect(selectTab_, &QToolButton::clicked, this, [this] {
-        selectTab_->setChecked(true);
-        editTab_->setChecked(false);
-        pages_->setCurrentIndex(0);
-    });
-    connect(editTab_, &QToolButton::clicked, this, [this] {
-        editTab_->setChecked(true);
-        selectTab_->setChecked(false);
-        pages_->setCurrentIndex(1);
-        refreshEditor();
-    });
+    connect(selectTab_, &QToolButton::clicked, this, [this] { showTab(0); });
+    connect(editTab_, &QToolButton::clicked, this, [this] { showTab(1); });
     connect(library_, &QComboBox::currentIndexChanged, this, [this] { rebuildList(); });
+    connect(browserBtn, &QPushButton::clicked, this, [this] { emit browserRequested(); });
+    connect(editor_, &MaterialEditor::popOutRequested, this, [this] { emit editorRequested(); });
     connect(list_, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) { chooseItem(it); });
-    connect(createBtn, &QToolButton::clicked, this, [this] { createMaterial(); });
+    connect(createBtn, &QPushButton::clicked, this, [this] { createMaterial(); });
     connect(defaultBtn, &QToolButton::clicked, this, [this] {
         doc_->currentMaterial = kNone;
-        vp_->setTool(ToolId::Paint);
         refresh();
+        emit materialChosen();
     });
     connect(sampleBtn, &QToolButton::clicked, this, [this] { vp_->setTool(ToolId::Paint); });
     connect(name_, &QLineEdit::editingFinished, this, [this] {
@@ -514,35 +512,24 @@ MaterialsPanel::MaterialsPanel(Document* doc, Viewport* vp, QWidget* parent) : Q
         doc_->commitOp();
         refresh();
     });
-    connect(colorBtn_, &QPushButton::clicked, this, [this] { setColorFromDialog(); });
-    connect(opacity_, &QSlider::sliderReleased, this, [this] {
-        Id id = doc_->currentMaterial;
-        if (updating_ || id < 0 || id >= (Id)doc_->materials().size()) return;
-        doc_->beginOp("Material Opacity");
-        doc_->materials()[id].opacity = opacity_->value() / 100.0f;
-        ++doc_->materialsRevision;
-        doc_->commitOp();
-        vp_->update();
-    });
-    connect(useTexture_, &QCheckBox::toggled, this, [this](bool on) {
-        Id id = doc_->currentMaterial;
-        if (updating_ || id < 0 || id >= (Id)doc_->materials().size()) return;
-        if (on && !doc_->materials()[id].hasTexture()) {
-            browseTexture();
-        } else if (!on && doc_->materials()[id].hasTexture()) {
-            doc_->beginOp("Remove Texture");
-            doc_->materials()[id].texture = Texture();
-            ++doc_->materialsRevision;
-            doc_->commitOp();
-            refresh();
-            vp_->update();
-        }
-    });
-    connect(browse_, &QPushButton::clicked, this, [this] { browseTexture(); });
-    connect(texW_, &QLineEdit::editingFinished, this, [this] { applyTextureSize(true); });
-    connect(texH_, &QLineEdit::editingFinished, this, [this] { applyTextureSize(false); });
+    library_->setCurrentIndex(Architectural); // what there is to use from the start
+    showTab(0);
     refresh();
 }
+
+void MaterialsPanel::showTab(int page) {
+    selectTab_->setChecked(page == 0);
+    editTab_->setChecked(page == 1);
+    pages_->setCurrentIndex(page);
+    // Only the page on show takes up height (a stack is as tall as its tallest page).
+    for (int i = 0; i < pages_->count(); ++i)
+        pages_->widget(i)->setSizePolicy(QSizePolicy::Preferred, i == page ? QSizePolicy::Preferred : QSizePolicy::Ignored);
+    pages_->updateGeometry();
+    updateGeometry();
+    if (page == 1) editor_->refresh();
+}
+
+void MaterialsPanel::showLibrary(int index) { library_->setCurrentIndex(index); }
 
 QPixmap MaterialsPanel::swatch(const Material* m, int size) const {
     QPixmap pm(size, size);
@@ -557,156 +544,104 @@ QPixmap MaterialsPanel::swatch(const Material* m, int size) const {
         p.drawPolygon(tri);
         return pm;
     }
-    if (m->hasTexture()) {
-        QImage img = decodeTexture(m->texture);
-        if (!img.isNull()) return QPixmap::fromImage(img.scaled(size, size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
-    }
+    const QPixmap ball = materialGlobe(*m);
+    if (!ball.isNull()) return ball.scaled(size, size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     pm.fill(toQ(Color(m->color.r, m->color.g, m->color.b, 1)));
-    if (m->opacity < 0.999f) {
-        QPainter p(&pm);
-        p.setPen(QPen(Qt::white, 2));
-        p.drawLine(0, size, size, 0);
-    }
     return pm;
 }
 
 void MaterialsPanel::rebuildList() {
     list_->clear();
-    int lib = library_->currentIndex();
-    if (lib == 0) {
-        auto* d = new QListWidgetItem(QIcon(swatch(nullptr, 44)), QString());
-        d->setToolTip(QStringLiteral("Default"));
-        d->setData(Qt::UserRole, -1);
-        d->setData(Qt::UserRole + 1, 0);
-        list_->addItem(d);
+    const int lib = library_->currentIndex();
+    auto add = [&](const QPixmap& pm, const QString& name, int index) {
+        auto* it = new QListWidgetItem(QIcon(pm), QString());
+        it->setToolTip(name);
+        it->setData(Qt::UserRole, index);
+        it->setData(Qt::UserRole + 1, lib);
+        list_->addItem(it);
+        return it;
+    };
+    if (lib == InModel) {
+        add(swatch(nullptr, 58), QStringLiteral("Default"), -1);
         for (Id i = 0; i < (Id)doc_->materials().size(); ++i) {
             const Material& m = doc_->materials()[i];
-            auto* it = new QListWidgetItem(QIcon(swatch(&m, 44)), QString());
-            it->setToolTip(QString::fromStdString(m.name));
-            it->setData(Qt::UserRole, i);
-            it->setData(Qt::UserRole + 1, 0);
-            list_->addItem(it);
+            auto* it = add(swatch(&m, 58), QString::fromStdString(m.name), i);
             if (i == doc_->currentMaterial) it->setSelected(true);
         }
+    } else if (lib == Architectural) {
+        // Their maps take a moment: the globes come in as they get ready.
+        QPixmap blank(58, 58);
+        blank.fill(QColor(236, 236, 236));
+        for (int i = 0; i < architecturalMaterialCount(); ++i) add(blank, QString::fromStdString(architecturalMaterialName(i)), i);
+        globeTimer_->start();
     } else {
-        const auto& src = lib == 1 ? colorLib_ : textureLib_;
+        const auto& src = lib == Colors ? colorLib_ : textureLib_;
         for (int i = 0; i < (int)src.size(); ++i) {
-            auto* it = new QListWidgetItem(QIcon(swatch(&src[i], 44)), QString());
-            it->setToolTip(QString::fromStdString(src[i].name));
-            it->setData(Qt::UserRole, i);
-            it->setData(Qt::UserRole + 1, lib);
-            list_->addItem(it);
+            QPixmap pm(58, 58);
+            pm.fill(toQ(src[i].color));
+            if (src[i].hasTexture()) {
+                const QImage img = decodeTexture(src[i].texture);
+                if (!img.isNull()) pm = QPixmap::fromImage(img.scaled(58, 58, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+            }
+            add(pm, QString::fromStdString(src[i].name), i);
         }
     }
     listRevision_ = doc_->materialsRevision;
 }
 
-Id MaterialsPanel::ensureInModel(const Material& m) {
-    for (Id i = 0; i < (Id)doc_->materials().size(); ++i) {
-        const Material& e = doc_->materials()[i];
-        if (e.name == m.name && e.texture.data == m.texture.data) return i;
+void MaterialsPanel::fillGlobes() {
+    if (library_->currentIndex() != Architectural) {
+        globeTimer_->stop();
+        return;
     }
+    // One per tick; architecturalMaterial() waits for a background job at most briefly.
+    for (int r = 0; r < list_->count(); ++r) {
+        QListWidgetItem* it = list_->item(r);
+        if (it->data(Qt::UserRole + 2).toBool()) continue;
+        it->setIcon(QIcon(swatch(&architecturalMaterial(it->data(Qt::UserRole).toInt()), 58)));
+        it->setData(Qt::UserRole + 2, true);
+        return;
+    }
+    globeTimer_->stop();
+}
+
+Id MaterialsPanel::ensureInModel(const Material& m) {
+    for (Id i = 0; i < (Id)doc_->materials().size(); ++i)
+        if (sameMaterial(doc_->materials()[i], m)) return i;
     doc_->beginOp("Add Material");
     Id id = doc_->addMaterial(m);
     doc_->commitOp();
     return id;
 }
 
+void MaterialsPanel::chooseRow(int row) { chooseItem(list_->item(row)); }
+
 void MaterialsPanel::chooseItem(QListWidgetItem* item) {
     if (!item) return;
-    int idx = item->data(Qt::UserRole).toInt();
-    int lib = item->data(Qt::UserRole + 1).toInt();
-    if (lib == 0) doc_->currentMaterial = idx;
-    else doc_->currentMaterial = ensureInModel(lib == 1 ? colorLib_[idx] : textureLib_[idx]);
-    if (vp_->toolId() != ToolId::Paint) vp_->setTool(ToolId::Paint);
+    const int idx = item->data(Qt::UserRole).toInt();
+    const int lib = item->data(Qt::UserRole + 1).toInt();
+    switch (lib) {
+    case InModel: doc_->currentMaterial = idx; break;
+    case Architectural: doc_->currentMaterial = ensureInModel(architecturalMaterial(idx)); break;
+    case Colors: doc_->currentMaterial = ensureInModel(colorLib_[idx]); break;
+    default: doc_->currentMaterial = ensureInModel(textureLib_[idx]); break;
+    }
+    // The active tool stays: the Texture Brush and others use this material too.
     refresh();
     emit materialChosen();
 }
 
-void MaterialsPanel::createMaterial() {
-    QColor c = QColorDialog::getColor(QColor(200, 200, 200), this, QStringLiteral("Create Material"));
-    if (!c.isValid()) return;
+Id MaterialsPanel::createMaterial() {
     Material m;
     m.name = "Material";
-    m.color = fromQ(c);
+    m.pbr = true;
     doc_->beginOp("Create Material");
     doc_->currentMaterial = doc_->addMaterial(m);
     doc_->commitOp();
-    library_->setCurrentIndex(0);
     refresh();
-}
-
-void MaterialsPanel::setColorFromDialog() {
-    Id id = doc_->currentMaterial;
-    if (id < 0 || id >= (Id)doc_->materials().size()) return;
-    QColor c = QColorDialog::getColor(toQ(doc_->materials()[id].color), this, QStringLiteral("Material Color"));
-    if (!c.isValid()) return;
-    doc_->beginOp("Material Color");
-    Material& m = doc_->materials()[id];
-    m.color = fromQ(c);
-    if (m.hasTexture()) m.texture = Texture(); // colourising textures is not supported: switch to colour
-    ++doc_->materialsRevision;
-    doc_->commitOp();
-    refresh();
-    vp_->update();
-}
-
-void MaterialsPanel::browseTexture() {
-    Id id = doc_->currentMaterial;
-    QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Choose Texture Image"), QString(),
-                                                QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tga *.tif *.tiff)"));
-    if (path.isEmpty()) {
-        refresh();
-        return;
-    }
-    if (id < 0 || id >= (Id)doc_->materials().size()) {
-        Id nid = addImageMaterial(path);
-        if (nid != kNone) doc_->currentMaterial = nid;
-        refresh();
-        return;
-    }
-    Texture t;
-    QString err;
-    if (!loadTextureFile(path, t, &err)) {
-        refresh();
-        return;
-    }
-    doc_->beginOp("Set Texture");
-    Material& m = doc_->materials()[id];
-    m.texture = t;
-    m.color = averageColor(decodeTexture(t));
-    ++doc_->materialsRevision;
-    doc_->commitOp();
-    refresh();
-    vp_->update();
-}
-
-void MaterialsPanel::applyTextureSize(bool fromWidth) {
-    Id id = doc_->currentMaterial;
-    if (updating_ || id < 0 || id >= (Id)doc_->materials().size() || !doc_->materials()[id].hasTexture()) return;
-    Material& m = doc_->materials()[id];
-    double w = m.texture.worldWidth, h = m.texture.worldHeight;
-    double v;
-    if (!doc_->units.parseLength((fromWidth ? texW_ : texH_)->text().toStdString(), v) || v <= 0) {
-        refreshEditor();
-        return;
-    }
-    double aspect = h / std::max(w, 1e-9);
-    if (fromWidth) {
-        w = v;
-        if (lockAspect_->isChecked()) h = w * aspect;
-    } else {
-        h = v;
-        if (lockAspect_->isChecked()) w = h / aspect;
-    }
-    if (std::fabs(w - m.texture.worldWidth) < 1e-12 && std::fabs(h - m.texture.worldHeight) < 1e-12) return;
-    doc_->beginOp("Texture Size");
-    doc_->materials()[id].texture.worldWidth = w;
-    doc_->materials()[id].texture.worldHeight = h;
-    ++doc_->materialsRevision;
-    doc_->commitOp();
-    refreshEditor();
-    vp_->update();
+    showTab(1);
+    emit materialChosen();
+    return doc_->currentMaterial;
 }
 
 Id MaterialsPanel::addImageMaterial(const QString& path) {
@@ -720,31 +655,9 @@ Id MaterialsPanel::addImageMaterial(const QString& path) {
     Id id = doc_->addMaterial(m);
     doc_->currentMaterial = id;
     doc_->commitOp();
-    library_->setCurrentIndex(0);
+    library_->setCurrentIndex(InModel);
     refresh();
     return id;
-}
-
-void MaterialsPanel::refreshEditor() {
-    updating_ = true;
-    Id id = doc_->currentMaterial;
-    bool valid = id >= 0 && id < (Id)doc_->materials().size();
-    for (QWidget* w : std::initializer_list<QWidget*>{colorBtn_, opacity_, useTexture_, browse_, texW_, texH_, lockAspect_}) w->setEnabled(valid);
-    if (valid) {
-        const Material& m = doc_->materials()[id];
-        setButtonColor(colorBtn_, m.color);
-        opacity_->setValue(int(std::lround(m.opacity * 100)));
-        useTexture_->setChecked(m.hasTexture());
-        texW_->setEnabled(m.hasTexture());
-        texH_->setEnabled(m.hasTexture());
-        texW_->setText(m.hasTexture() ? QString::fromStdString(doc_->units.format(m.texture.worldWidth)) : QString());
-        texH_->setText(m.hasTexture() ? QString::fromStdString(doc_->units.format(m.texture.worldHeight)) : QString());
-    } else {
-        useTexture_->setChecked(false);
-        texW_->clear();
-        texH_->clear();
-    }
-    updating_ = false;
 }
 
 void MaterialsPanel::refresh() {
@@ -752,12 +665,12 @@ void MaterialsPanel::refresh() {
     Id id = doc_->currentMaterial;
     if (id >= (Id)doc_->materials().size()) id = doc_->currentMaterial = kNone;
     const Material* m = doc_->material(id);
-    preview_->setPixmap(swatch(m, 62));
-    name_->setText(m ? QString::fromStdString(m->name) : QString());
+    if (!doc_->inOp()) preview_->setPixmap(swatch(m, 76));
+    if (!name_->hasFocus()) name_->setText(m ? QString::fromStdString(m->name) : QString());
     name_->setEnabled(m != nullptr);
     updating_ = false;
-    if (library_->currentIndex() == 0 || listRevision_ != doc_->materialsRevision) rebuildList();
-    refreshEditor();
+    if (library_->currentIndex() == InModel && !doc_->inOp()) rebuildList();
+    if (pages_->currentIndex() == 1) editor_->refresh();
 }
 
 void MaterialsPanel::dragEnterEvent(QDragEnterEvent* e) {
@@ -775,7 +688,6 @@ void MaterialsPanel::dropEvent(QDropEvent* e) {
     for (const QUrl& u : e->mimeData()->urls())
         if (u.isLocalFile() && isImageFile(u.toLocalFile())) addImageMaterial(u.toLocalFile());
     e->acceptProposedAction();
-    vp_->setTool(ToolId::Paint);
 }
 
 // ===========================================================================
@@ -1127,6 +1039,17 @@ void InstructorPanel::showTool(ToolId id) {
     case ToolId::Bend: i = {"Bend", "Bends any geometry around an axis, like a strip of soft metal. Before the bend nothing moves; after it everything follows rigidly.",
         "Select what to bend (or click it). Click the start of the bend, then its end. Move the mouse or type the angle, then click. Curves stay as flat pieces wherever they can, so stair treads stay one face each.",
         "Right / Left / Up arrow: bend around the red / green / blue axis (default blue) &nbsp; Type 90: angle in degrees, then Enter &nbsp; Type 24s: number of segments &nbsp; Esc: cancel"}; break;
+    case ToolId::PlacePointLight: i = {"Point Light", "Places a light that shines in all directions, like a bare bulb.",
+        "Click a surface or the ground: the light goes above that point. Adjust brightness, colour and range in Window &gt; Scene; move it with the Move tool.",
+        "Type a value: height above the surface"}; break;
+    case ToolId::PlaceSpotLight: i = {"Spot Light", "Places a light that shines in a cone.",
+        "Click where the light goes, then the point it aims at. Cone angle and softness are in Window &gt; Scene.",
+        "Type a value: height above the surface &nbsp; Esc: cancel"}; break;
+    case ToolId::PlaceDirectionalLight: i = {"Directional Light", "Adds parallel light from one direction, like a second sun. It does not fade with distance.",
+        "Click where the marker goes, then the point it aims at. Only the direction matters.", "Type a value: height above the surface &nbsp; Esc: cancel"}; break;
+    case ToolId::PlaceCamera: i = {"Place Camera", "Puts a camera in the world to come back to.",
+        "Click where it stands, then what it looks at. Double-click its marker, or use Window &gt; Scene, to look through it. Camera &gt; Add Camera From View saves the current view instead.",
+        "Type a value: height above the surface &nbsp; Esc: cancel"}; break;
     case ToolId::PlaceCharacter: i = {"Game Mode", "Puts a character on the model and walks it around in a separate game window. It is 1.80 m tall and 0.30 m across, and collides with every visible face.",
         "Click the spot to stand on; the green capsule shows the character. In the game window click to capture the mouse, then walk. The game works on a copy of the model: to see later edits, close it and place the character again.",
         "WASD: walk &nbsp; Mouse or arrow keys: look &nbsp; Shift: run &nbsp; Space: jump &nbsp; R: back to the start &nbsp; Tab: edges &nbsp; F11: full screen &nbsp; Esc: free the mouse, then leave"}; break;

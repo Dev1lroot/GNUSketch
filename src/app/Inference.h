@@ -4,6 +4,7 @@
 // (other than the moved ones) offer the same snaps as loose geometry.
 #pragma once
 
+#include "core/Components.h"
 #include "core/Document.h"
 #include "render/Camera.h"
 #include "render/Renderer.h"
@@ -22,7 +23,8 @@ struct InferenceResult {
         AlongEdge,     // from the reference point along an edge there (or its extension)
         Parallel,      // parallel to the last hovered edge
         Perpendicular, // perpendicular to the last hovered edge
-        FaceNormal     // perpendicular to the last hovered face
+        FaceNormal,    // perpendicular to the last hovered face
+        OnIntersection // on the line where two faces cut through each other (no edge there)
     };
     Type type = None;
     Vec3 p;
@@ -42,6 +44,7 @@ struct InferenceResult {
 struct PickResult {
     Id face = kNone, edge = kNone, vertex = kNone;
     Id instance = kNone; // component instance (top level only)
+    Id object = kNone;   // light or camera marker (only from the tools that select)
     Vec3 p;
     double t = 1e300;
 };
@@ -63,11 +66,16 @@ public:
     InferenceResult infer(double px, double py, const Options& opt);
     PickResult pick(double px, double py, double edgeTolPx = 6.0, const std::set<Id>* excludeVerts = nullptr) const;
     Id pickFace(double px, double py, double* tOut = nullptr, const std::set<Id>* excludeVerts = nullptr) const;
+    // World normal of the front-most face under the cursor, loose or of a
+    // component (zero if there is none).
+    Vec3 faceNormalAt(double px, double py, const std::set<Id>* excludeVerts = nullptr) const;
     Id pickEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts = nullptr) const;
     int pickGuide(double px, double py, double tolPx) const;
-    // Closest component instance under the cursor (none while one is open);
+    // Closest component instance at the level being edited under the cursor;
     // normalOut receives the world normal of the face hit (zero for an edge).
     Id pickInstance(double px, double py, double* tOut = nullptr, Vec3* normalOut = nullptr) const;
+    // Light or camera whose marker is under the cursor (none while a component is open).
+    Id pickObject(double px, double py, double tolPx = 14.0) const;
     // Instances being moved by a tool: not picked, snapped to or occluding.
     std::set<Id> ignoredInstances;
     void addPreview(const InferenceResult& r, Preview& pv) const;
@@ -87,11 +95,35 @@ private:
         Segment seg;
         Id edge = kNone; // loose edge id (kNone for a component edge)
         Vec3 p;          // point on the edge under the cursor
+        bool intersection = false; // a face/face intersection line, not an edge
     };
+    // A face in world space: loose (xf identity) or of a placed component.
+    struct FaceRef {
+        const Mesh* mesh = nullptr;
+        Id face = kNone;
+        Mat4 xf, inv;
+        Plane plane; // world
+        bool active = false; // a face of the mesh being edited (face is its id there)
+    };
+    std::vector<FaceRef> worldFaces(const std::set<Id>* excludeVerts) const;
+    bool rayHitsFace(const FaceRef& f, const Ray& r, double& t) const;
+    bool faceContains(const FaceRef& f, const Vec3& worldP) const;
+    // Where the face-face intersection line under the cursor runs inside both
+    // faces; seg is that piece and p the point nearest the cursor.
+    bool pickIntersection(double px, double py, double tolPx, const std::vector<FaceRef>& faces, EdgeHit& hit) const;
+    // Front-most face under the cursor (index into faces, -1 if none).
+    int frontFace(const std::vector<FaceRef>& faces, const Ray& r, double& t) const;
+    std::optional<EdgeHit> ix_; // intersection line near the cursor (set per infer call)
     bool pickAnyEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts, double tFace, EdgeHit& hit) const;
     // World-space hard edges of the instances that offer snaps (cached).
-    const std::vector<Segment>& instanceEdges(Id inst) const;
-    bool snapsTo(Id inst) const;
+    const std::vector<Segment>& instanceEdges(int index, const PlacedInstance& p) const;
+    bool snapsTo(const PlacedInstance& p) const;
+    // What offers snaps besides the mesh being edited: the placed components and,
+    // while a component is open, the model's loose geometry around it (def kNone).
+    std::vector<PlacedInstance> snapSources() const;
+    const Mesh& sourceMesh(const PlacedInstance& p) const {
+        return p.def == kNone ? doc_.state.mesh : doc_.state.defs[p.def].mesh;
+    }
     bool excluded(Id v, const Options& o) const { return o.excludeVerts && o.excludeVerts->count(v); }
     // pickEdge with the nearest face hit distance already known (for occlusion).
     Id pickEdgeT(double px, double py, double tolPx, const std::set<Id>* excludeVerts, double tFace) const;

@@ -50,6 +50,9 @@ void applyLightTheme(QApplication& app) {
         QDockWidget::title { background: #e9e9e9; padding: 4px; border-bottom: 1px solid #d0d0d0; }
         QStatusBar { background: #f0f0f0; border-top: 1px solid #d0d0d0; }
         QStatusBar::item { border: none; }
+        QToolButton#MapThumb { border: 1px dashed #a9b3bd; background: #f7f8f9; color: #8a95a0; font-size: 16px; }
+        QToolButton#MapThumb:hover { border: 1px solid #569de5; background: #e5f1fb; }
+        QPushButton#CreateMaterial { font-weight: 600; padding: 5px; }
         QLineEdit#Measurements { border: 1px solid #a8a8a8; padding: 1px 4px; background: white; }
     )");
 }

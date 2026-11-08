@@ -120,13 +120,16 @@ bool GameWindow::load(const QString& path, const Vec3& feet, double yaw, QString
     if (view.contains("style")) styleFromJson(view["style"].toObject(), doc_.style);
     // Only the world shows: no modelling aids, and a style one can walk around in.
     RenderStyle& s = doc_.style;
-    s.showAxes = s.showGuides = s.showHidden = false;
+    s.showAxes = s.showGuides = s.showHidden = s.showObjects = false;
     s.xray = s.backEdges = false;
     s.edges = false;
     if (s.faceStyle == RenderStyle::Wireframe || s.faceStyle == RenderStyle::HiddenLine) s.faceStyle = RenderStyle::ShadedTextures;
     doc_.selection.clear();
 
+    // Entities first: their parts leave the static collision world.
+    entities_ = std::make_unique<EntityWorld>(doc_.state);
     world_.buildFromModel(doc_.state);
+    entities_->start(world_);
     spawn_ = feet;
     spawnYaw_ = yaw;
     walker_.spawn(feet);
@@ -155,6 +158,37 @@ void GameWindow::simulate(double seconds) {
     walker_.look(((holds(LookLeft) ? 1 : 0) - (holds(LookRight) ? 1 : 0)) * turn,
                  ((holds(LookUp) ? 1 : 0) - (holds(LookDown) ? 1 : 0)) * turn * 0.7);
     walker_.advance(seconds, in);
+    if (entities_) {
+        entities_->update(seconds);
+        // Which way the character is trying to go, whether or not it gets there.
+        const Vec3 facing(std::cos(walker_.yaw()), std::sin(walker_.yaw()), 0);
+        const Vec3 side(std::sin(walker_.yaw()), -std::cos(walker_.yaw()), 0);
+        Vec3 wish = facing * in.forward + side * in.strafe;
+        for (int i = 0; i < entities_->count(); ++i) {
+            bool touching = false;
+            for (const AnimPart& p : entities_->entity(i).parts)
+                touching = touching || (p.body >= 0 && walker_.touches(p.body, 0.08));
+            entities_->setTouching(i, touching);
+            if (touching && entities_->isPhysical(i) && wish.length2() > 0.01) {
+                // A person's shove, about 400 N at waist height: heavy things stay put.
+                const Vec3 force = wish.normalized() * (in.run ? 600.0 : 400.0);
+                entities_->pushBy(i, force, walker_.feet() + Vec3(0, 0, 1.0) + wish.normalized() * walker_.params().radius, seconds);
+            }
+        }
+    }
+}
+
+int GameWindow::aimedEntity() const {
+    if (!entities_ || entities_->count() == 0) return -1;
+    double t = 0;
+    int body = -1;
+    if (!world_.raycast(walker_.eye(), walker_.lookDirection(), 2.5, t, body) || body < 0) return -1;
+    return entities_->entityOfBody(body);
+}
+
+void GameWindow::useAimed() {
+    const int e = aimedEntity();
+    if (e >= 0) entities_->use(e);
 }
 
 void GameWindow::paintGL() {
@@ -183,7 +217,7 @@ void GameWindow::paintGL() {
     hud.setPen(QPen(QColor(255, 255, 255, 200), 1.5));
     hud.drawEllipse(c, 2, 2);
     const QString text = captured_
-        ? QStringLiteral("WASD walk   Shift run   Space jump   R back to start   Tab edges   F11 full screen   Esc free the mouse")
+        ? QStringLiteral("WASD walk   E press   Shift run   Space jump   R back to start   Tab edges   F11 full screen   Esc free the mouse")
         : QStringLiteral("Click to look around with the mouse   Esc again to leave");
     QFont f = hud.font();
     f.setPointSizeF(9.5);
@@ -193,6 +227,25 @@ void GameWindow::paintGL() {
     hud.fillRect(box, QColor(0, 0, 0, 120));
     hud.setPen(Qt::white);
     hud.drawText(box, Qt::AlignCenter, text);
+    if (entities_) {
+        const int aimed = aimedEntity();
+        if (aimed >= 0 && entities_->usable(aimed)) {
+            const QString hint = QStringLiteral("E  press");
+            QRect hb = hud.fontMetrics().boundingRect(hint).adjusted(-8, -4, 8, 4);
+            hb.moveCenter(c + QPoint(0, 34));
+            hud.fillRect(hb, QColor(0, 0, 0, 140));
+            hud.drawText(hb, Qt::AlignCenter, hint);
+        }
+        // Script errors stay in sight, a broken door should not be a mystery.
+        int y = box.bottom() + 8;
+        for (const QString& err : entities_->errors()) {
+            QRect eb = hud.fontMetrics().boundingRect(err).adjusted(-8, -3, 8, 3);
+            eb.moveTopLeft(QPoint(10, y));
+            hud.fillRect(eb, QColor(150, 20, 20, 190));
+            hud.drawText(eb, Qt::AlignCenter, err);
+            y = eb.bottom() + 3;
+        }
+    }
 }
 
 int GameWindow::actionOf(const QKeyEvent* e) {
@@ -222,6 +275,10 @@ int GameWindow::actionOf(const QKeyEvent* e) {
 
 void GameWindow::keyPressEvent(QKeyEvent* e) {
     if (e->isAutoRepeat()) return;
+    if (e->nativeScanCode() == 26) { // E by position, for non-Latin layouts
+        useAimed();
+        return;
+    }
     switch (e->key()) {
     case Qt::Key_Escape:
         if (captured_) setCaptured(false);
@@ -233,6 +290,9 @@ void GameWindow::keyPressEvent(QKeyEvent* e) {
         return;
     case Qt::Key_Tab:
         doc_.style.edges = !doc_.style.edges;
+        return;
+    case Qt::Key_E:
+        useAimed();
         return;
     case Qt::Key_F11:
         setWindowState(windowState() ^ Qt::WindowFullScreen);
@@ -267,6 +327,7 @@ void GameWindow::setCaptured(bool on) {
 }
 
 void GameWindow::mousePressEvent(QMouseEvent*) {
+    if (captured_) useAimed();
     setCaptured(true);
 }
 

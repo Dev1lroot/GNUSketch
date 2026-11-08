@@ -372,7 +372,8 @@ int RectangleTool::cursorAxis(const MouseEvent& e) {
         autoAxis_ = std::fabs(f.x) > std::fabs(f.y) ? 0 : 1;
     }
     // Snapped to geometry: use the axis plane through both points, if there is exactly one.
-    bool onGeometry = r.isSnap() || r.type == InferenceResult::OnEdge || r.type == InferenceResult::OnFace ||
+    bool onGeometry = r.isSnap() || r.type == InferenceResult::OnEdge || r.type == InferenceResult::OnIntersection ||
+                      r.type == InferenceResult::OnFace ||
                       r.type == InferenceResult::OnGuide;
     if (onGeometry) {
         int zero = -1, n = 0;

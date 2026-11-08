@@ -81,6 +81,19 @@ struct RemeshParams {
 bool effectRemesh(Mesh& m, const std::set<Id>& faces, const RemeshParams& p, EffectResult* out = nullptr,
                   std::string* error = nullptr);
 
+struct VoxelateParams {
+    double size = 0.1;     // edge of a cube, meters
+    bool fill = true;      // a closed shape becomes solid, not a shell of cubes
+    bool mergeFlat = false; // flat sides become single n-gons, without the grid lines
+};
+// Rebuilds the faces as cubes on a world-aligned grid: the outer surface of all
+// cubes touched by the faces, as one closed mesh. A shape that fits the grid keeps
+// its size exactly. Materials come from the nearest face. If the grid would be too
+// large, the cubes get bigger (out->limited). The faces do not stay connected to
+// neighbours outside the selection, as the new surface does not follow them.
+bool effectVoxelate(Mesh& m, const std::set<Id>& faces, const VoxelateParams& p, EffectResult* out = nullptr,
+                    std::string* error = nullptr);
+
 // Bends space along a straight stretch, like a strip of soft metal around a
 // cylinder. Along `dir`, measured from `origin` and across `axis`: what lies
 // before 0 stays, 0..length curves into an arc of `angle` radians around `axis`

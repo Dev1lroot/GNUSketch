@@ -4,16 +4,30 @@
 // {
 //   "format": "GNUSketch", "version": 1, "units": "meter", "up": "Z",
 //   "materials": [ { "name", "color": [r,g,b,a], "opacity",
-//                    "texture": { "mime", "width", "height", "data": base64 } } ],
+//                    "texture": { "mime", "width", "height", "data": base64 },
+//                    optional PBR: "pbr", "baseStrength", "emission": [r,g,b,a], "flipNormalY", "blend",
+//                    "maps": { "normal"|"metallic"|"roughness"|"occlusion"|"height"|"emission"|"opacity":
+//                              { "strength", "texture": {...} } },
+//                    optional custom shader: "shaderOn", "shader": GLSL text,
+//                    "shaderProps": { name: [up to 4 numbers] } } ],
 //   "vertices": [ [x,y,z], ... ],
 //   "edges":    [ { "v": [a,b], "soft", "smooth", "hidden", "curve" } ],
 //   "faces":    [ { "outer": [v...], "holes": [[v...]], "normal": [x,y,z], "hidden",
 //                   "front": { "material", "uv": { "origin", "u", "v" } }, "back": {...} } ],
 //   "guides":   [ { "kind": "line"|"point", "p": [..], "dir": [..] } ],
-//   "components": [ { "name", "uid", "vertices", "edges", "faces", "nextCurve" } ],
+//   "components": [ { "name", "uid", "vertices", "edges", "faces", "nextCurve",
+//                     "states": [ { "name", "vertices": [ids], "positions": [x,y,z,...],
+//                                   "children": [ { "instance": index, "transform": [16] } ] } ] } ],
 //   "instances":  [ { "component": index, "transform": [16 numbers, column-major
-//                     4x4 component -> model], "hidden" } ],
-//   "view":     { application specific (camera, style) }
+//                     4x4 component -> model or parent], "hidden",
+//                     "parent": index of the component it is inside (always before "component"),
+//                     "entity": { "classname", "targetname", "targets": [ { "name", "delay" } ], "startState",
+//                                 "physics", "mass", "friction", "bounce",
+//                                 "script": JavaScript, see io/EntityScript.h } } ],
+//   "objects":  [ { "kind": "point"|"spot"|"directional"|"camera", "name", "pos", "target",
+//                   "enabled", "color", "intensity", "range", "coneAngle", "softness",
+//                   "fov", "perspective" } ],
+//   "view":     { application specific (camera, style; a prefab keeps its "thumbnail" here) }
 // }
 #pragma once
 
@@ -35,6 +49,10 @@ void styleFromJson(const QJsonObject& o, RenderStyle& s);
 
 QByteArray modelToJson(const ModelState& state, const QJsonObject& view = {});
 bool modelFromJson(const QByteArray& json, ModelState& state, QJsonObject* view = nullptr, QString* error = nullptr);
+
+// One material as JSON (also the content of a library .gsmat file).
+QJsonObject materialToJson(const Material& m);
+Material materialFromJson(const QJsonObject& o);
 
 // Serialises a mesh + materials subset (used for clipboard).
 QJsonObject meshToJson(const Mesh& mesh);

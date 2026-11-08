@@ -23,10 +23,14 @@ bottom. Screenshots help.
 ## Modifying
 - [ ] Push/Pull: box from rectangle, taller/shorter box, pocket, push through (hole), Ctrl = new start face, double-click repeat
 - [ ] Move / Ctrl copy / `5x` array; Rotate with 15° snaps; Offset
+- [ ] Rotate sticks to the face under the cursor, loose or of a component (tilted/rotated ones too); hold Shift to keep that plane while picking a centre elsewhere; arrow keys still lock axes
+- [ ] Inside an open component: endpoints, midpoints, edges and faces of the loose geometry and of other components around it still snap (and hide snaps behind them); draw a line from the component to an outside corner; Rotate sticks to an outside face
+- [ ] Intersections: push one component (or loose box) halfway into another; hover where their faces cut through each other ("On Intersection", magenta dashed seam), its ends ("Intersection"); draw a line from end to end, and a line along an axis that stops on the seam
 - [ ] Scale grips: corner (uniform), Shift+corner (free), edge midpoint (2 axes), face centre (1 axis), Ctrl about centre, typed `2` / `1.5,2` / `1,2,1` during and right after; a rotated component scales along its own sides; a flat rectangle shows only its 8 in-plane grips
 - [ ] Eraser (drag, Shift hide, Ctrl soften); Delete key; Undo/Redo
 - [ ] Select: click, window vs crossing, double/triple click, Ctrl/Shift modifiers
 - [ ] Follow Me: circle along a line/arc (pipe), ring profile (hollow pipe), T/H beam along an L path, moulding around a box top (Alt-click the top face), profile around a circle (lathe); path selected first vs clicked after the profile
+- [ ] Primitives (Draw → Primitive…): every shape; fields change with the shape; face count and error text update live (torus tube ≥ ring radius disables Place); placed shape follows the cursor, click sets it, Esc cancels; one undo; smooth on/off; values remembered next time
 - [ ] Round Corners: rectangle corners, one cube edge, four top edges, all cube edges; live preview and too-large radius message
 - [ ] Components: select a box, right-click Make Component; Ctrl+Move copies; double-click a copy, push/pull and draw on it (rest fades, other copies change live); Esc / click outside closes; rotate and scale one copy (others unchanged); Make Unique then edit; Explode; undo/redo through all of it; save, reopen, copy/paste between windows
 
@@ -51,6 +55,7 @@ bottom. Screenshots help.
 - [ ] Blur on a box: corners and edges round off; Keep volume on and off; on a noisy terrain it calms the bumps
 - [ ] Decimate a noisy terrain by percentage and by polygons per m²: the outline stays, the "Polygons: a → b" line is right
 - [ ] Quads / Hexagons / Triangles on a plane, a box, a terrain; Rotation; textures and materials stay on
+- [ ] Voxelate a box (exact size with a fitting cube size), a sphere, a terrain, a textured face: live preview with the size slider, materials stay; Merge flat sides; very small size says the detail was reduced; result works with Push/Pull and Solid Tools
 - [ ] Subdivide, Triangulate, Merge Flat Faces; Ctrl+F repeats; effects on a component with copies change only the selected one
 
 ## Sun and culling
@@ -71,6 +76,53 @@ bottom. Screenshots help.
 - [ ] Edit tab: colour, opacity, tile size
 - [ ] Drop an image from the desktop/Dolphin onto empty space: plane in top view (ground) and front/side view (vertical, on the ground), correct orientation, 1 px = 1 mm
 - [ ] Trace Image: alpha cutout of a transparent PNG logo, dark shapes of a black-on-white scan, light shapes; threshold/smoothing/specks live preview; remove background on/off; push/pull the result
+
+## PBR materials
+- [ ] Materials panel shows the Architectural globes from the start; click one: it becomes current and the tool does not change; the Paint button takes the Paint Bucket
+- [ ] Create Material: opens the Edit tab in the sidebar; click a `+` square to load an image, ✕ removes it, sliders and typed values agree
+- [ ] Window > Material Editor: pick a material, change Metallic and Roughness: the ball and the model follow live; one Undo per drag
+- [ ] Add Maps with a real set (albedo, normal, roughness, ...): each lands on the right row; drop a file on one row; Clear; strength sliders
+- [ ] A normal map on a flat wall: lit bumps move with the Sun; DirectX tick flips them; Height shifts with the view; Opacity map cuts holes
+- [ ] Position Texture on a PBR material, also one with only a normal map; save, reopen, Game Mode; export glTF to Blender: maps connected
+- [ ] Shader tab: Use custom shader gives the template; type an error: red line number, the model unchanged; fix it; `_Time` animates; properties give sliders and colours
+- [ ] Texture Brush with a PBR material
+
+## Browsers (separate windows)
+- [ ] Window > Material Browser: resize, Size slider, search, categories; pictures appear without freezing; click paints; **real mouse drag onto a face**; drag onto a component says to open it; double-click opens the editor; Save to Library, Add Texture Folder
+- [ ] Right-click a component > Save as Prefab; Window > Prefab Browser lists it; **real mouse drag into the model**: blue box follows, lands on the surface; double-click carries it on the mouse, Esc cancels; Delete; Open to Edit
+- [ ] A prefab in another window or a new model comes with its materials; two placed copies edit together
+
+## Animation
+- [ ] Right-click a component > Properties: small window; choose func_door: a script appears; message says it needs two states
+- [ ] Double-click the door, F5 (name suggested CLOSED), rotate it about its hinge edge, F5 (OPEN), Esc; Go To shows each state; Rename, Delete, Undo
+- [ ] Ctrl+G: walking into the door opens it, along a real arc, textures stay on; it closes after 3 s; the HUD says "E press" when aiming at it
+- [ ] A second component as func_button (IDLE, PRESSED); door Name `door1`, button Target `door1`: the door no longer opens by touch or E, only by the button
+- [ ] A component with a frame and a separate panel: only the panel moves; the frame still collides
+- [ ] func_actor with 3+ states, preset "loop through states": runs as keyframes forever; a state that scales the geometry blends
+- [ ] Write a script error: Check gives the line; in the game the error shows red in the corner and the rest keeps working
+- [ ] Save as Preset, it is offered next time; Save as Prefab keeps states, class and script; save and reopen the model
+
+## Sources, targets, nesting
+- [ ] Properties has General, Targets and Sources tabs. Button: Add Target twice, pick names, set delays of 0 and 2 s; in the game the first fires at once and the second 2 s later
+- [ ] On the door, Sources lists the button; ✕ stops it firing; Add Source links another entity, naming the door if it had no name
+- [ ] Select two components, Make Component; click selects the whole; double-click opens it, click and move a part; double-click again goes a level deeper; Esc comes out one level at a time; other copies follow
+- [ ] A door with a handle inside (states recorded with the handle moving along), placed in a frame component, Save as Prefab, drop it twice: both open, with handles, and the frames stay; open it from the Prefab Browser and it still edits
+- [ ] Dropping a prefab onto an open component puts it inside; dropping it into itself is refused; undo at each step; save, reopen, export glTF and STL: everything inside is there
+
+## Hierarchy, physics, namespaces
+- [ ] Hierarchy panel on the left lists geometry, components (nested), lights, cameras; search; click selects both ways; a nested row opens the way to it, the fading follows
+- [ ] Ticks hide and show, undoable; a hidden parent hides what is inside; F2 renames; Delete; Group several rows, Ungroup; right-click menu; Show Everything
+- [ ] A crate with physics, mass 20, up in the air: in Game Mode it falls and rests flat; on a slope with low friction it slides, with high friction it stays; walking into it pushes it; mass 5000 does not move
+- [ ] Crates stacked; one knocked off a ledge tumbles; a door with physics falls while its script still works; a crate resting on a door falls when the door opens
+- [ ] A group with a button and a door targeting `door`, copied twice: each button opens only its own door. Names on the groups, a button outside with target `front/door`
+- [ ] Save, reopen, prefab: physics settings and names stay
+
+## Lights and cameras
+- [ ] Draw > Lights: point light above the clicked point; `3` before clicking changes the height; spot and directional aim with a second click; Sun at night shows them best
+- [ ] Window > Scene: colour, brightness, range, cone, softness; list follows the selection; Delete; Undo
+- [ ] Move, Rotate, Ctrl+Move copy and Eraser on markers; window selection takes them; View > Lights and Cameras hides markers
+- [ ] Camera > Add Camera From View, orbit away, double-click its marker: same view; Camera > Look Through; Set From View
+- [ ] Copy/paste a light into another window; save and reopen; Game Mode shows the light without the marker
 
 ## Files
 - [ ] Save/Open `.gsketch`; Export OBJ/glTF/STL and open them in Blender; Import OBJ

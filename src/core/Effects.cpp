@@ -1480,6 +1480,256 @@ bool applyBend(ModelState& st, Selection& sel, const BendParams& p, std::string*
     return any;
 }
 
+namespace {
+
+// Does a triangle overlap a box around the origin? Separating axis test.
+bool triangleOverlapsBox(const Vec3& v0, const Vec3& v1, const Vec3& v2, const Vec3& half) {
+    auto separated = [&](const Vec3& axis) {
+        const double a = v0.dot(axis), b = v1.dot(axis), c = v2.dot(axis);
+        const double r = half.x * std::fabs(axis.x) + half.y * std::fabs(axis.y) + half.z * std::fabs(axis.z);
+        return std::min({a, b, c}) > r || std::max({a, b, c}) < -r;
+    };
+    const Vec3 e[3] = {v1 - v0, v2 - v1, v0 - v2};
+    const Vec3 boxAxes[3] = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)};
+    for (const Vec3& b : boxAxes)
+        if (separated(b)) return false;
+    if (separated(e[0].cross(e[1]))) return false;
+    for (const Vec3& ed : e)
+        for (const Vec3& b : boxAxes)
+            if (separated(ed.cross(b))) return false;
+    return true;
+}
+
+} // namespace
+
+bool effectVoxelate(Mesh& m, const std::set<Id>& faces, const VoxelateParams& p, EffectResult* out, std::string* error) {
+    if (!(p.size > 0)) {
+        if (error) *error = "The cube size must be above zero.";
+        return false;
+    }
+    struct Tri {
+        Vec3 a, b, c;
+        Id face;
+    };
+    std::vector<Tri> tris;
+    Vec3 mn(1e300, 1e300, 1e300), mx(-1e300, -1e300, -1e300);
+    for (Id f : faces) {
+        if (f < 0 || f >= (Id)m.faces.size() || !m.faces[f].alive) continue;
+        const Face& F = m.faces[f];
+        Vec3 u, v;
+        planeBasis(F.normal, u, v);
+        std::vector<std::vector<Vec2>> loops;
+        std::vector<Vec3> pts;
+        auto add = [&](const std::vector<Id>& L) {
+            loops.emplace_back();
+            for (Id id : L) {
+                const Vec3& q = m.pos(id);
+                loops.back().emplace_back(q.dot(u), q.dot(v));
+                pts.push_back(q);
+                for (int k = 0; k < 3; ++k) {
+                    mn[k] = std::min(mn[k], q[k]);
+                    mx[k] = std::max(mx[k], q[k]);
+                }
+            }
+        };
+        add(F.outer);
+        for (const auto& h : F.holes) add(h);
+        for (const auto& t : triangulatePolygon(loops)) tris.push_back({pts[t[0]], pts[t[1]], pts[t[2]], f});
+    }
+    if (tris.empty()) {
+        if (error) *error = "Select faces or components first.";
+        return false;
+    }
+
+    constexpr int64_t kMaxCells = 32000000;
+    double size = p.size;
+    bool limited = false;
+    int ix0, iy0, iz0, nx, ny, nz;
+    std::vector<char> cell; // 0 empty, 1 filled, 2 outside
+    std::unordered_map<int64_t, std::vector<Id>> sources;
+    std::vector<int> quads; // cell index * 6 + direction
+    auto index = [&](int x, int y, int z) { return (int64_t(z) * ny + y) * nx + x; };
+    static const int kDir[6][3] = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
+    for (;;) {
+        // One empty layer all around, for the flood from outside.
+        ix0 = (int)std::floor(mn.x / size) - 2;
+        iy0 = (int)std::floor(mn.y / size) - 2;
+        iz0 = (int)std::floor(mn.z / size) - 2;
+        nx = (int)std::ceil(mx.x / size) + 2 - ix0;
+        ny = (int)std::ceil(mx.y / size) + 2 - iy0;
+        nz = (int)std::ceil(mx.z / size) + 2 - iz0;
+        if (double(nx) * ny * nz > double(kMaxCells)) {
+            size *= 1.26;
+            limited = true;
+            continue;
+        }
+        cell.assign(size_t(nx) * ny * nz, 0);
+        sources.clear();
+        // A face lying exactly on a grid plane counts for the cubes behind it, so a
+        // box that fits the grid does not grow by a layer. Touching does not count.
+        const double inward = size * 1e-4;
+        const Vec3 half = Vec3(size, size, size) * (0.5 * (1 - 1e-6));
+        for (const Tri& t : tris) {
+            const Vec3 shift = m.faces[t.face].normal * -inward;
+            const Vec3 a = t.a + shift, b = t.b + shift, c = t.c + shift;
+            auto range = [&](int k, int i0, int n, int& lo, int& hi) {
+                lo = std::clamp((int)std::floor(std::min({a[k], b[k], c[k]}) / size) - i0, 0, n - 1);
+                hi = std::clamp((int)std::floor(std::max({a[k], b[k], c[k]}) / size) - i0, 0, n - 1);
+            };
+            int x0, x1, y0, y1, z0, z1;
+            range(0, ix0, nx, x0, x1);
+            range(1, iy0, ny, y0, y1);
+            range(2, iz0, nz, z0, z1);
+            for (int z = z0; z <= z1; ++z)
+                for (int y = y0; y <= y1; ++y)
+                    for (int x = x0; x <= x1; ++x) {
+                        const Vec3 centre((ix0 + x + 0.5) * size, (iy0 + y + 0.5) * size, (iz0 + z + 0.5) * size);
+                        if (!triangleOverlapsBox(a - centre, b - centre, c - centre, half)) continue;
+                        const int64_t i = index(x, y, z);
+                        cell[i] = 1;
+                        std::vector<Id>& src = sources[i];
+                        if (src.size() < 6 && std::find(src.begin(), src.end(), t.face) == src.end()) src.push_back(t.face);
+                    }
+        }
+        // What cannot be reached from outside is inside. An open surface has no
+        // inside: the flood goes around it.
+        std::vector<int64_t> stack{0};
+        cell[0] = 2;
+        while (!stack.empty()) {
+            const int64_t i = stack.back();
+            stack.pop_back();
+            const int z = int(i / (int64_t(nx) * ny)), y = int((i / nx) % ny), x = int(i % nx);
+            for (const auto& d : kDir) {
+                const int X = x + d[0], Y = y + d[1], Z = z + d[2];
+                if (X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz) continue;
+                const int64_t j = index(X, Y, Z);
+                if (cell[j] != 0) continue;
+                cell[j] = 2;
+                stack.push_back(j);
+            }
+        }
+        if (p.fill)
+            for (char& c : cell)
+                if (c == 0) c = 1;
+        // Sides between a cube and what is not one.
+        quads.clear();
+        bool tooMany = false;
+        for (int z = 0; z < nz && !tooMany; ++z)
+            for (int y = 0; y < ny && !tooMany; ++y)
+                for (int x = 0; x < nx; ++x) {
+                    if (cell[index(x, y, z)] != 1) continue;
+                    for (int k = 0; k < 6; ++k)
+                        if (cell[index(x + kDir[k][0], y + kDir[k][1], z + kDir[k][2])] != 1) quads.push_back(int(k));
+                    if ((int)quads.size() > kEffectTriangleLimit) {
+                        tooMany = true;
+                        break;
+                    }
+                }
+        if (!tooMany) break;
+        size *= 1.26;
+        limited = true;
+    }
+
+    const Id fallback = tris[0].face;
+    // Keep the source sides before the faces go.
+    std::map<Id, Face> sourceFaces;
+    for (const Tri& t : tris) {
+        if (sourceFaces.count(t.face)) continue;
+        Face F = m.faces[t.face];
+        F.outer.clear();
+        F.holes.clear();
+        sourceFaces.emplace(t.face, std::move(F));
+    }
+    // The old surface goes, with the edges only it used.
+    std::set<Id> oldEdges;
+    for (Id f : faces)
+        if (f >= 0 && f < (Id)m.faces.size() && m.faces[f].alive)
+            for (Id e : m.faceEdges(f)) oldEdges.insert(e);
+    for (Id f : faces)
+        if (f >= 0 && f < (Id)m.faces.size() && m.faces[f].alive) m.eraseFace(f);
+    for (Id e : oldEdges) {
+        bool used = false;
+        for (Id f : m.edgeFaces(e)) used = used || m.faces[f].alive;
+        if (!used) m.eraseEdge(e, false);
+    }
+    m.removeOrphanVertices();
+
+    std::unordered_map<int64_t, Id> corners;
+    const int64_t cx = int64_t(nx) + 1, cy = int64_t(ny) + 1;
+    auto corner = [&](int x, int y, int z) {
+        const int64_t key = (int64_t(z) * cy + y) * cx + x;
+        auto it = corners.find(key);
+        if (it != corners.end()) return it->second;
+        const Id v = m.addVertexRaw(Vec3((ix0 + x) * size, (iy0 + y) * size, (iz0 + z) * size));
+        corners.emplace(key, v);
+        return v;
+    };
+    std::set<Id> made;
+    for (int z = 0; z < nz; ++z)
+        for (int y = 0; y < ny; ++y)
+            for (int x = 0; x < nx; ++x) {
+                const int64_t i = index(x, y, z);
+                if (cell[i] != 1) continue;
+                for (int k = 0; k < 6; ++k) {
+                    if (cell[index(x + kDir[k][0], y + kDir[k][1], z + kDir[k][2])] == 1) continue;
+                    const int axis = k / 2, high = k % 2;
+                    // The four corners of that side, counter-clockwise seen from outside.
+                    int c[4][3];
+                    for (int n = 0; n < 4; ++n) {
+                        const int a = (n == 1 || n == 2) ? 1 : 0, b = (n >= 2) ? 1 : 0;
+                        const int ua = (axis + 1) % 3, ub = (axis + 2) % 3;
+                        const int base[3] = {x, y, z};
+                        c[n][axis] = base[axis] + high;
+                        c[n][ua] = base[ua] + a;
+                        c[n][ub] = base[ub] + b;
+                    }
+                    std::vector<Id> loop;
+                    for (int n = 0; n < 4; ++n) {
+                        const int o = high ? n : 3 - n;
+                        loop.push_back(corner(c[o][0], c[o][1], c[o][2]));
+                    }
+                    for (int n = 0; n < 4; ++n) m.addEdgeRaw(loop[n], loop[(n + 1) % 4]);
+                    Vec3 nrm;
+                    nrm[axis] = high ? 1 : -1;
+                    const Id nf = m.addFaceRaw(loop, {}, nrm);
+                    if (nf == kNone) continue;
+                    // The look of the source facing most this way.
+                    Id best = kNone;
+                    double bestDot = -2;
+                    auto s = sources.find(i);
+                    if (s != sources.end())
+                        for (Id src : s->second) {
+                            const double dd = std::fabs(sourceFaces.at(src).normal.dot(nrm));
+                            if (dd > bestDot) {
+                                bestDot = dd;
+                                best = src;
+                            }
+                        }
+                    if (best == kNone) best = fallback;
+                    const Face& S = sourceFaces.at(best);
+                    const bool same = S.normal.dot(nrm) >= 0;
+                    Face& N = m.faces[nf];
+                    N.front = same ? S.front : S.back;
+                    N.back = same ? S.back : S.front;
+                    // A placed image only makes sense on sides facing about the same way.
+                    if (std::fabs(S.normal.dot(nrm)) < 0.5) N.front.tex.valid = N.back.tex.valid = false;
+                    N.front.axis = N.back.axis = Vec3();
+                    made.insert(nf);
+                }
+            }
+    m.touch();
+    m.markGeometryMoved();
+    if (p.mergeFlat) {
+        EffectResult merged;
+        if (effectMergeFlat(m, made, &merged, nullptr)) made = merged.faces;
+    }
+    if (out) {
+        out->faces = made;
+        out->limited = limited;
+    }
+    return true;
+}
+
 int effectFaceCount(const ModelState& st, const Selection& sel) {
     int n = (int)sel.faces.size();
     if (st.editing != kNone) return n;

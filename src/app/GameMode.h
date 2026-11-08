@@ -10,6 +10,7 @@
 
 #include "Tool.h"
 #include "core/Walker.h"
+#include "io/EntityScript.h"
 #include "render/Camera.h"
 #include "render/Renderer.h"
 
@@ -17,6 +18,7 @@
 #include <QOpenGLWidget>
 #include <QPoint>
 
+#include <memory>
 #include <set>
 
 namespace gs {
@@ -50,6 +52,11 @@ public:
     bool mouseCaptured() const { return captured_; }
     // Runs the simulation with the keys currently held.
     void simulate(double seconds);
+    EntityWorld* entities() const { return entities_.get(); }
+    // The entity the character is looking at within reach, or -1.
+    int aimedEntity() const;
+    // Presses what the character looks at (E or a click).
+    void useAimed();
 
 protected:
     void initializeGL() override;
@@ -68,6 +75,7 @@ private:
 
     Document doc_;
     CollisionWorld world_;
+    std::unique_ptr<EntityWorld> entities_;
     Walker walker_;
     Vec3 spawn_;
     double spawnYaw_ = 0;

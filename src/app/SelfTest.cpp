@@ -39,6 +39,7 @@
 #include "TerrainTools.h"
 #include "Viewport.h"
 #include "core/Components.h"
+#include "core/Primitives.h"
 #include "core/Solids.h"
 #include "io/ImageUtil.h"
 #include "io/NativeFormat.h"
@@ -2133,6 +2134,29 @@ int runSelfTest(MainWindow& w) {
             d.pump();
             d.check(!doc.inOp() && doc.state.instances.size() == n + 1, "Esc cancels the placing");
             d.check(!w.startPrefabPlacement(QStringLiteral("/nonexistent/file.gsketch")) && !doc.inOp(), "a missing file is refused");
+        }
+        // Primitives: built as a component that follows the cursor like a prefab.
+        {
+            const size_t n = doc.state.instances.size(), defs = doc.state.defs.size();
+            PrimitiveParams pp;
+            pp.kind = PrimitiveKind::Dodecahedron;
+            pp.radius = 1;
+            d.check(w.startPrimitivePlacement(pp) && doc.state.instances.size() == n + 1 && doc.state.defs.size() == defs + 1 && doc.inOp(),
+                    "a primitive attaches to the cursor");
+            const QPointF at = d.screen(Vec3(2, 2, 0));
+            d.move(at);
+            d.click(at);
+            d.pump();
+            d.check(!doc.inOp() && doc.undoName() == "Add Dodecahedron", "a click places the primitive as one undo step");
+            const Mesh& dm = doc.state.defs[defs].mesh;
+            d.check(dm.aliveFaceCount() == 12 && isSolid(dm), "the dodecahedron is a closed solid of 12 faces");
+            Vec3 mn, mx;
+            instanceBounds(doc.state, (Id)n, mn, mx);
+            d.check(std::fabs(mn.z) < 1e-6, "it stands on the ground");
+            pp.kind = PrimitiveKind::Torus;
+            pp.radius2 = 2; // tube wider than the ring
+            d.check(!w.startPrimitivePlacement(pp) && !doc.inOp() && doc.state.instances.size() == n + 1, "bad sizes are refused");
+            vp->setTool(ToolId::Select);
         }
         pb->close();
         vp->setTool(ToolId::Select);

@@ -27,6 +27,7 @@ bottom. Screenshots help.
 - [ ] Eraser (drag, Shift hide, Ctrl soften); Delete key; Undo/Redo
 - [ ] Select: click, window vs crossing, double/triple click, Ctrl/Shift modifiers
 - [ ] Follow Me: circle along a line/arc (pipe), ring profile (hollow pipe), T/H beam along an L path, moulding around a box top (Alt-click the top face), profile around a circle (lathe); path selected first vs clicked after the profile
+- [ ] Primitives (Draw → Primitive…): every shape; fields change with the shape; face count and error text update live (torus tube ≥ ring radius disables Place); placed shape follows the cursor, click sets it, Esc cancels; one undo; smooth on/off; values remembered next time
 - [ ] Round Corners: rectangle corners, one cube edge, four top edges, all cube edges; live preview and too-large radius message
 - [ ] Components: select a box, right-click Make Component; Ctrl+Move copies; double-click a copy, push/pull and draw on it (rest fades, other copies change live); Esc / click outside closes; rotate and scale one copy (others unchanged); Make Unique then edit; Explode; undo/redo through all of it; save, reopen, copy/paste between windows
 

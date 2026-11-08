@@ -25,6 +25,7 @@ class QTemporaryDir;
 namespace gs {
 
 class FormatPlugin;
+struct PrimitiveParams;
 
 class Viewport;
 class EntityInfoPanel;
@@ -53,6 +54,8 @@ public:
     QString savePrefabOf(Id instance, const QString& name);
     // Attaches a prefab to the cursor; the next click places it.
     bool startPrefabPlacement(const QString& path);
+    // Builds a primitive as a new component and attaches it to the cursor.
+    bool startPrimitivePlacement(const PrimitiveParams& params);
     // Records the open component's geometry as a state. False if none is open.
     bool recordState(const QString& name);
     EntityProperties* entityProperties();
@@ -105,6 +108,10 @@ private:
     void deleteGuides();
     void modelInfo();
     void roundCorners();
+    void insertPrimitive();
+    // The new instance (inside an open operation) follows the cursor until a
+    // click places it; commits or cancels the operation.
+    bool attachToCursor(Id inst);
     void makeComponent();
     void saveAsPrefab();
     void promptRecordState();

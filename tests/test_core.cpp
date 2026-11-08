@@ -7,6 +7,7 @@
 #include "core/Effects.h"
 #include "core/Walker.h"
 #include "core/Mesh.h"
+#include "core/Primitives.h"
 #include "core/RoundCorners.h"
 #include "core/Solids.h"
 #include "core/Terrain.h"
@@ -3217,6 +3218,101 @@ int main() {
             CHECK(effectVoxelate(m, box, p));
             CHECK_EQ(m.aliveFaceCount(), 6 * 4 + 1);
         }
+    });
+
+    test("primitives: closed, outward, on the ground", [&] {
+        auto softCount = [](const Mesh& m) {
+            int n = 0;
+            for (const Edge& e : m.edges) n += e.alive && e.soft;
+            return n;
+        };
+        auto check = [&](PrimitiveParams p, int verts, int edges, int faces, double volume, double volTol) {
+            Mesh m;
+            std::string err;
+            CHECK(buildPrimitive(p, m, &err));
+            if (!err.empty()) std::printf("  %s: %s\n", primitiveName(p.kind), err.c_str());
+            CHECK_EQ(m.aliveVertexCount(), verts);
+            CHECK_EQ(m.aliveEdgeCount(), edges);
+            CHECK_EQ(m.aliveFaceCount(), faces);
+            std::string why;
+            const bool solid = isSolid(m, &why);
+            CHECK(solid);
+            if (!solid) std::printf("  %s: %s\n", primitiveName(p.kind), why.c_str());
+            // Positive volume means the faces point outwards.
+            const double v = solidVolume(m);
+            CHECK(std::fabs(v - volume) <= volume * volTol);
+            if (std::fabs(v - volume) > volume * volTol) std::printf("  %s volume %g, expected %g\n", primitiveName(p.kind), v, volume);
+            Vec3 mn, mx;
+            bool any = false;
+            m.bounds(mn, mx, any);
+            CHECK(std::fabs(mn.z) < 1e-9);
+            CHECK(std::fabs(mn.x + mx.x) < 1e-6 && std::fabs(mn.y + mx.y) < 1e-6);
+            return m;
+        };
+        const double r = 1;
+        PrimitiveParams p;
+        p.radius = r;
+        p.kind = PrimitiveKind::Tetrahedron;
+        check(p, 4, 6, 4, 8 * std::sqrt(3.0) / 27, 1e-6);
+        p.kind = PrimitiveKind::Octahedron;
+        check(p, 6, 12, 8, 4.0 / 3, 1e-6);
+        p.kind = PrimitiveKind::Dodecahedron;
+        {
+            Mesh m = check(p, 20, 30, 12, 2.785163863, 1e-6);
+            int pentagons = 0;
+            for (const Face& f : m.faces) pentagons += f.alive && f.outer.size() == 5;
+            CHECK_EQ(pentagons, 12);
+            CHECK_EQ(softCount(m), 0);
+            // It rests on a face: five vertices on the ground.
+            int low = 0;
+            for (const Vertex& v : m.vertices) low += std::fabs(v.p.z) < 1e-9;
+            CHECK_EQ(low, 5);
+        }
+        p.kind = PrimitiveKind::Icosahedron;
+        check(p, 12, 30, 20, 2.536150994, 1e-6);
+        p.kind = PrimitiveKind::Box;
+        p.width = 2; p.depth = 3; p.height = 4;
+        check(p, 8, 12, 6, 24, 1e-9);
+        p.kind = PrimitiveKind::Sphere;
+        p.segments = 24; p.rings = 12;
+        {
+            Mesh m = check(p, 24 * 11 + 2, 24 * 11 + 24 * 12, 24 * 12, 4.0 / 3 * kPi, 0.05);
+            CHECK_EQ(softCount(m), m.aliveEdgeCount());
+            CHECK(std::fabs(m.vertices[0].p.z) < 2 * r + 1e-9);
+        }
+        p.kind = PrimitiveKind::GeoSphere;
+        p.frequency = 3;
+        check(p, 10 * 9 + 2, 30 * 9, 20 * 9, 4.0 / 3 * kPi, 0.08);
+        p.kind = PrimitiveKind::Cylinder;
+        p.height = 2; p.segments = 16;
+        {
+            Mesh m = check(p, 32, 48, 18, kPi * 2, 0.03);
+            CHECK_EQ(softCount(m), 16); // the vertical edges; the rims stay hard
+            std::set<Id> curves;
+            for (const Edge& e : m.edges)
+                if (e.curve != kNone) curves.insert(e.curve);
+            CHECK_EQ((int)curves.size(), 2);
+        }
+        p.kind = PrimitiveKind::Cone;
+        p.radius2 = 0;
+        check(p, 17, 32, 17, kPi * 2 / 3, 0.03);
+        p.radius2 = 0.5; // frustum
+        check(p, 32, 48, 18, kPi * 2 / 3 * (1 + 0.5 + 0.25), 0.03);
+        p.kind = PrimitiveKind::Torus;
+        p.radius = 2; p.radius2 = 0.5; p.segments = 32; p.rings = 16;
+        check(p, 32 * 16, 2 * 32 * 16, 32 * 16, 2 * kPi * kPi * 2 * 0.25, 0.05);
+
+        Mesh bad;
+        std::string err;
+        p.radius2 = 3; // tube wider than the ring
+        CHECK(!buildPrimitive(p, bad, &err) && !err.empty());
+        p.kind = PrimitiveKind::Sphere;
+        p.radius = 0;
+        CHECK(!buildPrimitive(p, bad, &err));
+        p.radius = 1; p.smooth = false;
+        Mesh hard;
+        CHECK(buildPrimitive(p, hard));
+        CHECK_EQ(softCount(hard), 0);
     });
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);

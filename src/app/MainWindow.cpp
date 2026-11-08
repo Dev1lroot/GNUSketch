@@ -19,6 +19,7 @@
 #include "TerrainTools.h"
 #include "Viewport.h"
 #include "core/Components.h"
+#include "core/Primitives.h"
 #include "core/RoundCorners.h"
 #include "io/GltfExport.h"
 #include "io/ImageUtil.h"
@@ -234,6 +235,8 @@ void MainWindow::buildActions() {
     act("exportobj", "export", QStringLiteral("Export OBJ (n-gons)…"), QKeySequence(), [this] { exportObj(); });
     act("roundcorners", "roundcorners", QStringLiteral("&Round Corners…"), QKeySequence(), [this] { roundCorners(); })
         ->setStatusTip(QStringLiteral("Round the selected edges or corners with a radius and number of segments."));
+    act("primitive", "", QStringLiteral("&Primitive…"), QKeySequence(), [this] { insertPrimitive(); })
+        ->setStatusTip(QStringLiteral("Make a sphere, cylinder, torus, dodecahedron or other solid and place it with a click."));
     act("traceimage", "traceimage", QStringLiteral("&Trace Image…"), QKeySequence(), [this] { traceImage(); })
         ->setStatusTip(QStringLiteral("Turn the alpha cutout or the dark/light shapes of a face's image into outline geometry."));
     act("exportgltf", "", QStringLiteral("Export glTF 2.0…"), QKeySequence(), [this] { exportGltf(); });
@@ -519,6 +522,8 @@ void MainWindow::buildMenus() {
     shapes->addAction(toolActions_[ToolId::Rectangle]);
     shapes->addAction(toolActions_[ToolId::Circle]);
     shapes->addAction(toolActions_[ToolId::Polygon]);
+    draw->addSeparator();
+    draw->addAction(acts_["primitive"]);
 
     QMenu* tools = menuBar()->addMenu(QStringLiteral("&Tools"));
     for (ToolId id : {ToolId::Select, ToolId::Eraser, ToolId::Paint}) tools->addAction(toolActions_[id]);
@@ -1692,7 +1697,10 @@ bool MainWindow::startPrefabPlacement(const QString& path) {
     in.parent = doc_.state.activeDef();
     if (!prefab.instances.empty()) in.entity = prefab.instances[0].entity;
     doc_.state.instances.push_back(in);
-    const Id inst = (Id)doc_.state.instances.size() - 1;
+    return attachToCursor((Id)doc_.state.instances.size() - 1);
+}
+
+bool MainWindow::attachToCursor(Id inst) {
     doc_.selection.clear();
     doc_.selection.instances.insert(inst);
     doc_.notifySelection();
@@ -1712,6 +1720,161 @@ bool MainWindow::startPrefabPlacement(const QString& path) {
     viewport_->setFocus();
     viewport_->update();
     return true;
+}
+
+bool MainWindow::startPrimitivePlacement(const PrimitiveParams& params) {
+    Mesh mesh;
+    std::string err;
+    if (!buildPrimitive(params, mesh, &err)) {
+        statusLabel_->setText(QString::fromStdString(err));
+        return false;
+    }
+    viewport_->cancelTool();
+    viewport_->setTool(ToolId::Move);
+    const std::string name = primitiveName(params.kind);
+    doc_.beginOp("Add " + name);
+    ComponentDef def;
+    def.name = uniqueComponentName(doc_.state, name);
+    def.uid = newComponentUid();
+    def.mesh = std::move(mesh);
+    def.mesh.touch();
+    doc_.state.defs.push_back(std::move(def));
+    Instance in;
+    in.def = (Id)doc_.state.defs.size() - 1;
+    in.parent = doc_.state.activeDef();
+    doc_.state.instances.push_back(in);
+    if (!attachToCursor((Id)doc_.state.instances.size() - 1)) return false;
+    statusLabel_->setText(QStringLiteral("Click to place the %1. Explode it to merge it with the model's geometry.")
+                              .arg(QString::fromStdString(name).toLower()));
+    return true;
+}
+
+void MainWindow::insertPrimitive() {
+    viewport_->cancelTool();
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("primitive"));
+    const LengthUnit unit = doc_.units.unit;
+    const double unitM = Units::toMeters(unit);
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Primitive"));
+    auto* fl = new QFormLayout(&dlg);
+    auto* kind = new QComboBox(&dlg);
+    kind->setObjectName(QStringLiteral("primitiveKind"));
+    for (int k = 0; k < kPrimitiveKindCount; ++k) kind->addItem(QString::fromUtf8(primitiveName(PrimitiveKind(k))), k);
+    kind->setCurrentIndex(std::clamp(settings.value("kind", int(PrimitiveKind::Sphere)).toInt(), 0, kPrimitiveKindCount - 1));
+    fl->addRow(QStringLiteral("Shape:"), kind);
+
+    const PrimitiveParams defaults;
+    auto length = [&](const char* key, double defMeters) {
+        auto* sb = new QDoubleSpinBox(&dlg);
+        sb->setObjectName(QString::fromUtf8(key));
+        sb->setDecimals(unit == LengthUnit::Meters ? 3 : 2);
+        sb->setRange(0, 1e6);
+        sb->setSuffix(QStringLiteral(" ") + QString::fromUtf8(Units::suffix(unit)));
+        sb->setValue(settings.value(key, defMeters).toDouble() / unitM);
+        return sb;
+    };
+    auto count = [&](const char* key, int def, int lo, int hi) {
+        auto* sb = new QSpinBox(&dlg);
+        sb->setObjectName(QString::fromUtf8(key));
+        sb->setRange(lo, hi);
+        sb->setValue(settings.value(key, def).toInt());
+        return sb;
+    };
+    auto* radius = length("radius", defaults.radius);
+    auto* radius2 = length("radius2", defaults.radius2);
+    auto* width = length("width", defaults.width);
+    auto* depth = length("depth", defaults.depth);
+    auto* height = length("height", defaults.height);
+    auto* segments = count("segments", defaults.segments, 3, 512);
+    auto* rings = count("rings", defaults.rings, 2, 256);
+    auto* frequency = count("frequency", defaults.frequency, 1, 32);
+    auto* smooth = new QCheckBox(QStringLiteral("Smooth the curved surface"), &dlg);
+    smooth->setChecked(settings.value("smooth", defaults.smooth).toBool());
+    auto* radiusLabel = new QLabel(&dlg);
+    auto* radius2Label = new QLabel(&dlg);
+    auto* ringsLabel = new QLabel(&dlg);
+    fl->addRow(radiusLabel, radius);
+    fl->addRow(radius2Label, radius2);
+    fl->addRow(QStringLiteral("Width:"), width);
+    fl->addRow(QStringLiteral("Depth:"), depth);
+    fl->addRow(QStringLiteral("Height:"), height);
+    fl->addRow(QStringLiteral("Segments:"), segments);
+    fl->addRow(ringsLabel, rings);
+    fl->addRow(QStringLiteral("Subdivisions:"), frequency);
+    fl->addRow(QString(), smooth);
+    auto* info = new QLabel(&dlg);
+    info->setWordWrap(true);
+    fl->addRow(info);
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    bb->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Place"));
+    fl->addRow(bb);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    auto params = [&] {
+        PrimitiveParams p;
+        p.kind = PrimitiveKind(kind->currentData().toInt());
+        p.radius = radius->value() * unitM;
+        p.radius2 = radius2->value() * unitM;
+        p.width = width->value() * unitM;
+        p.depth = depth->value() * unitM;
+        p.height = height->value() * unitM;
+        p.segments = segments->value();
+        p.rings = rings->value();
+        p.frequency = frequency->value();
+        p.smooth = smooth->isChecked();
+        return p;
+    };
+    // Shows the fields the shape uses and what it would build.
+    auto refresh = [&] {
+        const PrimitiveParams p = params();
+        const PrimitiveFields f = primitiveFields(p.kind);
+        const bool torus = p.kind == PrimitiveKind::Torus, cone = p.kind == PrimitiveKind::Cone;
+        const bool platonic = p.kind >= PrimitiveKind::Tetrahedron;
+        radiusLabel->setText(torus ? QStringLiteral("Ring radius:")
+                             : (cone || p.kind == PrimitiveKind::Cylinder) ? QStringLiteral("Base radius:")
+                             : platonic ? QStringLiteral("Radius (to corners):") : QStringLiteral("Radius:"));
+        radius2Label->setText(torus ? QStringLiteral("Tube radius:") : QStringLiteral("Top radius:"));
+        ringsLabel->setText(torus ? QStringLiteral("Tube segments:") : QStringLiteral("Rings:"));
+        rings->setMinimum(torus ? 3 : 2);
+        fl->setRowVisible(radius, f.radius);
+        fl->setRowVisible(radius2, f.radius2);
+        fl->setRowVisible(width, f.width);
+        fl->setRowVisible(depth, f.depth);
+        fl->setRowVisible(height, f.height);
+        fl->setRowVisible(segments, f.segments);
+        fl->setRowVisible(rings, f.rings);
+        fl->setRowVisible(frequency, f.frequency);
+        fl->setRowVisible(smooth, f.smooth);
+        Mesh m;
+        std::string err;
+        const bool ok = buildPrimitive(p, m, &err);
+        info->setText(ok ? QStringLiteral("%1 faces, %2 edges").arg(m.aliveFaceCount()).arg(m.aliveEdgeCount())
+                         : QString::fromStdString(err));
+        bb->button(QDialogButtonBox::Ok)->setEnabled(ok);
+        dlg.adjustSize();
+    };
+    connect(kind, &QComboBox::currentIndexChanged, &dlg, refresh);
+    for (QDoubleSpinBox* sb : {radius, radius2, width, depth, height}) connect(sb, &QDoubleSpinBox::valueChanged, &dlg, refresh);
+    for (QSpinBox* sb : {segments, rings, frequency}) connect(sb, &QSpinBox::valueChanged, &dlg, refresh);
+    connect(smooth, &QCheckBox::toggled, &dlg, refresh);
+    refresh();
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    const PrimitiveParams p = params();
+    settings.setValue("kind", int(p.kind));
+    settings.setValue("radius", p.radius);
+    settings.setValue("radius2", p.radius2);
+    settings.setValue("width", p.width);
+    settings.setValue("depth", p.depth);
+    settings.setValue("height", p.height);
+    settings.setValue("segments", p.segments);
+    settings.setValue("rings", p.rings);
+    settings.setValue("frequency", p.frequency);
+    settings.setValue("smooth", p.smooth);
+    startPrimitivePlacement(p);
 }
 
 bool MainWindow::recordState(const QString& name) {

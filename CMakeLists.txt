@@ -37,6 +37,7 @@ add_library(gs_core SHARED
   src/core/Effects.h src/core/Effects.cpp
   src/core/Walker.h src/core/Walker.cpp
   src/core/TextureMapping.h src/core/TextureMapping.cpp
+  src/core/Primitives.h src/core/Primitives.cpp
 )
 target_include_directories(gs_core PUBLIC src)
 target_compile_options(gs_core PRIVATE -Wall -Wextra)

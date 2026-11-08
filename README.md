@@ -88,6 +88,12 @@ was read, tags, props and animations included.
   lathed shapes. Select the path and click the profile, or click the profile and
   then a path edge (Alt: a face's outline). Curved paths and profiles come out
   smooth-shaded.
+* **Primitives** (Draw → Primitive…) builds a box, sphere, geodesic sphere,
+  cylinder, cone/frustum, torus or a Platonic solid (tetrahedron, octahedron,
+  dodecahedron, icosahedron) as a closed component of n-gons (the dodecahedron
+  keeps its pentagons) that follows the cursor until a click places it. Sizes are
+  in the model's units; curved surfaces get soft, smooth-shaded edges. Explode it to
+  merge it with loose geometry.
 * **Round Corners** (Tools menu, tool set, right-click) rounds the selected edges
   with a radius in mm and a number of segments, with a live preview. Edges between
   two faces get a rounded strip with mitred or spherical corners; corners of

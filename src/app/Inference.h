@@ -103,18 +103,27 @@ private:
         Id face = kNone;
         Mat4 xf, inv;
         Plane plane; // world
+        bool active = false; // a face of the mesh being edited (face is its id there)
     };
     std::vector<FaceRef> worldFaces(const std::set<Id>* excludeVerts) const;
     bool rayHitsFace(const FaceRef& f, const Ray& r, double& t) const;
     bool faceContains(const FaceRef& f, const Vec3& worldP) const;
     // Where the face-face intersection line under the cursor runs inside both
     // faces; seg is that piece and p the point nearest the cursor.
-    bool pickIntersection(double px, double py, double tolPx, const std::set<Id>* excludeVerts, EdgeHit& hit) const;
+    bool pickIntersection(double px, double py, double tolPx, const std::vector<FaceRef>& faces, EdgeHit& hit) const;
+    // Front-most face under the cursor (index into faces, -1 if none).
+    int frontFace(const std::vector<FaceRef>& faces, const Ray& r, double& t) const;
     std::optional<EdgeHit> ix_; // intersection line near the cursor (set per infer call)
     bool pickAnyEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts, double tFace, EdgeHit& hit) const;
     // World-space hard edges of the instances that offer snaps (cached).
     const std::vector<Segment>& instanceEdges(int index, const PlacedInstance& p) const;
     bool snapsTo(const PlacedInstance& p) const;
+    // What offers snaps besides the mesh being edited: the placed components and,
+    // while a component is open, the model's loose geometry around it (def kNone).
+    std::vector<PlacedInstance> snapSources() const;
+    const Mesh& sourceMesh(const PlacedInstance& p) const {
+        return p.def == kNone ? doc_.state.mesh : doc_.state.defs[p.def].mesh;
+    }
     bool excluded(Id v, const Options& o) const { return o.excludeVerts && o.excludeVerts->count(v); }
     // pickEdge with the nearest face hit distance already known (for occlusion).
     Id pickEdgeT(double px, double py, double tolPx, const std::set<Id>* excludeVerts, double tFace) const;

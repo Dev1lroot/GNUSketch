@@ -925,8 +925,53 @@ int runSelfTest(MainWindow& w) {
         d.check(doc.undoName() == "Rotate" && std::fabs(xf.transformDir(Vec3(1, 0, 0)).x - 1) < 1e-6 &&
                     std::fabs(std::fabs(xf.transformDir(Vec3(0, 0, 1)).y) - 1) < 1e-6,
                 "Rotate sticks to a component's face and turns about its normal");
+        // Inside an open component, what is around it still snaps: the loose
+        // geometry of the model and the other components.
+        {
+            vp->setTool(ToolId::Select);
+            doc.undo(); // the rotation: the peg back where it was
+            doc.beginOp("Outer Box");
+            Mesh cube;
+            PrimitiveParams bp;
+            bp.kind = PrimitiveKind::Box;
+            buildPrimitive(bp, cube); // 1 x 1 x 1 on the ground
+            appendMesh(d.mesh(), cube, Mat4::translation(Vec3(205.5, 0.5, 0)));
+            doc.commitOp();
+            vp->setStandardView(Vec3(-1, 1, -0.8));
+            vp->camera().zoomExtents(Vec3(199.5, -0.5, 0), Vec3(206.5, 3.5, 2));
+            doc.selection.clear();
+            doc.openComponent(peg);
+            d.pump();
+            eng.resetMemory();
+            const Vec3 corner(206, 0, 1);
+            q = d.screen(corner) + QPointF(1, 1);
+            InferenceResult oc = eng.infer(q.x(), q.y(), none);
+            d.check(doc.editingComponent() && oc.type == InferenceResult::Endpoint && oc.p.nearlyEquals(corner, 1e-6),
+                    "inside a component: snaps to the corners of loose geometry outside it");
+            q = d.screen(Vec3(205.5, 0, 1)) + QPointF(1, 1);
+            InferenceResult om = eng.infer(q.x(), q.y(), none);
+            d.check(om.type == InferenceResult::Midpoint && om.p.nearlyEquals(Vec3(205.5, 0, 1), 1e-6), "and to their midpoints");
+            q = d.screen(Vec3(205.6, 0.4, 1));
+            InferenceResult of = eng.infer(q.x(), q.y(), none);
+            d.check(of.type == InferenceResult::OnFace && std::fabs(of.p.z - 1) < 1e-6, "and onto their faces");
+            q = d.screen(Vec3(201, 0.3, 2)) + QPointF(1, 1);
+            InferenceResult wc = eng.infer(q.x(), q.y(), none);
+            d.check(wc.type == InferenceResult::OnFace && std::fabs(wc.p.z - 2) < 1e-6, "and onto the faces of other components");
+            vp->setTool(ToolId::Line);
+            const size_t edgesBefore = d.mesh().edges.size();
+            d.click(d.screen(Vec3(203.5, 1, 1.5)) + QPointF(1, 1));
+            d.click(d.screen(corner) + QPointF(1, 1));
+            vp->setTool(ToolId::Select);
+            const Id v0 = d.mesh().findVertex(Vec3(203.5, 1, 1.5), 1e-6), v1 = d.mesh().findVertex(corner, 1e-6);
+            d.check(d.mesh().edges.size() > edgesBefore && v0 != kNone && v1 != kNone && d.mesh().findEdge(v0, v1) != kNone,
+                    "a line in the component ends on the loose geometry's corner");
+            doc.closeComponent();
+            doc.undo(); // the line
+            doc.undo(); // the outer box
+        }
+
         vp->setTool(ToolId::Select);
-        for (int i = 0; i < 4; ++i) doc.undo(); // two boxes, the line, the rotation
+        for (int i = 0; i < 3; ++i) doc.undo(); // two boxes and the line along their intersection
         doc.selection.clear();
         doc.notifySelection();
         eng.resetMemory();

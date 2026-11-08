@@ -127,8 +127,20 @@ bool InferenceEngine::snapsTo(const PlacedInstance& p) const {
     return p.inst != doc_.state.editing && (p.root == kNone || !ignoredInstances.count(p.root));
 }
 
+std::vector<PlacedInstance> InferenceEngine::snapSources() const {
+    std::vector<PlacedInstance> out = placedInstances(doc_.state);
+    if (doc_.state.editing != kNone) {
+        PlacedInstance outer; // the model's loose geometry, already in world coordinates
+        outer.inst = kNone;
+        outer.def = kNone;
+        outer.active = false;
+        out.push_back(outer);
+    }
+    return out;
+}
+
 const std::vector<InferenceEngine::Segment>& InferenceEngine::instanceEdges(int index, const PlacedInstance& p) const {
-    const Mesh& m = doc_.state.defs[p.def].mesh;
+    const Mesh& m = sourceMesh(p);
     CachedEdges& c = instEdges_[index];
     if (c.revision != m.revision || !std::equal(std::begin(c.xf.m), std::end(c.xf.m), std::begin(p.xf.m))) {
         c.revision = m.revision;
@@ -159,7 +171,7 @@ bool InferenceEngine::pickAnyEdge(double px, double py, double tolPx, const std:
         bestD = pixelDistance(hit.p, px, py);
         found = true;
     }
-    const std::vector<PlacedInstance> placed = placedInstances(doc_.state);
+    const std::vector<PlacedInstance> placed = snapSources();
     for (int i = 0; i < (int)placed.size(); ++i) {
         if (!snapsTo(placed[i])) continue;
         for (const Segment& s : instanceEdges(i, placed[i])) {
@@ -201,12 +213,14 @@ std::vector<InferenceEngine::FaceRef> InferenceEngine::worldFaces(const std::set
         r.mesh = &m;
         r.face = f;
         r.plane = m.facePlane(f);
+        r.active = true;
         out.push_back(r);
     }
     const ModelState& st = doc_.state;
-    for (const PlacedInstance& placed : placedInstances(st)) {
-        if (!placed.active || placed.root == kNone || placed.inst == st.editing || ignoredInstances.count(placed.root)) continue;
-        const Mesh& dm = st.defs[placed.def].mesh;
+    // Components, and while one is open everything around it.
+    for (const PlacedInstance& placed : snapSources()) {
+        if (!snapsTo(placed) || placed.inst == st.editing) continue;
+        const Mesh& dm = sourceMesh(placed);
         const Mat4 inv = placed.xf.inverted();
         for (Id f = 0; f < (Id)dm.faces.size(); ++f) {
             const Face& F = dm.faces[f];
@@ -239,25 +253,9 @@ bool InferenceEngine::faceContains(const FaceRef& f, const Vec3& p) const {
     return f.mesh->pointInFace(f.face, f.inv.transformPoint(p), true);
 }
 
-Vec3 InferenceEngine::faceNormalAt(double px, double py, const std::set<Id>* ex) const {
-    const Ray r = cam_.ray(px, py);
-    double best = std::numeric_limits<double>::infinity();
-    Vec3 n;
-    for (const FaceRef& f : worldFaces(ex)) {
-        double t;
-        if (rayHitsFace(f, r, t) && t < best) {
-            best = t;
-            n = f.plane.n;
-        }
-    }
-    return n;
-}
-
-bool InferenceEngine::pickIntersection(double px, double py, double tolPx, const std::set<Id>* ex, EdgeHit& hit) const {
-    const std::vector<FaceRef> faces = worldFaces(ex);
-    const Ray r = cam_.ray(px, py);
+int InferenceEngine::frontFace(const std::vector<FaceRef>& faces, const Ray& r, double& tFront) const {
     int front = -1;
-    double tFront = std::numeric_limits<double>::infinity();
+    tFront = std::numeric_limits<double>::infinity();
     for (int i = 0; i < (int)faces.size(); ++i) {
         double t;
         if (rayHitsFace(faces[i], r, t) && t < tFront) {
@@ -265,6 +263,20 @@ bool InferenceEngine::pickIntersection(double px, double py, double tolPx, const
             front = i;
         }
     }
+    return front;
+}
+
+Vec3 InferenceEngine::faceNormalAt(double px, double py, const std::set<Id>* ex) const {
+    const std::vector<FaceRef> faces = worldFaces(ex);
+    double t;
+    const int f = frontFace(faces, cam_.ray(px, py), t);
+    return f >= 0 ? faces[f].plane.n : Vec3();
+}
+
+bool InferenceEngine::pickIntersection(double px, double py, double tolPx, const std::vector<FaceRef>& faces, EdgeHit& hit) const {
+    const Ray r = cam_.ray(px, py);
+    double tFront;
+    const int front = frontFace(faces, r, tFront);
     if (front < 0) return false;
     const FaceRef& A = faces[front];
     // Faces of one placement that share an edge meet along it: not an intersection.
@@ -468,15 +480,19 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
 
     double tFace = std::numeric_limits<double>::infinity();
     Id face = pickFace(px, py, &tFace, o.excludeVerts);
-    if (face != kNone) {
-        rememberedNormal_ = m.faces[face].normal;
-    } else if (std::isfinite(tFace)) {
-        Vec3 n;
-        pickInstance(px, py, nullptr, &n);
-        if (n.length2() > 0.5) rememberedNormal_ = n;
+    // Faces of components and, inside an open component, of everything around
+    // it: they hide what is behind them and count as faces to snap on.
+    const std::vector<FaceRef> faces = worldFaces(o.excludeVerts);
+    double tAll;
+    const int front = frontFace(faces, r, tAll);
+    if (front >= 0 && tAll < tFace - 1e-9) {
+        tFace = tAll;
+        face = faces[front].active ? faces[front].face : kNone;
     }
+    if (face != kNone) rememberedNormal_ = m.faces[face].normal;
+    else if (front >= 0) rememberedNormal_ = faces[front].plane.n;
     ix_.reset();
-    if (EdgeHit ih; pickIntersection(px, py, snap, o.excludeVerts, ih)) ix_ = ih;
+    if (EdgeHit ih; pickIntersection(px, py, snap, faces, ih)) ix_ = ih;
     auto visible = [&](const Vec3& p) {
         double depth = (p - r.origin).dot(r.dir);
         if (cam_.perspective && depth < 0) return false;
@@ -513,12 +529,11 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     bool instPoint = false;
     Vec3 instP;
     if (bestV == kNone) {
-        const ModelState& st = doc_.state;
         double bd = snap;
-        for (const PlacedInstance& placed : placedInstances(st)) {
+        for (const PlacedInstance& placed : snapSources()) {
             if (!snapsTo(placed)) continue;
             const Mat4& xf = placed.xf;
-            for (const Vertex& v : st.defs[placed.def].mesh.vertices) {
+            for (const Vertex& v : sourceMesh(placed).vertices) {
                 if (!v.alive) continue;
                 Vec3 p = xf.transformPoint(v.p);
                 double d = pixelDistance(p, px, py);
@@ -562,7 +577,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     std::optional<Segment> instMid;
     if (bestV == kNone && !instPoint && bestMid == kNone) {
         double bd = snap;
-        const std::vector<PlacedInstance> placed = placedInstances(doc_.state);
+        const std::vector<PlacedInstance> placed = snapSources();
         for (int i = 0; i < (int)placed.size(); ++i) {
             if (!snapsTo(placed[i])) continue;
             for (const Segment& s : instanceEdges(i, placed[i])) {
@@ -731,7 +746,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
                 if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge});
             }
         // Edges of components meeting at the reference point.
-        const std::vector<PlacedInstance> placed = placedInstances(doc_.state);
+        const std::vector<PlacedInstance> placed = snapSources();
         for (int i = 0; i < (int)placed.size(); ++i) {
             if (!snapsTo(placed[i])) continue;
             for (const Segment& s : instanceEdges(i, placed[i])) {

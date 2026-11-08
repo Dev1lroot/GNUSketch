@@ -24,6 +24,7 @@ bottom. Screenshots help.
 - [ ] Push/Pull: box from rectangle, taller/shorter box, pocket, push through (hole), Ctrl = new start face, double-click repeat
 - [ ] Move / Ctrl copy / `5x` array; Rotate with 15° snaps; Offset
 - [ ] Rotate sticks to the face under the cursor, loose or of a component (tilted/rotated ones too); hold Shift to keep that plane while picking a centre elsewhere; arrow keys still lock axes
+- [ ] Inside an open component: endpoints, midpoints, edges and faces of the loose geometry and of other components around it still snap (and hide snaps behind them); draw a line from the component to an outside corner; Rotate sticks to an outside face
 - [ ] Intersections: push one component (or loose box) halfway into another; hover where their faces cut through each other ("On Intersection", magenta dashed seam), its ends ("Intersection"); draw a line from end to end, and a line along an axis that stops on the seam
 - [ ] Scale grips: corner (uniform), Shift+corner (free), edge midpoint (2 axes), face centre (1 axis), Ctrl about centre, typed `2` / `1.5,2` / `1,2,1` during and right after; a rotated component scales along its own sides; a flat rectangle shows only its 8 in-plane grips
 - [ ] Eraser (drag, Shift hide, Ctrl soften); Delete key; Undo/Redo

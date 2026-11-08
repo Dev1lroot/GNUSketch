@@ -3,6 +3,7 @@
 
 #include "core/Components.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -29,6 +30,7 @@ std::string InferenceResult::label() const {
     case Parallel: return "Parallel to Edge";
     case Perpendicular: return "Perpendicular to Edge";
     case FaceNormal: return "Perpendicular to Face";
+    case OnIntersection: return "On Intersection";
     default: return "";
     }
 }
@@ -173,6 +175,152 @@ bool InferenceEngine::pickAnyEdge(double px, double py, double tolPx, const std:
             hit.p = q;
             found = true;
         }
+    }
+    // No edge: the line where two faces cut through each other.
+    if (!found && ix_ && pixelDistance(ix_->p, px, py) < tolPx) {
+        hit = *ix_;
+        found = true;
+    }
+    return found;
+}
+
+std::vector<InferenceEngine::FaceRef> InferenceEngine::worldFaces(const std::set<Id>* ex) const {
+    std::vector<FaceRef> out;
+    if (doc_.style.faceStyle == RenderStyle::Wireframe) return out;
+    const Mesh& m = doc_.mesh();
+    for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+        const Face& F = m.faces[f];
+        if (!F.alive || F.hidden) continue;
+        if (ex) {
+            bool skip = false;
+            for (Id v : F.outer)
+                if (ex->count(v)) { skip = true; break; }
+            if (skip) continue;
+        }
+        FaceRef r;
+        r.mesh = &m;
+        r.face = f;
+        r.plane = m.facePlane(f);
+        out.push_back(r);
+    }
+    const ModelState& st = doc_.state;
+    for (const PlacedInstance& placed : placedInstances(st)) {
+        if (!placed.active || placed.root == kNone || placed.inst == st.editing || ignoredInstances.count(placed.root)) continue;
+        const Mesh& dm = st.defs[placed.def].mesh;
+        const Mat4 inv = placed.xf.inverted();
+        for (Id f = 0; f < (Id)dm.faces.size(); ++f) {
+            const Face& F = dm.faces[f];
+            if (!F.alive || F.hidden || F.outer.empty()) continue;
+            const Vec3& c = F.normal;
+            const Vec3 n(inv.at(0, 0) * c.x + inv.at(1, 0) * c.y + inv.at(2, 0) * c.z,
+                         inv.at(0, 1) * c.x + inv.at(1, 1) * c.y + inv.at(2, 1) * c.z,
+                         inv.at(0, 2) * c.x + inv.at(1, 2) * c.y + inv.at(2, 2) * c.z);
+            if (n.length2() < 1e-24) continue;
+            FaceRef r;
+            r.mesh = &dm;
+            r.face = f;
+            r.xf = placed.xf;
+            r.inv = inv;
+            r.plane = Plane(n, placed.xf.transformPoint(dm.pos(F.outer[0])));
+            out.push_back(r);
+        }
+    }
+    return out;
+}
+
+bool InferenceEngine::rayHitsFace(const FaceRef& f, const Ray& r, double& t) const {
+    if (doc_.style.backfaceCulling && !doc_.style.xray && f.plane.n.dot(r.dir) >= 0) return false; // not drawn
+    // Same parameter t in world and definition coordinates.
+    const Ray lr{f.inv.transformPoint(r.origin), f.inv.transformDir(r.dir)};
+    return f.mesh->rayFace(f.face, lr, t);
+}
+
+bool InferenceEngine::faceContains(const FaceRef& f, const Vec3& p) const {
+    return f.mesh->pointInFace(f.face, f.inv.transformPoint(p), true);
+}
+
+Vec3 InferenceEngine::faceNormalAt(double px, double py, const std::set<Id>* ex) const {
+    const Ray r = cam_.ray(px, py);
+    double best = std::numeric_limits<double>::infinity();
+    Vec3 n;
+    for (const FaceRef& f : worldFaces(ex)) {
+        double t;
+        if (rayHitsFace(f, r, t) && t < best) {
+            best = t;
+            n = f.plane.n;
+        }
+    }
+    return n;
+}
+
+bool InferenceEngine::pickIntersection(double px, double py, double tolPx, const std::set<Id>* ex, EdgeHit& hit) const {
+    const std::vector<FaceRef> faces = worldFaces(ex);
+    const Ray r = cam_.ray(px, py);
+    int front = -1;
+    double tFront = std::numeric_limits<double>::infinity();
+    for (int i = 0; i < (int)faces.size(); ++i) {
+        double t;
+        if (rayHitsFace(faces[i], r, t) && t < tFront) {
+            tFront = t;
+            front = i;
+        }
+    }
+    if (front < 0) return false;
+    const FaceRef& A = faces[front];
+    // Faces of one placement that share an edge meet along it: not an intersection.
+    auto adjacent = [](const FaceRef& a, const FaceRef& b) {
+        if (a.mesh != b.mesh || !std::equal(std::begin(a.xf.m), std::end(a.xf.m), std::begin(b.xf.m))) return false;
+        const std::vector<Id> va = a.mesh->faceVertices(a.face), vb = b.mesh->faceVertices(b.face);
+        int shared = 0;
+        for (Id v : va) shared += std::find(vb.begin(), vb.end(), v) != vb.end();
+        return shared >= 2;
+    };
+    // The piece [lo, hi] of the line p0 + u*s around sq that lies inside face F.
+    auto clip = [](const FaceRef& F, const Vec3& p0, const Vec3& u, double sq, double& lo, double& hi) {
+        const Face& face = F.mesh->faces[F.face];
+        auto loop = [&](const std::vector<Id>& L) {
+            for (size_t i = 0; i < L.size(); ++i) {
+                const Vec3 a = F.xf.transformPoint(F.mesh->pos(L[i])), b = F.xf.transformPoint(F.mesh->pos(L[(i + 1) % L.size()]));
+                double s, v;
+                if (!closestLineLine(p0, u, a, b - a, s, v) || v < -1e-9 || v > 1 + 1e-9) continue;
+                if ((p0 + u * s - lerp(a, b, v)).length() > kTol) continue;
+                if (s < sq - 1e-9) lo = std::max(lo, s);
+                else if (s > sq + 1e-9) hi = std::min(hi, s);
+            }
+        };
+        loop(face.outer);
+        for (const auto& h : face.holes) loop(h);
+    };
+    double bestD = tolPx;
+    bool found = false;
+    for (int j = 0; j < (int)faces.size(); ++j) {
+        if (j == front) continue;
+        const FaceRef& B = faces[j];
+        Vec3 u = A.plane.n.cross(B.plane.n);
+        if (u.length() < 1e-6) continue; // parallel
+        const Vec3 p0 = (B.plane.n.cross(u) * A.plane.d + u.cross(A.plane.n) * B.plane.d) / u.length2();
+        u = u.normalized();
+        double s, t;
+        if (!closestLineLine(p0, u, r.origin, r.dir, s, t)) continue;
+        const Vec3 q = p0 + u * s;
+        const double d = pixelDistance(q, px, py);
+        if (d >= bestD) continue;
+        const double depth = (q - r.origin).dot(r.dir);
+        if (cam_.perspective && depth < 0) continue;
+        if (depth > tFront + std::max(cam_.pixelSize(q) * 3.0, 1e-4)) continue; // hidden
+        if (!faceContains(A, q) || !faceContains(B, q) || adjacent(A, B)) continue;
+        double lo = -std::numeric_limits<double>::infinity(), hi = std::numeric_limits<double>::infinity();
+        clip(A, p0, u, s, lo, hi);
+        clip(B, p0, u, s, lo, hi);
+        if (!std::isfinite(lo)) lo = s;
+        if (!std::isfinite(hi)) hi = s;
+        if (hi - lo < kTol) continue;
+        bestD = d;
+        hit.seg = {p0 + u * lo, p0 + u * hi};
+        hit.edge = kNone;
+        hit.p = q;
+        hit.intersection = true;
+        found = true;
     }
     return found;
 }
@@ -327,6 +475,8 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         pickInstance(px, py, nullptr, &n);
         if (n.length2() > 0.5) rememberedNormal_ = n;
     }
+    ix_.reset();
+    if (EdgeHit ih; pickIntersection(px, py, snap, o.excludeVerts, ih)) ix_ = ih;
     auto visible = [&](const Vec3& p) {
         double depth = (p - r.origin).dot(r.dir);
         if (cam_.perspective && depth < 0) return false;
@@ -377,6 +527,19 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
                     instP = p;
                     instPoint = true;
                 }
+            }
+        }
+    }
+    // Ends of a face-face intersection line (where it leaves one of the faces).
+    bool ixEnd = false;
+    if (bestV == kNone && !instPoint && ix_) {
+        double bd = snap;
+        for (const Vec3& p : {ix_->seg.a, ix_->seg.b}) {
+            const double d = pixelDistance(p, px, py);
+            if (d < bd && visible(p)) {
+                bd = d;
+                instP = p;
+                instPoint = ixEnd = true;
             }
         }
     }
@@ -431,9 +594,14 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         res.vertex = bestV;
         remembered_ = res.p;
     } else if (instPoint) {
-        res.type = InferenceResult::Endpoint;
+        res.type = ixEnd ? InferenceResult::Intersection : InferenceResult::Endpoint;
         res.p = instP;
         remembered_ = res.p;
+        if (ixEnd) {
+            res.hasEdge = true;
+            res.edgeA = ix_->seg.a;
+            res.edgeB = ix_->seg.b;
+        }
     } else if (bestMid != kNone) {
         res.type = InferenceResult::Midpoint;
         res.edge = bestMid;
@@ -633,7 +801,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
                 // An edge through the start point crosses the line there: ignore it.
                 atRef = (p1 - *o.ref).length() < kTol * 10;
                 if (!atRef && (p1 - p2).length() < std::max(cam_.pixelSize(p1) * 2, kTol * 10) && pixelDistance(p1, px, py) < snap) {
-                    res.type = InferenceResult::OnEdge;
+                    res.type = eh.intersection ? InferenceResult::OnIntersection : InferenceResult::OnEdge;
                     res.edge = eh.edge;
                     res.hasEdge = true;
                     res.edgeA = a;
@@ -699,7 +867,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     // --- on edge / guide / face -------------------------------------------------
     if (EdgeHit eh; pickAnyEdge(px, py, 6.0, o.excludeVerts, tFace, eh)) {
         Vec3 a = eh.seg.a, b = eh.seg.b;
-        res.type = InferenceResult::OnEdge;
+        res.type = eh.intersection ? InferenceResult::OnIntersection : InferenceResult::OnEdge;
         res.edge = eh.edge;
         res.hasEdge = true;
         res.edgeA = a;
@@ -756,10 +924,14 @@ void InferenceEngine::addPreview(const InferenceResult& r, Preview& pv) const {
     case InferenceResult::GuidePoint:
     case InferenceResult::OnGuide: pv.markers.push_back({r.p, MK::Guide}); break;
     case InferenceResult::Intersection: pv.markers.push_back({r.p, MK::Intersection}); break;
+    case InferenceResult::OnIntersection: pv.markers.push_back({r.p, MK::OnEdge}); break;
     case InferenceResult::FromPoint: pv.markers.push_back({r.p, MK::Plain}); break;
     default: break;
     }
     if (r.hasLine) pv.line(r.lineA, r.lineB, r.lineColor, 1.2f, Dash::Dotted);
+    // Show the whole intersection line the cursor is on.
+    if ((r.type == InferenceResult::OnIntersection || r.type == InferenceResult::Intersection) && r.hasEdge)
+        pv.line(r.edgeA, r.edgeB, Color::rgb8(220, 0, 220), 2.0f, Dash::Dashed);
     std::string l = r.label();
     if (!l.empty()) pv.labels.push_back({r.p, l});
 }

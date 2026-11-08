@@ -857,6 +857,81 @@ int runSelfTest(MainWindow& w) {
         eng.resetMemory();
     }
 
+    // Two components cutting through each other: the line where their faces
+    // meet snaps like an edge, a line can be drawn along it, and Rotate sticks
+    // to a component's face.
+    {
+        auto boxInst = [&](Vec3 mn, Vec3 mx, const char* name) {
+            doc.beginOp("Box");
+            Mesh& m = d.mesh();
+            m.drawPolyline({{mn.x, mn.y, mn.z}, {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mn.x, mx.y, mn.z}}, true);
+            const Vec3 c((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mn.z);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && m.facePlane(f).contains(c) && m.pointInFace(f, c)) {
+                    m.pushPull(f, (mx.z - mn.z) * m.faces[f].normal.z);
+                    break;
+                }
+            Selection s;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+                const Vec3 p = m.faceInteriorPoint(f);
+                if (m.faces[f].alive && p.x > mn.x - 1e-6 && p.x < mx.x + 1e-6 && p.y > mn.y - 1e-6 && p.y < mx.y + 1e-6 &&
+                    p.z > mn.z - 1e-6 && p.z < mx.z + 1e-6)
+                    s.faces.insert(f);
+            }
+            Id inst = makeComponent(doc.state, s, name);
+            doc.commitOp();
+            return inst;
+        };
+        InferenceEngine& eng = vp->inference();
+        InferenceEngine::Options none;
+        boxInst(Vec3(200, 0, 0), Vec3(202, 2, 2), "Wall");
+        const Id peg = boxInst(Vec3(201, 1, 0.5), Vec3(203.5, 3, 1.5), "Peg");
+        doc.selection.clear();
+        doc.notifySelection();
+        vp->setStandardView(Vec3(-1, 1, -0.8));
+        vp->camera().zoomExtents(Vec3(199.5, -0.5, 0), Vec3(204, 3.5, 2));
+        d.pump();
+        eng.resetMemory();
+        const Vec3 seamA(202, 1, 0.5), seamB(202, 1, 1.5);
+        QPointF q = d.screen(Vec3(202, 1, 0.9)) + QPointF(1, 1);
+        InferenceResult on = eng.infer(q.x(), q.y(), none);
+        d.check(on.type == InferenceResult::OnIntersection && std::fabs(on.p.x - 202) < 1e-6 && std::fabs(on.p.y - 1) < 1e-6 &&
+                    on.hasEdge && ((on.edgeA.nearlyEquals(seamA, 1e-6) && on.edgeB.nearlyEquals(seamB, 1e-6)) ||
+                                   (on.edgeA.nearlyEquals(seamB, 1e-6) && on.edgeB.nearlyEquals(seamA, 1e-6))),
+                "snaps onto the line where two components' faces cut through each other");
+        q = d.screen(seamB) + QPointF(1, 1);
+        InferenceResult end = eng.infer(q.x(), q.y(), none);
+        d.check(end.type == InferenceResult::Intersection && end.p.nearlyEquals(seamB, 1e-6), "and onto its ends");
+
+        vp->setTool(ToolId::Line);
+        d.click(d.screen(seamA) + QPointF(1, 1));
+        d.click(d.screen(seamB) + QPointF(1, 1));
+        vp->setTool(ToolId::Select);
+        const Id va = d.mesh().findVertex(seamA, 1e-6), vb = d.mesh().findVertex(seamB, 1e-6);
+        d.check(va != kNone && vb != kNone && d.mesh().findEdge(va, vb) != kNone, "Line draws along the intersection of two components");
+
+        // Rotate the peg about a point on the wall's side face: around the red axis.
+        doc.selection.clear();
+        doc.selection.instances.insert(peg);
+        doc.notifySelection();
+        vp->setTool(ToolId::Rotate);
+        const Vec3 c(202, 0.5, 0.3);
+        d.move(d.screen(c) + QPointF(1, 1));
+        d.click(d.screen(c) + QPointF(1, 1));
+        d.click(d.screen(c + Vec3(0, 0.5, 0)));
+        d.move(d.screen(c + Vec3(0, 0, 0.5)));
+        d.type("90");
+        const Mat4& xf = doc.state.instances[peg].xf;
+        d.check(doc.undoName() == "Rotate" && std::fabs(xf.transformDir(Vec3(1, 0, 0)).x - 1) < 1e-6 &&
+                    std::fabs(std::fabs(xf.transformDir(Vec3(0, 0, 1)).y) - 1) < 1e-6,
+                "Rotate sticks to a component's face and turns about its normal");
+        vp->setTool(ToolId::Select);
+        for (int i = 0; i < 4; ++i) doc.undo(); // two boxes, the line, the rotation
+        doc.selection.clear();
+        doc.notifySelection();
+        eng.resetMemory();
+    }
+
     // Rectangles on vertical planes, front side toward the camera.
     {
         auto faceNear = [&](const Vec3& p) {

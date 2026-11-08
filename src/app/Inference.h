@@ -23,7 +23,8 @@ struct InferenceResult {
         AlongEdge,     // from the reference point along an edge there (or its extension)
         Parallel,      // parallel to the last hovered edge
         Perpendicular, // perpendicular to the last hovered edge
-        FaceNormal     // perpendicular to the last hovered face
+        FaceNormal,    // perpendicular to the last hovered face
+        OnIntersection // on the line where two faces cut through each other (no edge there)
     };
     Type type = None;
     Vec3 p;
@@ -65,6 +66,9 @@ public:
     InferenceResult infer(double px, double py, const Options& opt);
     PickResult pick(double px, double py, double edgeTolPx = 6.0, const std::set<Id>* excludeVerts = nullptr) const;
     Id pickFace(double px, double py, double* tOut = nullptr, const std::set<Id>* excludeVerts = nullptr) const;
+    // World normal of the front-most face under the cursor, loose or of a
+    // component (zero if there is none).
+    Vec3 faceNormalAt(double px, double py, const std::set<Id>* excludeVerts = nullptr) const;
     Id pickEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts = nullptr) const;
     int pickGuide(double px, double py, double tolPx) const;
     // Closest component instance at the level being edited under the cursor;
@@ -91,7 +95,22 @@ private:
         Segment seg;
         Id edge = kNone; // loose edge id (kNone for a component edge)
         Vec3 p;          // point on the edge under the cursor
+        bool intersection = false; // a face/face intersection line, not an edge
     };
+    // A face in world space: loose (xf identity) or of a placed component.
+    struct FaceRef {
+        const Mesh* mesh = nullptr;
+        Id face = kNone;
+        Mat4 xf, inv;
+        Plane plane; // world
+    };
+    std::vector<FaceRef> worldFaces(const std::set<Id>* excludeVerts) const;
+    bool rayHitsFace(const FaceRef& f, const Ray& r, double& t) const;
+    bool faceContains(const FaceRef& f, const Vec3& worldP) const;
+    // Where the face-face intersection line under the cursor runs inside both
+    // faces; seg is that piece and p the point nearest the cursor.
+    bool pickIntersection(double px, double py, double tolPx, const std::set<Id>* excludeVerts, EdgeHit& hit) const;
+    std::optional<EdgeHit> ix_; // intersection line near the cursor (set per infer call)
     bool pickAnyEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts, double tFace, EdgeHit& hit) const;
     // World-space hard edges of the instances that offer snaps (cached).
     const std::vector<Segment>& instanceEdges(int index, const PlacedInstance& p) const;

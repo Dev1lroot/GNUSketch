@@ -719,7 +719,9 @@ void PushPullTool::buildPreview(Preview& pv) {
         }
         if (&L == &loops[0]) pv.polys.push_back({ring, Color::rgb8(90, 90, 200, 60)});
     }
-    if (inf_.isSnap() || inf_.type == InferenceResult::OnEdge || inf_.type == InferenceResult::OnFace) engine().addPreview(inf_, pv);
+    if (inf_.isSnap() || inf_.type == InferenceResult::OnEdge || inf_.type == InferenceResult::OnIntersection ||
+        inf_.type == InferenceResult::OnFace)
+        engine().addPreview(inf_, pv);
     pv.line(start_, start_ + off, Color::rgb8(220, 0, 220), 1.0f, Dash::Dotted);
 }
 
@@ -1055,7 +1057,7 @@ void MoveTool::buildPreview(Preview& pv) {
 
 QString RotateTool::status() const {
     switch (stage_) {
-    case 0: return QStringLiteral("Pick the rotation center. Arrow keys lock the rotation plane (Right=red, Left=green, Up=blue). Ctrl = copy.");
+    case 0: return QStringLiteral("Pick the rotation center; the protractor sticks to the face under the cursor (hold Shift to keep it). Arrow keys lock the plane (Right=red, Left=green, Up=blue). Ctrl = copy.");
     case 1: return QStringLiteral("Pick the start of the rotation angle.");
     default: return QStringLiteral("Pick the end angle or type degrees. Snaps every 15°.");
     }
@@ -1085,8 +1087,12 @@ bool RotateTool::keyPress(QKeyEvent* e) {
 
 Vec3 RotateTool::planeNormalAt(const MouseEvent& e, const InferenceResult& r) {
     if (forcedAxis_ >= 0) return kAxes[forcedAxis_];
-    Id f = r.face != kNone ? r.face : engine().pickFace(e.x, e.y);
-    if (f != kNone) return mesh().faces[f].normal;
+    // Shift keeps the plane of the face it stuck to, to pick a centre elsewhere.
+    if (e.shift() && normal_.length2() > 0.5) return normal_;
+    if (r.face != kNone) return mesh().faces[r.face].normal;
+    // The face under the cursor, loose or of a component.
+    const Vec3 n = engine().faceNormalAt(e.x, e.y);
+    if (n.length2() > 0.5) return n.normalized();
     return viewPlaneNormal();
 }
 

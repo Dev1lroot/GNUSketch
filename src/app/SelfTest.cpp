@@ -240,6 +240,41 @@ int runSelfTest(MainWindow& w) {
     d.type("800");
     d.check(d.mesh().aliveFaceCount() == faces + 25, "circle extruded into a cylinder");
 
+    // Push/pull acts on every selected face: select all the upward tops and pull them up together.
+    {
+        std::set<Id> tops;
+        std::vector<Vec3> pts;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive && d.mesh().faces[f].normal.z > 0.99 && d.mesh().faceInteriorPoint(f).z > 0.1) {
+                tops.insert(f);
+                pts.push_back(d.mesh().faceInteriorPoint(f));
+            }
+        d.check(tops.size() >= 3, "several top faces to push/pull");
+        doc.selection.clear();
+        doc.selection.faces = tops;
+        doc.notifySelection();
+        vp->setTool(ToolId::PushPull);
+        QPointF tc = d.screen(Vec3(-3, 0, 0.8));
+        d.click(tc);
+        d.move(tc - QPointF(0, 40));
+        d.type("500");
+        int raised = 0;
+        for (const Vec3& p : pts) {
+            Vec3 q = p + Vec3(0, 0, 0.5);
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && d.mesh().faces[f].normal.z > 0.99 &&
+                    std::fabs(d.mesh().facePlane(f).distance(q)) < 1e-6 && d.mesh().pointInFace(f, q, false)) {
+                    ++raised;
+                    break;
+                }
+        }
+        d.check(raised == (int)pts.size(), "push/pull moves all selected faces");
+        d.check(doc.selection.faces.size() == tops.size(), "pushed faces stay selected");
+        doc.undo();
+        doc.selection.clear();
+        doc.notifySelection();
+    }
+
     // Polygon, arc and freehand.
     vp->setTool(ToolId::Polygon);
     d.click(d.screen(Vec3(-3, 4, 0)));

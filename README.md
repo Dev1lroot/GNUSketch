@@ -83,6 +83,8 @@ was read, tags, props and animations included.
 * **Push/Pull** extrudes faces. When a face's edges all border perpendicular faces,
   it stretches the solid instead. Coplanar side faces are healed, pushing through a
   solid cuts a hole, and the sides of circles and arcs become soft and smooth-shaded.
+  Clicking one of several selected faces pushes/pulls all of them by the same
+  distance, each along its own normal; neighbouring coplanar faces move as one.
 * **Follow Me** sweeps any profile face (with holes) along a path of lines, arcs
   or a closed outline, with mitred joints: pipes, T/H/I beams, mouldings and
   lathed shapes. Select the path and click the profile, or click the profile and

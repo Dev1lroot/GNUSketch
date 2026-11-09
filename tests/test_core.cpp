@@ -263,6 +263,54 @@ int main() {
         CHECK(std::fabs(totalArea(m) - expected) < 1e-9);
     });
 
+    test("push/pull several selected faces at once", [] {
+        // Two separate boxes: both tops go up together.
+        Mesh m;
+        rect(m, 0, 0, 1, 1);
+        rect(m, 3, 0, 4, 1);
+        std::set<Id> ground;
+        for (Id g = 0; g < (Id)m.faces.size(); ++g)
+            if (m.faces[g].alive) ground.insert(g);
+        CHECK_EQ((int)ground.size(), 2);
+        std::vector<Id> moved = m.pushPullFaces(ground, -1);
+        CHECK_EQ((int)moved.size(), 2);
+        CHECK_EQ(m.aliveFaceCount(), 12);
+        CHECK(std::fabs(totalArea(m) - 2 * 6) < 1e-9);
+
+        // Both halves of a split box top pulled up: one region, no inner walls,
+        // the dividing line is kept on the new top.
+        Mesh b;
+        rect(b, 0, 0, 2, 1);
+        b.pushPull(onlyFace(b), -1);
+        b.drawLine({1, 0, 1}, {1, 1, 1});
+        std::set<Id> tops;
+        for (Id g = 0; g < (Id)b.faces.size(); ++g)
+            if (b.faces[g].alive && b.faces[g].normal.z > 0.99) tops.insert(g);
+        CHECK_EQ((int)tops.size(), 2);
+        moved = b.pushPullFaces(tops, 1);
+        CHECK_EQ((int)moved.size(), 2);
+        Vec3 mn, mx;
+        bool any;
+        b.bounds(mn, mx, any);
+        CHECK(std::fabs(mx.z - 2) < 1e-9);
+        CHECK_EQ(b.aliveFaceCount(), 7);
+        CHECK(std::fabs(totalArea(b) - (2 * 2 + 2 * 2 * 2 + 2 * 1 * 2)) < 1e-9);
+        for (Id g : moved) CHECK(b.faces[g].alive && b.faces[g].normal.z > 0.99 && std::fabs(b.faceArea(g) - 1) < 1e-9);
+
+        // Opposite sides of a box: each moves along its own normal.
+        Mesh c;
+        rect(c, 0, 0, 1, 1);
+        c.pushPull(onlyFace(c), -1);
+        std::set<Id> sides;
+        for (Id g = 0; g < (Id)c.faces.size(); ++g)
+            if (c.faces[g].alive && std::fabs(c.faces[g].normal.x) > 0.99) sides.insert(g);
+        CHECK_EQ((int)sides.size(), 2);
+        c.pushPullFaces(sides, 0.5);
+        c.bounds(mn, mx, any);
+        CHECK(std::fabs(mn.x + 0.5) < 1e-9 && std::fabs(mx.x - 1.5) < 1e-9);
+        CHECK_EQ(c.aliveFaceCount(), 6);
+    });
+
     test("push/pull through a solid cuts a hole", [] {
         Mesh m;
         rect(m, 0, 0, 2, 2);

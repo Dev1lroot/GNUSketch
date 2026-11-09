@@ -1002,6 +1002,131 @@ bool Mesh::mergeCollinearAt(Id v) {
 // Push / Pull
 // ---------------------------------------------------------------------------
 
+std::vector<Id> Mesh::pushPullFaces(const std::set<Id>& fs, double dist, bool keepOriginal) {
+    std::vector<Id> result;
+    if (std::fabs(dist) < kTol) return result;
+    std::vector<Id> live;
+    for (Id f : fs)
+        if (f >= 0 && f < (Id)faces.size() && faces[f].alive) live.push_back(f);
+    if (live.size() == 1) {
+        Id r = pushPull(live[0], dist, keepOriginal);
+        if (r != kNone) result.push_back(r);
+        return result;
+    }
+
+    // Group faces that share an edge and lie in the same plane facing the same way.
+    const std::set<Id> in(live.begin(), live.end());
+    auto sameRegion = [&](Id a, Id b) {
+        return faces[a].normal.dot(faces[b].normal) > 1 - 1e-9 && facePlane(a).coincident(facePlane(b), kTol * 10);
+    };
+    std::map<Id, int> groupOf;
+    std::vector<std::vector<Id>> groups;
+    for (Id f : live) {
+        if (groupOf.count(f)) continue;
+        const int gi = (int)groups.size();
+        groups.push_back({});
+        std::vector<Id> stack = {f};
+        groupOf[f] = gi;
+        while (!stack.empty()) {
+            Id g = stack.back();
+            stack.pop_back();
+            groups[gi].push_back(g);
+            for (Id e : faceEdges(g))
+                for (Id h : edgeFaces(e))
+                    if (h != g && faces[h].alive && in.count(h) && !groupOf.count(h) && sameRegion(g, h)) {
+                        groupOf[h] = gi;
+                        stack.push_back(h);
+                    }
+        }
+    }
+
+    // Faces get renumbered by earlier operations (healing, merging), so each
+    // group is captured by geometry and found again when its turn comes.
+    struct Part {
+        Vec3 inside;
+        FaceSide front, back;
+        bool hidden;
+    };
+    struct Group {
+        Vec3 normal;
+        std::vector<Part> parts;
+        std::vector<std::pair<Vec3, Vec3>> inner; // shared edges between members
+        std::vector<Edge> innerFlags;
+    };
+    std::vector<Group> plan;
+    for (const auto& members : groups) {
+        Group G;
+        G.normal = faces[members[0]].normal;
+        std::set<Id> mem(members.begin(), members.end());
+        std::set<Id> seen;
+        for (Id g : members) {
+            G.parts.push_back({faceInteriorPoint(g), faces[g].front, faces[g].back, faces[g].hidden});
+            for (Id e : faceEdges(g)) {
+                if (seen.count(e)) continue;
+                int n = 0, alive = 0;
+                for (Id h : edgeFaces(e))
+                    if (faces[h].alive) { ++alive; n += mem.count(h) ? 1 : 0; }
+                if (n == 2 && alive == 2) {
+                    seen.insert(e);
+                    G.inner.emplace_back(pos(edges[e].v[0]), pos(edges[e].v[1]));
+                    G.innerFlags.push_back(edges[e]);
+                }
+            }
+        }
+        plan.push_back(std::move(G));
+    }
+
+    auto findFace = [&](const Vec3& p, const Vec3& n) {
+        for (Id g = 0; g < (Id)faces.size(); ++g)
+            if (faces[g].alive && faces[g].normal.dot(n) > 1 - 1e-6 && std::fabs(facePlane(g).distance(p)) < kTol * 10 &&
+                pointInFace(g, p, false))
+                return g;
+        return kNone;
+    };
+
+    for (const Group& G : plan) {
+        // Merge the region into one face by removing the edges between members.
+        for (const auto& seg : G.inner) {
+            Id a = findVertex(seg.first), b = findVertex(seg.second);
+            Id e = (a != kNone && b != kNone) ? findEdge(a, b) : kNone;
+            if (e != kNone) eraseEdge(e, true);
+        }
+        Id f = findFace(G.parts[0].inside, G.normal);
+        if (f == kNone) continue;
+        Id moved = pushPull(f, dist, keepOriginal);
+        if (moved == kNone || G.parts.size() == 1) {
+            if (moved != kNone) result.push_back(moved);
+            continue;
+        }
+        // Put the dividing edges back on the moved face and restore each part's look.
+        const Vec3 off = G.normal * dist;
+        const Vec3 movedN = faces[moved].normal;
+        for (size_t i = 0; i < G.inner.size(); ++i) {
+            for (Id e : drawLine(G.inner[i].first + off, G.inner[i].second + off)) {
+                edges[e].soft = G.innerFlags[i].soft;
+                edges[e].smooth = G.innerFlags[i].smooth;
+                edges[e].hidden = G.innerFlags[i].hidden;
+            }
+            if (keepOriginal) drawLine(G.inner[i].first, G.inner[i].second);
+        }
+        const bool flipped = movedN.dot(G.normal) < 0;
+        for (const Part& P : G.parts) {
+            Id g = findFace(P.inside + off, movedN);
+            if (g == kNone) continue;
+            FaceSide fr = P.front, bk = P.back;
+            if (fr.tex.valid) fr.tex.origin += off;
+            if (bk.tex.valid) bk.tex.origin += off;
+            if (flipped) std::swap(fr, bk);
+            faces[g].front = fr;
+            faces[g].back = bk;
+            faces[g].hidden = P.hidden;
+            result.push_back(g);
+        }
+    }
+    touch();
+    return result;
+}
+
 Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
     if (f < 0 || !faces[f].alive || std::fabs(dist) < kTol) return f;
     const Face F = faces[f];

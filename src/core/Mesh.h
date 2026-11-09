@@ -152,6 +152,10 @@ public:
     // Push/pull a face along its normal by dist. keepOriginal leaves the starting
     // face in place (Ctrl modifier). Returns the moved face id (or kNone).
     Id pushPull(Id f, double dist, bool keepOriginal = false);
+    // Push/pull several faces at once, each along its own normal by dist.
+    // Neighbouring coplanar faces in the set move together as one region (no
+    // walls between them); their shared edges are kept. Returns the moved faces.
+    std::vector<Id> pushPullFaces(const std::set<Id>& fs, double dist, bool keepOriginal = false);
 
     // Applies a transform to a set of vertices, keeps texture mappings of fully
     // transformed faces attached, refreshes normals and welds coincident vertices.

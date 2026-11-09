@@ -595,9 +595,22 @@ QString PushPullTool::status() const {
     return QStringLiteral("Move to set the distance, click a point to push/pull to it, or type a distance.");
 }
 
+std::set<Id> PushPullTool::facesFor(Id f) {
+    const auto& sel = doc().selection.faces;
+    if (f != kNone && sel.count(f)) {
+        std::set<Id> out;
+        for (Id g : sel)
+            if (g >= 0 && g < (Id)mesh().faces.size() && mesh().faces[g].alive) out.insert(g);
+        return out;
+    }
+    if (f == kNone) return {};
+    return {f};
+}
+
 void PushPullTool::reset() {
     pulling_ = dragged_ = false;
     face_ = kNone;
+    faces_.clear();
     clearLocks();
     refreshStatus();
     update();
@@ -611,6 +624,7 @@ void PushPullTool::mousePress(const MouseEvent& e) {
         Id f = engine().pickFace(e.x, e.y, &t);
         if (f == kNone) return;
         face_ = f;
+        faces_ = facesFor(f);
         start_ = cam().ray(e.x, e.y).at(t);
         normal_ = mesh().faces[f].normal;
         dist_ = 0;
@@ -619,7 +633,8 @@ void PushPullTool::mousePress(const MouseEvent& e) {
         pressX_ = e.x;
         pressY_ = e.y;
         faceVerts_.clear();
-        for (Id v : mesh().faceVertices(f)) faceVerts_.insert(v);
+        for (Id g : faces_)
+            for (Id v : mesh().faceVertices(g)) faceVerts_.insert(v);
         refreshStatus();
         update();
         return;
@@ -658,6 +673,7 @@ void PushPullTool::mouseDoubleClick(const MouseEvent& e) {
     Id f = engine().pickFace(e.x, e.y);
     if (f == kNone) return;
     face_ = f;
+    faces_ = facesFor(f);
     commit(lastDist_, e.ctrl());
 }
 
@@ -665,14 +681,31 @@ void PushPullTool::commit(double dist, bool keep) {
     pulling_ = dragged_ = false;
     refreshStatus();
     if (face_ == kNone || std::fabs(dist) < kTol) { update(); return; }
+    if (faces_.empty()) faces_ = {face_};
     lastFace_ = face_;
+    lastFaces_ = faces_;
     lastKeep_ = keep;
+    const bool hadSelection = faces_.size() > 1 || doc().selection.faces.count(face_);
     doc().beginOp("Push/Pull");
-    mesh().pushPull(face_, dist, keep);
+    std::vector<Id> moved;
+    if (faces_.size() == 1) {
+        Id r = mesh().pushPull(face_, dist, keep);
+        if (r != kNone) moved.push_back(r);
+    } else {
+        moved = mesh().pushPullFaces(faces_, dist, keep);
+    }
+    // Keep the pushed faces selected so they can be pushed again.
+    if (hadSelection) {
+        doc().selection.faces.clear();
+        doc().selection.edges.clear();
+        for (Id g : moved)
+            if (g >= 0 && g < (Id)mesh().faces.size() && mesh().faces[g].alive) doc().selection.faces.insert(g);
+    }
     doc().commitOp();
     lastDist_ = dist;
     canAdjust_ = true;
     face_ = kNone;
+    faces_.clear();
     setVcb(fmtLen(dist));
     update();
 }
@@ -689,6 +722,7 @@ bool PushPullTool::vcbEnter(const QString& text) {
         // Re-do the last push/pull with the typed distance.
         doc().undo();
         face_ = lastFace_;
+        faces_ = lastFaces_;
         if (face_ >= 0 && face_ < (Id)mesh().faces.size() && mesh().faces[face_].alive) {
             commit(lastDist_ < 0 ? -d : d, lastKeep_);
             return true;
@@ -704,20 +738,25 @@ void PushPullTool::buildPreview(Preview& pv) {
     }
     const Mesh& m = mesh();
     if (face_ < 0 || !m.faces[face_].alive) return;
-    pv.highlightFaces.insert(face_);
-    Vec3 off = normal_ * dist_;
-    const Face& F = m.faces[face_];
-    std::vector<std::vector<Id>> loops = {F.outer};
-    for (const auto& h : F.holes) loops.push_back(h);
-    for (const auto& L : loops) {
-        std::vector<Vec3> ring;
-        for (size_t i = 0; i < L.size(); ++i) {
-            Vec3 a = m.pos(L[i]) + off, b = m.pos(L[(i + 1) % L.size()]) + off;
-            pv.line(a, b, Color::rgb8(0, 0, 0), 1.4f);
-            pv.line(m.pos(L[i]), a, Color::rgb8(0, 0, 0), 1.0f);
-            ring.push_back(a);
+    const Vec3 off = normal_ * dist_;
+    for (Id fid : faces_.empty() ? std::set<Id>{face_} : faces_) {
+        if (fid < 0 || fid >= (Id)m.faces.size() || !m.faces[fid].alive) continue;
+        pv.highlightFaces.insert(fid);
+        const Face& F = m.faces[fid];
+        // Each face moves along its own normal; the drag measures along the picked one.
+        const Vec3 foff = F.normal * dist_;
+        std::vector<std::vector<Id>> loops = {F.outer};
+        for (const auto& h : F.holes) loops.push_back(h);
+        for (const auto& L : loops) {
+            std::vector<Vec3> ring;
+            for (size_t i = 0; i < L.size(); ++i) {
+                Vec3 a = m.pos(L[i]) + foff, b = m.pos(L[(i + 1) % L.size()]) + foff;
+                pv.line(a, b, Color::rgb8(0, 0, 0), 1.4f);
+                pv.line(m.pos(L[i]), a, Color::rgb8(0, 0, 0), 1.0f);
+                ring.push_back(a);
+            }
+            if (&L == &loops[0]) pv.polys.push_back({ring, Color::rgb8(90, 90, 200, 60)});
         }
-        if (&L == &loops[0]) pv.polys.push_back({ring, Color::rgb8(90, 90, 200, 60)});
     }
     if (inf_.isSnap() || inf_.type == InferenceResult::OnEdge || inf_.type == InferenceResult::OnIntersection ||
         inf_.type == InferenceResult::OnFace)

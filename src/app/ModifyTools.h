@@ -90,8 +90,12 @@ public:
 
 private:
     void commit(double dist, bool keep);
+    // The faces a pick on f acts on: the whole face selection when f is part of it.
+    std::set<Id> facesFor(Id f);
     bool pulling_ = false, dragged_ = false;
     Id face_ = kNone, hover_ = kNone;
+    std::set<Id> faces_;     // all faces being pushed/pulled (contains face_)
+    std::set<Id> lastFaces_; // faces of the last commit (state before it)
     Vec3 start_, normal_;
     double dist_ = 0, lastDist_ = 0;
     Id lastFace_ = kNone; // face id (in the state before the last commit)

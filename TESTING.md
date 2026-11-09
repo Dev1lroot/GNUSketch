@@ -21,7 +21,7 @@ bottom. Screenshots help.
 - [ ] Lines crossing each other split; overlapping rectangles split into regions
 
 ## Modifying
-- [ ] Push/Pull: box from rectangle, taller/shorter box, pocket, push through (hole), Ctrl = new start face, double-click repeat
+- [ ] Push/Pull: box from rectangle, taller/shorter box, pocket, push through (hole), Ctrl = new start face, double-click repeat, several selected faces (separate and adjacent) move together
 - [ ] Move / Ctrl copy / `5x` array; Rotate with 15° snaps; Offset
 - [ ] Rotate sticks to the face under the cursor, loose or of a component (tilted/rotated ones too); hold Shift to keep that plane while picking a centre elsewhere; arrow keys still lock axes
 - [ ] Inside an open component: endpoints, midpoints, edges and faces of the loose geometry and of other components around it still snap (and hide snaps behind them); draw a line from the component to an outside corner; Rotate sticks to an outside face

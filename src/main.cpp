@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("GNUSketch");
     QApplication::setOrganizationName("GNUSketch");
-    QApplication::setApplicationVersion("0.1.0");
+    QApplication::setApplicationVersion(QStringLiteral(GNUSKETCH_VERSION));
     gs::Theme::applyStored();
 
     QCommandLineParser parser;

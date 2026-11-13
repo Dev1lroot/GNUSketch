@@ -46,7 +46,8 @@ void TerrainSettings::setBrush(const TerrainBrush& b) {
     brush_.radius = std::max(brush_.radius, 1e-3);
     brush_.force = std::max(brush_.force, 1e-4);
     brush_.hardness = std::clamp(brush_.hardness, 0.0, 1.0);
-    brush_.density = std::max(brush_.density, 0.01);
+    // 0 = automatic (Terrain.h); a set density stays in a usable range.
+    brush_.density = brush_.density <= 0 ? 0.0 : std::clamp(brush_.density, 0.01, 10.0);
     QSettings s;
     s.setValue("terrain/radius", brush_.radius);
     s.setValue("terrain/force", brush_.force);
@@ -224,7 +225,9 @@ bool TerrainTool::wheel(double steps, Qt::KeyboardModifiers mods) {
         b.hardness = std::clamp(std::round((b.hardness + steps * kHardnessStep) / kHardnessStep) * kHardnessStep, 0.0, 1.0);
     } else if (shift) {
         // Регулировка целевой плотности / детализации сетки
-        b.density = std::clamp(b.density * std::pow(kDensityStep, steps), 0.01, 10.0);
+        // From automatic, start at what automatic gives.
+        const double from = b.density > 0 ? b.density : 1.0 / b.detail();
+        b.density = std::clamp(from * std::pow(kDensityStep, steps), 0.01, 10.0);
         setVcb(fmtLen(b.density));
     }
     

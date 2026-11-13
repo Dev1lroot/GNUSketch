@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(GNUSketch VERSION 0.1.0 LANGUAGES CXX)
+project(GNUSketch VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -98,15 +98,17 @@ add_executable(gnusketch
   src/app/SelfTest.h src/app/SelfTest.cpp
 )
 target_link_libraries(gnusketch PRIVATE gs_io Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Svg)
+target_compile_definitions(gnusketch PRIVATE GNUSKETCH_SOURCE_DIR="${CMAKE_SOURCE_DIR}" GNUSKETCH_VERSION="${PROJECT_VERSION}")
 target_compile_options(gnusketch PRIVATE -Wall -Wextra)
 
 install(TARGETS gnusketch RUNTIME DESTINATION bin)
-install(TARGETS gs_core gs_io LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(TARGETS gs_core gs_io LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES src/plugin/FormatPlugin.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gnusketch/plugin)
 
 # ---- plugins ----------------------------------------------------------------------
 add_subdirectory(plugins/obm)
 install(FILES packaging/gnusketch.desktop DESTINATION share/applications)
+install(FILES packaging/gnusketch.svg DESTINATION share/icons/hicolor/scalable/apps)
 
 if(GNUSKETCH_BUILD_TESTS)
   enable_testing()

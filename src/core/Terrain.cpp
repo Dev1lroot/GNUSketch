@@ -356,7 +356,9 @@ void TerrainStroke::refine(Mesh& m, const Vec3& c, Id forceFace) {
     
     // Базовые параметры детализации (можно вынести в настройки кисти или константы)
     const double baseDetail = brush_.detail(); // например, желаемый размер в метрах (например, 1.0 метр)
-    const double minDetail = 0.01;  // Максимальная детализация (~100 полигонов на метр, ~1 см)
+    // Finest detail on curved parts: ~1 cm, but never finer than a density
+    // set on the brush (it limits the triangles, Terrain.h).
+    const double minDetail = brush_.density > 0 ? std::max(0.01, 1.0 / brush_.density) : 0.01;
     const double maxDetail = baseDetail * 4.0; // Максимальное разрежение на ровных участках
 
     // Конвертируем n-гоны под кистью

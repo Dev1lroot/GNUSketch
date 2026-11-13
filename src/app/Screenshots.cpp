@@ -11,6 +11,13 @@
 #include "core/Components.h"
 #include "core/Effects.h"
 #include "core/Primitives.h"
+#include "core/FollowMe.h"
+#include "core/RoundCorners.h"
+#include "core/Solids.h"
+#include "core/Terrain.h"
+#include "GameMode.h"
+#include "io/NativeFormat.h"
+#include <QTemporaryDir>
 
 #include <QApplication>
 #include <QDir>
@@ -90,6 +97,109 @@ void buildHouse(Document& doc) {
     appendMesh(doc.mesh(), m, Mat4(), nullptr, nullptr, false, &sel);
     makeComponent(doc.state, sel, "House");
     ++doc.materialsRevision;
+}
+
+
+// ---- small builders for the documentation scenes ------------------------------
+
+std::set<Id> allFaces(const Mesh& m) {
+    std::set<Id> f;
+    for (Id i = 0; i < (Id)m.faces.size(); ++i)
+        if (m.faces[i].alive) f.insert(i);
+    return f;
+}
+
+void paintAll(Mesh& m, Id mat, const std::set<Id>* only = nullptr) {
+    for (Id f = 0; f < (Id)m.faces.size(); ++f)
+        if (m.faces[f].alive && (!only || only->count(f))) m.faces[f].front.material = m.faces[f].back.material = mat;
+}
+
+// A box standing on z = lo.z (push/pull upwards whichever way the face points).
+Mesh boxMesh(const Vec3& lo, const Vec3& hi) {
+    Mesh m;
+    m.groundFacesDown = false;
+    m.drawPolyline({{lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z}, {lo.x, hi.y, lo.z}}, true);
+    Id f = kNone;
+    for (Id i = 0; i < (Id)m.faces.size(); ++i)
+        if (m.faces[i].alive) f = i;
+    const double h = hi.z - lo.z;
+    Mesh up = m;
+    up.pushPull(f, h);
+    Vec3 mn, mx;
+    bool any;
+    up.bounds(mn, mx, any);
+    if (mx.z > hi.z - 1e-6) return up;
+    m.pushPull(f, -h);
+    return m;
+}
+
+Mesh primitive(PrimitiveKind k, double r, double r2 = 0.3) {
+    PrimitiveParams p;
+    p.kind = k;
+    p.radius = r;
+    p.radius2 = r2;
+    p.width = p.depth = p.height = r * 2;
+    p.segments = 32;
+    p.rings = 16;
+    p.frequency = 3;
+    Mesh m;
+    buildPrimitive(p, m);
+    return m;
+}
+
+void place(Mesh& dst, const Mesh& src, const Mat4& xf) { appendMesh(dst, src, xf); }
+
+Mesh bentStairs() {
+    Document tmp;
+    QString err;
+    if (!loadNative(tmp, QStringLiteral(GNUSKETCH_SOURCE_DIR "/samples/stairs.gsketch"), nullptr, &err)) return Mesh();
+    Mesh m = flattenModel(tmp.state);
+    Vec3 mn, mx;
+    bool any;
+    m.bounds(mn, mx, any);
+    BendParams bp;
+    // Along the longer side, around the vertical.
+    const bool alongX = mx.x - mn.x >= mx.y - mn.y;
+    const Vec3 a(mn.x, mn.y, mn.z), b = alongX ? Vec3(mx.x, mn.y, mn.z) : Vec3(mn.x, mx.y, mn.z);
+    if (makeBend(a, b, Vec3(0, 0, 1), kPi / 2, 24, bp)) effectBend(m, allFaces(m), nullptr, bp);
+    m.bounds(mn, mx, any);
+    Mesh out;
+    appendMesh(out, m, Mat4::translation(-Vec3(mn.x, mn.y, mn.z)));
+    return out;
+}
+
+Mesh pipe() {
+    Mesh m;
+    m.groundFacesDown = false;
+    std::vector<Vec3> circle;
+    for (int i = 0; i < 24; ++i) circle.push_back(Vec3(0.25 * std::cos(i * kPi / 12), 0, 0.5 + 0.25 * std::sin(i * kPi / 12)));
+    m.drawPolyline(circle, true);
+    const Id profile = *allFaces(m).begin();
+    const std::vector<Id> path = m.drawPolyline({{0, 0, 0.5}, {0, 3, 0.5}, {2.5, 3, 0.5}, {2.5, 3, 2.5}}, false);
+    followMe(m, profile, std::set<Id>(path.begin(), path.end()));
+    return m;
+}
+
+Mesh roundedBox() {
+    Mesh m = boxMesh({0, 0, 0}, {1.6, 1.6, 1.2});
+    std::set<Id> edges;
+    for (Id e = 0; e < (Id)m.edges.size(); ++e)
+        if (m.edges[e].alive) edges.insert(e);
+    roundCorners(m, edges, 0.25, 6);
+    return m;
+}
+
+Mesh noisyGround(double size) {
+    Mesh m;
+    m.groundFacesDown = false;
+    m.drawPolyline({{0, 0, 0}, {size, 0, 0}, {size, size, 0}, {0, size, 0}}, true);
+    NoiseParams np;
+    np.x = np.y = false;
+    np.amount = 0.6;
+    np.scale = 2.5;
+    np.detail = 0.3;
+    effectNoise(m, allFaces(m), np);
+    return m;
 }
 
 void save(const QImage& img, const QString& path) {
@@ -239,6 +349,369 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
         pump(300);
         save(vp->grabFramebuffer(), dir.filePath(QStringLiteral("hollow.png")));
     }
+    // ---- Documentation scenes -----------------------------------------------
+    // A wide viewport: no panels.
+    for (QDockWidget* dk : w.findChildren<QDockWidget*>()) dk->hide();
+    w.resize(1500, 900);
+    pump(300);
+    auto frame = [&](const QString& name) {
+        vp->update();
+        pump(40);
+        save(vp->grabFramebuffer(), dir.filePath(name + QStringLiteral(".png")));
+    };
+    auto seq = [&](const QString& name, int i) { frame(QStringLiteral("%1_%2").arg(name).arg(i, 3, 10, QLatin1Char('0'))); };
+    auto fresh = [&](bool shadows = true) {
+        doc.reset();
+        doc.style = RenderStyle();
+        doc.style.sun = true;
+        doc.style.shadows = shadows;
+        doc.style.sunAzimuth = 230;
+        doc.style.sunAltitude = 40;
+        doc.style.showAxes = false;
+        doc.mesh().groundFacesDown = false;
+        doc.mesh().viewHint = Vec3(-5, -10, 8);
+    };
+    auto look = [&](const Vec3& dir, double closer = 0.72) {
+        doc.notifyChanged();
+        vp->setStandardView(dir.normalized());
+        vp->zoomExtents();
+        Camera& c = vp->camera();
+        c.eye = c.target + (c.eye - c.target) * closer;
+        pump(80);
+    };
+    const Vec3 iso(-0.55, 1, -0.6);
+
+    // Hero: a little of everything, cinematic light.
+    {
+        fresh();
+        Mesh& m = doc.mesh();
+        const Id stone = addColor(doc, "Stone", Color::rgb8(190, 185, 175));
+        const Id grass = addColor(doc, "Grass", Color::rgb8(105, 150, 75));
+        const Id metal = addColor(doc, "Copper", Color::rgb8(196, 120, 70));
+        const Id blue = addColor(doc, "Blue", Color::rgb8(70, 120, 200));
+        const Id gold = addColor(doc, "Gold", Color::rgb8(230, 180, 60));
+        const Id white = addColor(doc, "White", Color::rgb8(240, 240, 235));
+        buildHouse(doc);
+        Mesh part;
+        part = bentStairs();
+        paintAll(part, stone);
+        place(m, part, Mat4::translation({8, 1, 0}));
+        part = noisyGround(7);
+        paintAll(part, grass);
+        place(m, part, Mat4::translation({-9, -1, 0}));
+        part = pipe();
+        paintAll(part, metal);
+        place(m, part, Mat4::translation({-1, -6, 0}));
+        part = roundedBox();
+        paintAll(part, white);
+        place(m, part, Mat4::translation({3, -6.5, 0}));
+        const struct { PrimitiveKind k; Id mat; double r; } prims[] = {
+            {PrimitiveKind::Sphere, blue, 0.7}, {PrimitiveKind::Torus, gold, 0.7}, {PrimitiveKind::Dodecahedron, stone, 0.7},
+            {PrimitiveKind::Cone, metal, 0.7}, {PrimitiveKind::GeoSphere, white, 0.7}};
+        for (int i = 0; i < 5; ++i) {
+            part = primitive(prims[i].k, prims[i].r, 0.25);
+            paintAll(part, prims[i].mat);
+            place(m, part, Mat4::translation({6.5 + i * 1.9, -6, 0}));
+        }
+        part = primitive(PrimitiveKind::Sphere, 1.0);
+        VoxelateParams vx;
+        vx.size = 0.25;
+        effectVoxelate(part, allFaces(part), vx);
+        paintAll(part, gold);
+        place(m, part, Mat4::translation({-5.5, -7, 0}));
+        m.touch();
+        ++doc.materialsRevision;
+        doc.style.cinematic = true;
+        doc.style.lightRays = 0.4;
+        doc.style.ambientOcclusion = true;
+        doc.style.sunAltitude = 30;
+        look(Vec3(-0.35, 1, -0.5), 0.62);
+        frame(QStringLiteral("hero"));
+        doc.style.cinematic = false;
+    }
+
+    // Line: a closed outline becomes a face.
+    {
+        fresh(false);
+        const std::vector<Vec3> pts = {{0, 0, 0}, {3, 0, 0}, {3, 2, 0}, {1.5, 3, 0}, {0, 2, 0}, {0, 0, 0}};
+        doc.mesh().drawLine(pts[0], pts[1]);
+        look(iso);
+        doc.mesh() = Mesh();
+        doc.mesh().groundFacesDown = false;
+        for (int i = 0; i + 1 < (int)pts.size(); ++i)
+            for (int k = 1; k <= 6; ++k) {
+                Mesh& m = doc.mesh();
+                const Vec3 b = pts[i] + (pts[i + 1] - pts[i]) * (k / 6.0);
+                Mesh before = m;
+                m.drawLine(pts[i], b);
+                seq(QStringLiteral("line"), i * 6 + k);
+                if (k < 6) m = before;
+            }
+    }
+    // Rectangle, then Circle and Polygon growing.
+    {
+        fresh(false);
+        doc.mesh().drawPolyline({{0, 0, 0}, {3, 0, 0}, {3, 2, 0}, {0, 2, 0}}, true);
+        look(iso);
+        for (int i = 1; i <= 20; ++i) {
+            doc.mesh() = Mesh();
+            const double t = i / 20.0;
+            doc.mesh().drawPolyline({{0, 0, 0}, {3 * t, 0, 0}, {3 * t, 2 * t, 0}, {0, 2 * t, 0}}, true);
+            seq(QStringLiteral("rectangle"), i);
+        }
+        for (int i = 1; i <= 20; ++i) {
+            doc.mesh() = Mesh();
+            const double r = 1.2 * i / 20.0;
+            std::vector<Vec3> c, h;
+            for (int k = 0; k < 32; ++k) c.push_back(Vec3(1.5 + r * std::cos(k * kPi / 16), 1 + r * std::sin(k * kPi / 16), 0));
+            for (int k = 0; k < 6; ++k) h.push_back(Vec3(4.5 + r * std::cos(k * kPi / 3), 1 + r * std::sin(k * kPi / 3), 0));
+            doc.mesh().drawPolyline(c, true);
+            doc.mesh().drawPolyline(h, true);
+            seq(QStringLiteral("circle"), i);
+        }
+    }
+    // Move (with a copy), Rotate and Scale a box.
+    {
+        fresh();
+        const Id red = addColor(doc, "Red", Color::rgb8(200, 80, 70));
+        Mesh b = boxMesh({0, 0, 0}, {1, 1, 1});
+        paintAll(b, red);
+        doc.mesh() = b;
+        place(doc.mesh(), b, Mat4::translation({4, 2, 0}));
+        look(iso);
+        for (int i = 0; i <= 20; ++i) {
+            doc.mesh() = b;
+            place(doc.mesh(), b, Mat4::translation(Vec3(4, 2, 0) * (i / 20.0)));
+            seq(QStringLiteral("move"), i);
+        }
+        doc.mesh() = b;
+        look(iso);
+        for (int i = 0; i <= 24; ++i) {
+            doc.mesh() = Mesh();
+            place(doc.mesh(), b, Mat4::translation({0.5, 0.5, 0}) * Mat4::rotation({0, 0, 1}, kPi / 2 * i / 24.0) * Mat4::translation({-0.5, -0.5, 0}));
+            seq(QStringLiteral("rotate"), i);
+        }
+        doc.mesh() = b;
+        place(doc.mesh(), b, Mat4::scale({2, 1.5, 2}));
+        look(iso);
+        for (int i = 0; i <= 20; ++i) {
+            const double t = 1 + i / 20.0;
+            doc.mesh() = Mesh();
+            place(doc.mesh(), b, Mat4::scale({t, 1 + (t - 1) * 0.5, t}));
+            seq(QStringLiteral("scale"), i);
+        }
+    }
+    // Offset: an inset outline, pushed in.
+    {
+        fresh();
+        const Id wood = addColor(doc, "Wood", Color::rgb8(170, 120, 70));
+        Mesh slab = boxMesh({0, 0, 0}, {3, 2, 0.3});
+        paintAll(slab, wood);
+        doc.mesh() = slab;
+        look(iso);
+        for (int i = 0; i <= 20; ++i) {
+            doc.mesh() = slab;
+            Mesh& m = doc.mesh();
+            const double d = 0.4 * std::min(1.0, i / 12.0);
+            if (d > 0.01) m.drawPolyline({{d, d, 0.3}, {3 - d, d, 0.3}, {3 - d, 2 - d, 0.3}, {d, 2 - d, 0.3}}, true);
+            if (i > 12) {
+                for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                    if (m.faces[f].alive && m.faces[f].normal.z > 0.99 && m.pointInFace(f, {1.5, 1, 0.3}, false)) {
+                        m.pushPull(f, -0.2 * (i - 12) / 8.0);
+                        break;
+                    }
+            }
+            seq(QStringLiteral("offset"), i);
+        }
+    }
+    // Bend: straight stairs curving round.
+    {
+        fresh();
+        Document tmp;
+        QString err;
+        loadNative(tmp, QStringLiteral(GNUSKETCH_SOURCE_DIR "/samples/stairs.gsketch"), nullptr, &err);
+        const Mesh straight = flattenModel(tmp.state);
+        Vec3 mn, mx;
+        bool any;
+        straight.bounds(mn, mx, any);
+        const bool alongX = mx.x - mn.x >= mx.y - mn.y;
+        const Vec3 a(mn.x, mn.y, mn.z), bEnd = alongX ? Vec3(mx.x, mn.y, mn.z) : Vec3(mn.x, mx.y, mn.z);
+        const Id stone = addColor(doc, "Stone", Color::rgb8(190, 185, 175));
+        doc.mesh() = straight;
+        paintAll(doc.mesh(), stone);
+        look(iso);
+        for (int i = 0; i <= 24; ++i) {
+            Mesh m = straight;
+            BendParams bp;
+            if (i > 0 && makeBend(a, bEnd, Vec3(0, 0, 1), kPi / 2 * i / 24.0, 24, bp)) effectBend(m, allFaces(m), nullptr, bp);
+            paintAll(m, stone);
+            doc.mesh() = m;
+            seq(QStringLiteral("bend"), i);
+        }
+    }
+    // Terraform: a mountain rising under the brush.
+    {
+        fresh();
+        const Id grass = addColor(doc, "Grass", Color::rgb8(105, 150, 75));
+        Mesh& m = doc.mesh();
+        m.drawPolyline({{0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {0, 10, 0}}, true);
+        paintAll(m, grass);
+        look(Vec3(-0.5, 1, -0.55));
+        TerrainBrush brush;
+        brush.radius = 3;
+        brush.force = 1.2;
+        brush.hardness = 0.3;
+        TerrainStroke stroke(TerrainMode::Raise, brush);
+        stroke.begin(m, {5, 5, 0}, *allFaces(m).begin(), {0, 0, 1});
+        for (int i = 0; i <= 24; ++i) {
+            if (i > 0) stroke.apply(m, {5 + std::sin(i * 0.4), 5, 0}, 0.08);
+            paintAll(m, grass);
+            m.touch();
+            seq(QStringLiteral("terraform"), i);
+        }
+    }
+    // Still pictures: Follow Me, Round Corners, primitives, solid tools, effects.
+    auto still = [&](const QString& name, const std::function<void(Mesh&)>& build, Vec3 view = Vec3(-0.55, 1, -0.6)) {
+        fresh();
+        build(doc.mesh());
+        doc.mesh().touch();
+        ++doc.materialsRevision;
+        look(view);
+        frame(name);
+    };
+    const Id cMetal = kNone;
+    (void)cMetal;
+    still(QStringLiteral("followme"), [&](Mesh& m) {
+        const Id copper = addColor(doc, "Copper", Color::rgb8(196, 120, 70));
+        Mesh p = pipe();
+        paintAll(p, copper);
+        m = p;
+    });
+    still(QStringLiteral("roundcorners"), [&](Mesh& m) {
+        const Id white = addColor(doc, "White", Color::rgb8(235, 235, 230));
+        Mesh sharp = boxMesh({0, 0, 0}, {1.6, 1.6, 1.2}), round = roundedBox();
+        paintAll(sharp, white);
+        paintAll(round, white);
+        m = sharp;
+        place(m, round, Mat4::translation({2.5, 0, 0}));
+    });
+    still(QStringLiteral("primitives"), [&](Mesh& m) {
+        const PrimitiveKind kinds[] = {PrimitiveKind::Box, PrimitiveKind::Sphere, PrimitiveKind::GeoSphere, PrimitiveKind::Cylinder, PrimitiveKind::Cone,
+                                       PrimitiveKind::Torus, PrimitiveKind::Tetrahedron, PrimitiveKind::Octahedron, PrimitiveKind::Dodecahedron,
+                                       PrimitiveKind::Icosahedron};
+        const Color cols[] = {Color::rgb8(200, 80, 70), Color::rgb8(70, 120, 200), Color::rgb8(230, 180, 60), Color::rgb8(105, 150, 75),
+                              Color::rgb8(196, 120, 70), Color::rgb8(160, 90, 190), Color::rgb8(200, 80, 70), Color::rgb8(70, 120, 200),
+                              Color::rgb8(230, 180, 60), Color::rgb8(105, 150, 75)};
+        for (int i = 0; i < 10; ++i) {
+            Mesh p = primitive(kinds[i], 0.6, 0.2);
+            paintAll(p, addColor(doc, primitiveName(kinds[i]), cols[i]));
+            place(m, p, Mat4::translation({(i % 5) * 1.8, (i / 5) * 1.8, 0}));
+        }
+    }, Vec3(-0.3, 1, -0.75));
+    still(QStringLiteral("solidtools"), [&](Mesh& m) {
+        const Id a = addColor(doc, "A", Color::rgb8(200, 80, 70)), b = addColor(doc, "B", Color::rgb8(70, 120, 200));
+        Mesh box = boxMesh({0, 0, 0}, {1.2, 1.2, 1.2}), ball = primitive(PrimitiveKind::Sphere, 0.75);
+        paintAll(box, a);
+        paintAll(ball, b);
+        Mesh ballAt;
+        place(ballAt, ball, Mat4::translation({1.1, 1.1, 0.45}));
+        const BoolOp ops[] = {BoolOp::Union, BoolOp::Difference, BoolOp::Intersect};
+        for (int i = 0; i < 3; ++i) {
+            Mesh r;
+            if (booleanMeshes(box, ballAt, ops[i], r)) place(m, r, Mat4::translation({i * 3.0, 0, 0}));
+        }
+    });
+    auto effectStill = [&](const QString& name, const std::function<void(Mesh&)>& fx) {
+        still(name, [&](Mesh& m) {
+            const Id c1 = addColor(doc, "Before", Color::rgb8(190, 190, 185)), c2 = addColor(doc, "After", Color::rgb8(90, 140, 210));
+            Mesh before = primitive(PrimitiveKind::Sphere, 1.0), after = before;
+            fx(after);
+            paintAll(before, c1);
+            paintAll(after, c2);
+            m = before;
+            place(m, after, Mat4::translation({2.8, 0, 0}));
+        });
+    };
+    effectStill(QStringLiteral("fx_noise"), [](Mesh& m) {
+        NoiseParams p;
+        p.amount = 0.15;
+        p.scale = 0.5;
+        p.detail = 0.08;
+        effectNoise(m, allFaces(m), p);
+    });
+    effectStill(QStringLiteral("fx_voxelate"), [](Mesh& m) {
+        VoxelateParams p;
+        p.size = 0.2;
+        effectVoxelate(m, allFaces(m), p);
+    });
+    effectStill(QStringLiteral("fx_remesh"), [](Mesh& m) {
+        RemeshParams p;
+        p.shape = RemeshParams::Hexagons;
+        p.cellsPerMeter = 4;
+        effectRemesh(m, allFaces(m), p);
+    });
+    effectStill(QStringLiteral("fx_detriangulate"), [](Mesh& m) {
+        effectTriangulate(m, allFaces(m));
+        DetriangulateParams p;
+        p.quads = true;
+        effectDetriangulate(m, allFaces(m), p);
+    });
+
+    // Lights at night.
+    {
+        fresh();
+        doc.style.sunAltitude = -20;
+        doc.style.cinematic = true;
+        doc.style.lightRays = 1.0;
+        buildHouse(doc);
+        SceneObject lamp;
+        lamp.kind = SceneObject::SpotLight;
+        lamp.pos = Vec3(3.1, -1.2, 2.6);
+        lamp.target = Vec3(3.1, -2.5, 0);
+        lamp.intensity = 12;
+        lamp.range = 12;
+        lamp.coneAngle = 70;
+        lamp.color = Color(1, 0.8, 0.55);
+        doc.addObject(lamp);
+        SceneObject bulb;
+        bulb.pos = Vec3(-2, -2, 1.5);
+        bulb.intensity = 4;
+        bulb.color = Color(0.5, 0.7, 1);
+        doc.addObject(bulb);
+        doc.style.showObjects = false;
+        look(Vec3(-0.4, 1, -0.4));
+        frame(QStringLiteral("lights"));
+        doc.style.cinematic = false;
+    }
+
+    // Game Mode: first person.
+    {
+        fresh();
+        buildHouse(doc);
+        Mesh p = pipe();
+        place(doc.mesh(), p, Mat4::translation({-4, -3, 0}));
+        QTemporaryDir tmp;
+        const QString path = QDir(tmp.path()).filePath(QStringLiteral("walk.gsketch"));
+        if (saveNative(doc, path, {})) {
+            GameWindow game;
+            QString err;
+            if (game.load(path, Vec3(1.5, -7, 0.01), 0, &err)) {
+                double best = -2, bestYaw = 0;
+                for (int i = 0; i < 360; ++i) {
+                    game.walker().setYaw(i * kPi / 180);
+                    const double dd = game.walker().lookDirection().dot((Vec3(3, 2, 1.5) - game.walker().eye()).normalized());
+                    if (dd > best) best = dd, bestYaw = i * kPi / 180;
+                }
+                game.walker().setYaw(bestYaw);
+                game.resize(960, 600);
+                game.show();
+                pump(400);
+                save(game.grabFramebuffer(), dir.filePath(QStringLiteral("gamemode.png")));
+                game.hide();
+            }
+        }
+    }
+
     doc.reset();
     doc.modified = false;
     return 0;

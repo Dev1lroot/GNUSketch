@@ -18,7 +18,7 @@ bool gLoaded = false;
 
 QStringList Plugins::folders() {
     QStringList out;
-    for (const QString& p : qEnvironmentVariable("GNUSKETCH_PLUGIN_PATH").split(':', Qt::SkipEmptyParts)) out << p;
+    for (const QString& p : qEnvironmentVariable("GNUSKETCH_PLUGIN_PATH").split(QDir::listSeparator(), Qt::SkipEmptyParts)) out << p;
     const QString data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (!data.isEmpty()) out << data + "/plugins";
     const QString exe = QCoreApplication::applicationDirPath();
@@ -34,7 +34,14 @@ void Plugins::load() {
     for (const QString& folder : folders()) {
         const QDir dir(folder);
         if (!dir.exists()) continue;
-        for (const QFileInfo& fi : dir.entryInfoList({"*.so"}, QDir::Files, QDir::Name)) {
+#ifdef Q_OS_WIN
+        const QStringList pattern = {QStringLiteral("*.dll")};
+#elif defined(Q_OS_MACOS)
+        const QStringList pattern = {QStringLiteral("*.dylib"), QStringLiteral("*.so")};
+#else
+        const QStringList pattern = {QStringLiteral("*.so")};
+#endif
+        for (const QFileInfo& fi : dir.entryInfoList(pattern, QDir::Files, QDir::Name)) {
             if (seen.contains(fi.fileName())) continue;
             QPluginLoader loader(fi.absoluteFilePath());
             QObject* obj = loader.instance();

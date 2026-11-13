@@ -6,6 +6,7 @@
 #include "app/Theme.h"
 
 #include <QApplication>
+#include <QIcon>
 #include <QCommandLineParser>
 #include <QSurfaceFormat>
 #include <QTimer>
@@ -28,6 +29,7 @@ int main(int argc, char** argv) {
     QApplication::setOrganizationName("GNUSketch");
     QApplication::setApplicationVersion(QStringLiteral(GNUSKETCH_VERSION));
     gs::Theme::applyStored();
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/gnusketch.svg")));
 
     QCommandLineParser parser;
     parser.setApplicationDescription("Native 3D sketching tool");

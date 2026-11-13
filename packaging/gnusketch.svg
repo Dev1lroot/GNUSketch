@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <rect x="8" y="8" width="240" height="240" rx="44" fill="#2b2d31"/>
-  <path d="M128 52 L204 92 L128 132 L52 92 Z" fill="#4f9cff"/>
-  <path d="M52 92 L128 132 L128 212 L52 172 Z" fill="#2f6fc0"/>
-  <path d="M128 132 L204 92 L204 172 L128 212 Z" fill="#1d4f8f"/>
-  <path d="M128 52 L204 92 L128 132 L52 92 Z M52 92 L52 172 L128 212 L204 172 L204 92 M128 132 L128 212" fill="none" stroke="#e8eaee" stroke-width="7" stroke-linejoin="round"/>
-  <path d="M128 30 L128 6 M116 18 L128 6 L140 18" fill="none" stroke="#e8eaee" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 16)"/>
+  <g transform="translate(0.0 0.0)">
+  <polygon points="36.1,145.9 14.2,110.1 38.1,159.0 74.9,225.0 73.6,216.9" fill="#143d78" stroke="#dbe9ff" stroke-width="5" stroke-linejoin="round"/>
+  <polygon points="200.7,216.9 151.4,211.9 73.6,216.9 74.9,225.0 153.5,225.0" fill="#103262" stroke="#dbe9ff" stroke-width="5" stroke-linejoin="round"/>
+  <polygon points="90.7,97.0 102.5,31.0 55.3,39.1 14.2,110.1 36.1,145.9" fill="#2878ec" stroke="#dbe9ff" stroke-width="5" stroke-linejoin="round"/>
+  <polygon points="161.9,137.8 151.4,211.9 200.7,216.9 241.8,145.9 217.9,97.0" fill="#103262" stroke="#dbe9ff" stroke-width="5" stroke-linejoin="round"/>
+  <polygon points="181.1,31.0 102.5,31.0 90.7,97.0 161.9,137.8 217.9,97.0" fill="#2266c8" stroke="#dbe9ff" stroke-width="5" stroke-linejoin="round"/>
+  <polygon points="90.7,97.0 36.1,145.9 73.6,216.9 151.4,211.9 161.9,137.8" fill="#1b51a0" stroke="#dbe9ff" stroke-width="5" stroke-linejoin="round"/>
+  </g>
 </svg>

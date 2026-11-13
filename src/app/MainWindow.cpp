@@ -29,10 +29,17 @@
 #include "io/PrintExport.h"
 #include "io/PrintImport.h"
 #include "Theme.h"
+#include "PluginBrowser.h"
 #include "Properties.h"
 #include "Animator.h"
 
 #include <QAction>
+#include <QIcon>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QOpenGLFunctions>
+#include <QOpenGLContext>
+#include <QSysInfo>
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
@@ -1135,26 +1142,16 @@ void MainWindow::exportPlugin(FormatPlugin* f) {
 }
 
 void MainWindow::showPlugins() {
-    QString html = QStringLiteral("<h3>Plugins</h3>");
-    if (Plugins::all().empty()) html += QStringLiteral("<p>None loaded.</p>");
-    else {
-        html += QStringLiteral("<table cellpadding=3>");
-        for (const LoadedPlugin& p : Plugins::all()) {
-            QStringList can;
-            if (p.format->canImport()) can << QStringLiteral("open, import");
-            if (p.format->canExport()) can << QStringLiteral("export");
-            html += QStringLiteral("<tr><td><b>%1</b> (.%2)</td><td>%3</td></tr><tr><td colspan=2><small>%4<br>%5</small></td></tr>")
-                        .arg(p.format->formatName().toHtmlEscaped(), p.format->extensions().join(", ."), can.join(", "),
-                             p.format->description().toHtmlEscaped(), p.file.toHtmlEscaped());
-        }
-        html += QStringLiteral("</table>");
-    }
-    QStringList folders;
-    for (const QString& d : Plugins::folders()) folders << d.toHtmlEscaped();
-    html += QStringLiteral("<p>Looked in:<br><small>%1</small></p>").arg(folders.join("<br>"));
-    if (!Plugins::problems().isEmpty())
-        html += QStringLiteral("<p>Not loaded:<br><small>%1</small></p>").arg(Plugins::problems().join('\n').toHtmlEscaped().replace('\n', "<br>"));
-    QMessageBox::information(this, QStringLiteral("Plugins"), html);
+    PluginBrowser dlg(this);
+    connect(&dlg, &PluginBrowser::restartRequested, this, [this] {
+        if (!maybeSave()) return;
+        // The same program again, with the model that is open.
+        QStringList args;
+        if (!doc_.filePath.empty()) args << QString::fromStdString(doc_.filePath);
+        doc_.modified = false;
+        if (QProcess::startDetached(QCoreApplication::applicationFilePath(), args)) qApp->quit();
+    });
+    dlg.exec();
 }
 
 void MainWindow::exportObj() {
@@ -2471,11 +2468,67 @@ void MainWindow::traceImage() {
 }
 
 void MainWindow::about() {
-    QMessageBox::about(this, QStringLiteral("About GNUSketch"),
-                       QStringLiteral("<h3>GNUSketch %1</h3><p>A native Linux 3D sketching tool.</p>"
-                                      "<p>Models are stored in an open JSON format (.gsketch). "
-                                      "Export OBJ (keeps n-gon faces) or glTF 2.0 to convert to other formats such as FBX "
-                                      "with Blender or assimp.</p>").arg(QApplication::applicationVersion()));
+    // What the program runs on: OpenGL of the viewport, Qt, system, compiler.
+    QString gl = QStringLiteral("unknown");
+    if (viewport_->context()) {
+        viewport_->makeCurrent();
+        if (auto* f = viewport_->context()->functions())
+            gl = QStringLiteral("%1 (%2)").arg(QString::fromLatin1(reinterpret_cast<const char*>(f->glGetString(GL_RENDERER))),
+                                              QString::fromLatin1(reinterpret_cast<const char*>(f->glGetString(GL_VERSION))));
+        viewport_->doneCurrent();
+    }
+#if defined(__clang__)
+    const QString compiler = QStringLiteral("Clang %1.%2").arg(__clang_major__).arg(__clang_minor__);
+#elif defined(__GNUC__)
+    const QString compiler = QStringLiteral("GCC %1.%2").arg(__GNUC__).arg(__GNUC_MINOR__);
+#elif defined(_MSC_VER)
+    const QString compiler = QStringLiteral("MSVC %1").arg(_MSC_VER);
+#else
+    const QString compiler = QStringLiteral("unknown");
+#endif
+    int plugins = 0;
+    for (const LoadedPlugin& p : Plugins::all()) plugins += p.format != nullptr;
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("About GNUSketch"));
+    auto* lay = new QHBoxLayout(&dlg);
+    auto* icon = new QLabel(&dlg);
+    icon->setPixmap(QIcon(QStringLiteral(":/gnusketch.svg")).pixmap(96, 96));
+    icon->setAlignment(Qt::AlignTop);
+    lay->addWidget(icon);
+    auto* col = new QVBoxLayout;
+    lay->addLayout(col);
+    auto* text = new QLabel(&dlg);
+    text->setObjectName(QStringLiteral("AboutText"));
+    text->setTextFormat(Qt::RichText);
+    text->setOpenExternalLinks(true);
+    text->setWordWrap(true);
+    text->setMinimumWidth(460);
+    text->setText(QStringLiteral(
+        "<h2 style='margin-bottom:0'>GNUSketch %1</h2>"
+        "<p style='margin-top:2px'><i>3D modelling with direct drawing and push/pull</i> &mdash; alpha</p>"
+        "<p>For architectural and engineering models, game levels and 3D printing: n-gon modelling with "
+        "inference, components, solid tools and effects; PBR materials and custom shaders; animation, "
+        "scripting and physics; a first-person Game Mode; cinematic ray traced lighting.</p>"
+        "<p>Models are open JSON (<tt>.gsketch</tt>). Import and export OBJ, glTF 2.0, 3MF, AMF, STL, PLY and "
+        "OFF; plugins add more (%2 loaded, Help &gt; Plugins).</p>"
+        "<p><a href='https://github.com/Dev1lroot/GNUSketch'>github.com/Dev1lroot/GNUSketch</a> &middot; "
+        "<a href='https://github.com/Dev1lroot/GNUSketch/blob/main/DOCUMENTATION.md'>Documentation</a> &middot; "
+        "<a href='https://github.com/Dev1lroot/GNUSketch/issues'>Report a problem</a></p>"
+        "<p>Copyright &copy; GNUSketch contributors. Free software under the "
+        "<a href='https://www.gnu.org/licenses/gpl-3.0.html'>GNU GPL, version 3 or later</a>; "
+        "it comes with no warranty.</p>"
+        "<p><small>Built with Qt %3 (running %4), %5, for %6.<br>OpenGL: %7</small></p>"
+        "<p><small>SketchUp is a trademark of Trimble Inc.; Source, Hammer and Valve are trademarks of "
+        "Valve Corporation. GNUSketch is independent and not affiliated with either.</small></p>")
+                      .arg(QApplication::applicationVersion())
+                      .arg(plugins)
+                      .arg(QStringLiteral(QT_VERSION_STR), QString::fromLatin1(qVersion()), compiler, QSysInfo::prettyProductName(), gl.toHtmlEscaped()));
+    col->addWidget(text);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Ok, &dlg);
+    connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    col->addWidget(box);
+    dlg.exec();
 }
 
 void MainWindow::showShortcuts() {

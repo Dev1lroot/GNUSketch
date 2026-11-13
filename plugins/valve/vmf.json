@@ -1,0 +1,10 @@
+{
+  "name": "Valve Hammer Map",
+  "extensions": ["vmf"],
+  "description": "Source engine levels for Hammer (Half-Life 2, Portal, Team Fortress 2, Left 4 Dead...): brushes, entities, lights",
+  "vendor": "GNUSketch contributors",
+  "license": "GPL-3.0-or-later",
+  "version": "1.0",
+  "credits": "Export behaviour after Valve's SketchUp Source Tools (vmf_export, Hammer Time), MIT License, Copyright 2008-2010 Valve Corporation",
+  "url": "https://developer.valvesoftware.com/wiki/VMF_(Valve_Map_Format)"
+}

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(GNUSketch VERSION 0.2.0 LANGUAGES CXX)
+project(GNUSketch VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,6 +46,7 @@ target_compile_options(gs_core PRIVATE -Wall -Wextra)
 # ---- application --------------------------------------------------------------
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Svg Qml)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 add_library(gs_io SHARED
   src/io/NativeFormat.h src/io/NativeFormat.cpp
@@ -64,6 +65,7 @@ target_link_libraries(gs_io PUBLIC gs_core Qt6::Core Qt6::Gui Qt6::Qml PRIVATE Z
 target_compile_options(gs_io PRIVATE -Wall -Wextra)
 
 add_executable(gnusketch
+  packaging/gnusketch.qrc
   src/main.cpp
   src/render/Camera.h src/render/Camera.cpp
   src/render/Renderer.h src/render/Renderer.cpp
@@ -94,9 +96,15 @@ add_executable(gnusketch
   src/app/Panels.h src/app/Panels.cpp
   src/app/MainWindow.h src/app/MainWindow.cpp
   src/app/Plugins.h src/app/Plugins.cpp
+  src/app/PluginBrowser.h src/app/PluginBrowser.cpp
   src/plugin/FormatPlugin.h
   src/app/SelfTest.h src/app/SelfTest.cpp
 )
+if(WIN32)
+  # The program's icon in Explorer and the task bar; no console window.
+  target_sources(gnusketch PRIVATE packaging/gnusketch.rc)
+  set_target_properties(gnusketch PROPERTIES WIN32_EXECUTABLE ON)
+endif()
 target_link_libraries(gnusketch PRIVATE gs_io Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Svg)
 target_compile_definitions(gnusketch PRIVATE GNUSKETCH_SOURCE_DIR="${CMAKE_SOURCE_DIR}" GNUSKETCH_VERSION="${PROJECT_VERSION}")
 target_compile_options(gnusketch PRIVATE -Wall -Wextra)
@@ -107,6 +115,7 @@ install(FILES src/plugin/FormatPlugin.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/
 
 # ---- plugins ----------------------------------------------------------------------
 add_subdirectory(plugins/obm)
+add_subdirectory(plugins/valve)
 install(FILES packaging/gnusketch.desktop DESTINATION share/applications)
 install(FILES packaging/gnusketch.svg DESTINATION share/icons/hicolor/scalable/apps)
 
@@ -119,6 +128,10 @@ if(GNUSKETCH_BUILD_TESTS)
   add_executable(gs_io_tests tests/test_io.cpp)
   target_link_libraries(gs_io_tests PRIVATE gs_io)
   add_test(NAME io COMMAND gs_io_tests)
+
+  add_executable(gs_valve_tests tests/test_valve.cpp)
+  target_link_libraries(gs_valve_tests PRIVATE gs_valve_format gs_io)
+  add_test(NAME valve COMMAND gs_valve_tests)
 
   add_executable(gs_obm_tests tests/test_obm.cpp)
   target_link_libraries(gs_obm_tests PRIVATE gs_obm_format gs_io)

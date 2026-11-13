@@ -40,6 +40,9 @@
 #include "Viewport.h"
 #include "Icons.h"
 #include "Theme.h"
+#include "PluginBrowser.h"
+#include "Plugins.h"
+#include <QTextBrowser>
 #include "io/PrintExport.h"
 #include "EffectsUi.h"
 #include "Properties.h"
@@ -3664,6 +3667,46 @@ int runSelfTest(MainWindow& w) {
         doc.style = RenderStyle();
         doc.reset();
         vp->zoomExtents();
+    }
+
+
+    // --- Plugins: a browser with vendor and license, each one toggleable --------
+    {
+        d.check(QApplication::applicationVersion() == QLatin1String("0.3.0"), "version 0.3.0");
+        QStringList names;
+        bool details = true;
+        for (const PluginInfo& p : Plugins::installed()) {
+            names << p.name;
+            details = details && !p.vendor.isEmpty() && !p.license.isEmpty() && p.loaded;
+        }
+        std::printf("    plugins: %s\n", qPrintable(names.join(", ")));
+        d.check(names.contains(QStringLiteral("Valve Hammer Map")) && names.contains(QStringLiteral("Valve Studio Model")) &&
+                    names.contains(QStringLiteral("Open Block Model")),
+                "the Valve exports and Open Block Model are installed");
+        d.check(details, "each with vendor, license and loaded");
+        QMenu* exp = w.findChild<QMenu*>(QStringLiteral("ExportMenu"));
+        QString texts;
+        if (exp)
+            for (QAction* a : exp->actions()) texts += a->text() + ' ';
+        d.check(texts.contains(QStringLiteral("Valve Hammer Map")) && texts.contains(QStringLiteral("Valve Studio Model")), "File > Export has them");
+        PluginBrowser browser(&w);
+        auto* list = browser.findChild<QListWidget*>(QStringLiteral("PluginList"));
+        auto* info = browser.findChild<QTextBrowser*>(QStringLiteral("PluginDetails"));
+        d.check(list && list->count() == (int)Plugins::installed().size(), "Help > Plugins lists them");
+        if (list && info) {
+            for (int i = 0; i < list->count(); ++i)
+                if (list->item(i)->text().startsWith(QStringLiteral("Valve Studio Model"))) list->setCurrentRow(i);
+            const QString html = info->toPlainText();
+            d.check(html.contains(QStringLiteral("GNUSketch contributors")) && html.contains(QStringLiteral("GPL-3.0-or-later")) &&
+                        html.contains(QStringLiteral("Valve")),
+                    "with vendor, license and credits");
+            QListWidgetItem* it = list->currentItem();
+            const QString file = it->data(Qt::UserRole).toString();
+            it->setCheckState(Qt::Unchecked);
+            d.check(!Plugins::isEnabled(file) && browser.changed(), "unticking turns it off (from the next start)");
+            it->setCheckState(Qt::Checked);
+            d.check(Plugins::isEnabled(file), "ticking turns it back on");
+        }
     }
 
     // --- Game Mode: soft sun shadows ------------------------------------------

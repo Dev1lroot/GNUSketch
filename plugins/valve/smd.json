@@ -1,0 +1,10 @@
+{
+  "name": "Valve Studio Model",
+  "extensions": ["smd"],
+  "description": "Source engine props: reference SMD and a .qc for studiomdl",
+  "vendor": "GNUSketch contributors",
+  "license": "GPL-3.0-or-later",
+  "version": "1.0",
+  "credits": "Export behaviour after Valve's SketchUp Source Tools (smd_export), MIT License, Copyright 2008-2010 Valve Corporation",
+  "url": "https://developer.valvesoftware.com/wiki/SMD"
+}

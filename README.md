@@ -48,16 +48,26 @@ cmake --build build -j
 Requirements: a C++20 compiler, CMake ≥ 3.21, Qt ≥ 6.4 (Core, Gui, Widgets, OpenGL,
 OpenGLWidgets, Svg) and an OpenGL 3.3 capable driver. Works on Wayland and X11.
 
-Debian/Ubuntu packages:
+Ubuntu 26.04 / Debian packages (the project is developed and released on Ubuntu 26.04.1):
 
 ```sh
-sudo apt install build-essential cmake qt6-base-dev libqt6opengl6-dev libqt6svg6-dev qt6-image-formats-plugins
+sudo apt install build-essential cmake ninja-build zlib1g-dev qt6-base-dev qt6-declarative-dev qt6-svg-dev libqt6opengl6-dev qt6-image-formats-plugins
 ```
 
 Fedora: `sudo dnf install gcc-c++ cmake qt6-qtbase-devel qt6-qtsvg-devel qt6-qtimageformats`
 Arch: `sudo pacman -S cmake qt6-base qt6-svg qt6-imageformats`
 
 Install system-wide with `sudo cmake --install build`.
+
+**Windows** (MSYS2, UCRT64 shell):
+
+```sh
+pacman -S mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,zlib,qt6-base,qt6-svg,qt6-declarative,qt6-imageformats,qt6-tools}
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
+```
+
+Ready-made builds (a Linux AppImage, a Windows installer and zip) are on the
+[releases page](https://github.com/Dev1lroot/GNUSketch/releases).
 
 Tests (none of them open a window on your desktop):
 
@@ -78,6 +88,19 @@ File formats can come as plugins: shared libraries GNUSketch loads at start from
 lists what was found). A plugin adds File > Open / Import / Export entries for its
 format, and may add a tab of its own to a component's Properties. See
 `src/plugin/FormatPlugin.h`.
+
+Help → Plugins is a plugin browser: each plugin's vendor, license, version, formats
+and credits, with a switch to turn it off or on (from the next start).
+
+**Valve Source** (`plugins/valve`): **Hammer maps (.vmf)** and **studio models
+(.smd + .qc)** for Half-Life 2, Portal, Team Fortress 2, Left 4 Dead and other Source
+games. Every closed, convex piece becomes a brush; components named after an entity
+class (`info_player_start`, `light`, `npc_zombie`, `weapon_ar2`, also `ENT.npc_zombie`)
+become point entities where they stand; GNUSketch's lights and the sun become light
+entities; material names like `tools-toolsnodraw` become `tools/toolsnodraw`; units are
+inches. Options: skybox, material for unpainted faces, a sealing skybox box for test
+maps; the .qc's static prop and surface. The behaviour follows Valve's SketchUp Source
+Tools (MIT); the code is GNUSketch's own.
 
 **Open Block Model** (`plugins/obm`, GNUBlocks' `.obm`): groups become components,
 cubes become textured boxes, pictures come from the game's `textures` folder (beside

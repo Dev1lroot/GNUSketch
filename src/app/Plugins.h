@@ -15,8 +15,25 @@ struct LoadedPlugin {
     FormatPlugin* format = nullptr;   // owned by Qt's plugin loader (lives as long as the program)
 };
 
+// A plugin library found in a plugin folder, loaded or not: what its
+// metadata (the JSON built into it) says about it.
+struct PluginInfo {
+    QString file;
+    QString name, vendor, license, version, description, credits, url;
+    QStringList extensions;
+    bool enabled = true;  // the user's choice (Help > Plugins), kept in the settings
+    bool loaded = false;  // loaded now (enabled at start and working)
+    bool canImport = false, canExport = false; // (known once loaded)
+    QString problem;      // why it did not load
+};
+
 class Plugins {
 public:
+    // Every plugin library found, enabled or not, with its details.
+    static const std::vector<PluginInfo>& installed();
+    // Turns a plugin on or off from the next start (by its file name).
+    static void setEnabled(const QString& file, bool on);
+    static bool isEnabled(const QString& file);
     // Looks in every plugin folder once; later calls return at once.
     static void load();
     static const std::vector<LoadedPlugin>& all();

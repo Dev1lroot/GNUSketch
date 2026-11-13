@@ -228,8 +228,12 @@ Collisions, stairs and slopes, physics bodies and scripted entities work as in a
   come in at their real size as a component, flat triangles joined back into faces.
 - **Export:** OBJ (n-gons), glTF 2.0 (PBR, lights, cameras), and for 3D printing 3MF
   and AMF (unit and colours inside), STL binary/ASCII, PLY and OFF in the unit you choose.
-- **Plugins** add formats (Open Block Model is included). FBX: export OBJ or glTF and
-  convert with Blender or assimp.
+- **Plugins** add formats; Help → Plugins shows each one's vendor, license and
+  version, and turns it on or off. Included: **Open Block Model** (GNUBlocks), and the
+  **Valve Source** exports: Hammer maps (.vmf: convex pieces as brushes, components
+  named `info_player_start`, `light`, `npc_*`… as entities, lights and sun as light
+  entities) and studio models (.smd with a .qc for studiomdl). FBX: export OBJ or glTF
+  and convert with Blender or assimp.
 
 ## Settings
 

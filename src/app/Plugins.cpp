@@ -4,7 +4,10 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QPluginLoader>
+#include <QSettings>
 #include <QSet>
 #include <QStandardPaths>
 
@@ -12,6 +15,7 @@ namespace gs {
 
 namespace {
 std::vector<LoadedPlugin> gPlugins;
+std::vector<PluginInfo> gInstalled;
 QStringList gProblems;
 bool gLoaded = false;
 } // namespace
@@ -44,20 +48,60 @@ void Plugins::load() {
         for (const QFileInfo& fi : dir.entryInfoList(pattern, QDir::Files, QDir::Name)) {
             if (seen.contains(fi.fileName())) continue;
             QPluginLoader loader(fi.absoluteFilePath());
-            QObject* obj = loader.instance();
-            if (!obj) {
-                gProblems << QStringLiteral("%1: %2").arg(fi.absoluteFilePath(), loader.errorString());
-                continue;
-            }
-            auto* f = qobject_cast<FormatPlugin*>(obj);
-            if (!f) {
+            // Its details come from the metadata, read without loading it.
+            const QJsonObject meta = loader.metaData().value(QStringLiteral("MetaData")).toObject();
+            if (loader.metaData().value(QStringLiteral("IID")).toString() != QLatin1String(GNUSKETCH_FORMAT_PLUGIN_IID)) {
                 gProblems << QStringLiteral("%1: not a GNUSketch format plugin").arg(fi.absoluteFilePath());
                 continue;
             }
             seen.insert(fi.fileName());
-            gPlugins.push_back({fi.absoluteFilePath(), f});
+            PluginInfo info;
+            info.file = fi.absoluteFilePath();
+            info.name = meta.value(QStringLiteral("name")).toString(fi.completeBaseName());
+            info.vendor = meta.value(QStringLiteral("vendor")).toString(QStringLiteral("unknown"));
+            info.license = meta.value(QStringLiteral("license")).toString(QStringLiteral("unknown"));
+            info.version = meta.value(QStringLiteral("version")).toString();
+            info.description = meta.value(QStringLiteral("description")).toString();
+            info.credits = meta.value(QStringLiteral("credits")).toString();
+            info.url = meta.value(QStringLiteral("url")).toString();
+            for (const auto& e : meta.value(QStringLiteral("extensions")).toArray()) info.extensions << e.toString();
+            info.enabled = isEnabled(fi.fileName());
+            if (info.enabled) {
+                QObject* obj = loader.instance();
+                auto* f = obj ? qobject_cast<FormatPlugin*>(obj) : nullptr;
+                if (!f) {
+                    info.problem = obj ? QStringLiteral("not a GNUSketch format plugin") : loader.errorString();
+                    gProblems << QStringLiteral("%1: %2").arg(fi.absoluteFilePath(), info.problem);
+                } else {
+                    info.loaded = true;
+                    info.canImport = f->canImport();
+                    info.canExport = f->canExport();
+                    if (info.extensions.isEmpty()) info.extensions = f->extensions();
+                    if (info.description.isEmpty()) info.description = f->description();
+                    gPlugins.push_back({fi.absoluteFilePath(), f});
+                }
+            }
+            gInstalled.push_back(info);
         }
     }
+}
+
+const std::vector<PluginInfo>& Plugins::installed() {
+    load();
+    return gInstalled;
+}
+
+bool Plugins::isEnabled(const QString& file) {
+    return !QSettings().value(QStringLiteral("plugins/disabled")).toStringList().contains(QFileInfo(file).fileName());
+}
+
+void Plugins::setEnabled(const QString& file, bool on) {
+    QSettings s;
+    QStringList off = s.value(QStringLiteral("plugins/disabled")).toStringList();
+    const QString name = QFileInfo(file).fileName();
+    off.removeAll(name);
+    if (!on) off << name;
+    s.setValue(QStringLiteral("plugins/disabled"), off);
 }
 
 const std::vector<LoadedPlugin>& Plugins::all() {

@@ -3681,7 +3681,7 @@ int runSelfTest(MainWindow& w) {
 
     // --- Plugins: a browser with vendor and license, each one toggleable --------
     {
-        d.check(QApplication::applicationVersion() == QLatin1String("0.3.0"), "version 0.3.0");
+        d.check(QApplication::applicationVersion() == QLatin1String("0.3.1"), "version 0.3.1");
         QStringList names;
         bool details = true;
         for (const PluginInfo& p : Plugins::installed()) {

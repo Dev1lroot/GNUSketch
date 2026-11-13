@@ -17,6 +17,7 @@
 #include "core/Terrain.h"
 #include "GameMode.h"
 #include "io/NativeFormat.h"
+#include "io/ArchMaterials.h"
 #include <QTemporaryDir>
 
 #include <QApplication>
@@ -199,6 +200,40 @@ Mesh noisyGround(double size) {
     np.scale = 2.5;
     np.detail = 0.3;
     effectNoise(m, allFaces(m), np);
+    return m;
+}
+
+
+// A material from the built-in PBR library, added to the model.
+Id libMaterial(Document& doc, const char* name) {
+    for (int i = 0; i < architecturalMaterialCount(); ++i)
+        if (architecturalMaterialName(i) == name) return doc.addMaterial(architecturalMaterial(i));
+    return kNone;
+}
+
+// An H beam (I section) swept along a rising curve, built up to `upTo` of it.
+Mesh hBeam(double upTo) {
+    Mesh m;
+    m.groundFacesDown = false;
+    const double R = 3, rise = 2.2, turn = kPi * 0.9;
+    const int n = 32;
+    auto at = [&](double t) { return Vec3(R * std::cos(t * turn), R * std::sin(t * turn), 0.6 + rise * t * t); };
+    const int count = std::max(1, (int)std::lround(n * upTo));
+    std::vector<Vec3> path;
+    for (int i = 0; i <= count; ++i) path.push_back(at(i / double(n)));
+    // The profile at the start, square to the first piece of the path.
+    const Vec3 d = (path[1] - path[0]).normalized();
+    const Vec3 u = Vec3(1, 0, 0) - d * d.x;
+    const Vec3 un = u.normalized(), vn = d.cross(un).normalized();
+    const double w = 0.22, h = 0.3, tw = 0.035, tf = 0.04; // half width/height, web and flange
+    const double pts[12][2] = {{-w, -h}, {w, -h}, {w, -h + tf}, {tw, -h + tf}, {tw, h - tf}, {w, h - tf},
+                               {w, h}, {-w, h}, {-w, h - tf}, {-tw, h - tf}, {-tw, -h + tf}, {-w, -h + tf}};
+    std::vector<Vec3> prof;
+    for (const auto& q : pts) prof.push_back(path[0] + un * q[1] + vn * q[0]); // web upright
+    m.drawPolyline(prof, true);
+    const Id face = *allFaces(m).begin();
+    const std::vector<Id> pe = m.drawPolyline(path, false);
+    followMe(m, face, std::set<Id>(pe.begin(), pe.end()));
     return m;
 }
 
@@ -581,12 +616,20 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
     };
     const Id cMetal = kNone;
     (void)cMetal;
-    still(QStringLiteral("followme"), [&](Mesh& m) {
-        const Id copper = addColor(doc, "Copper", Color::rgb8(196, 120, 70));
-        Mesh p = pipe();
-        paintAll(p, copper);
-        m = p;
-    });
+    // Follow Me: an H beam swept along a rising curve.
+    {
+        fresh();
+        const Id steel = libMaterial(doc, "Brushed Steel");
+        doc.mesh() = hBeam(1.0);
+        paintAll(doc.mesh(), steel);
+        ++doc.materialsRevision;
+        look(Vec3(-0.6, 1, -0.55), 0.8);
+        for (int i = 1; i <= 24; ++i) {
+            doc.mesh() = hBeam(i / 24.0);
+            paintAll(doc.mesh(), steel);
+            seq(QStringLiteral("followme"), i);
+        }
+    }
     still(QStringLiteral("roundcorners"), [&](Mesh& m) {
         const Id white = addColor(doc, "White", Color::rgb8(235, 235, 230));
         Mesh sharp = boxMesh({0, 0, 0}, {1.6, 1.6, 1.2}), round = roundedBox();
@@ -657,31 +700,231 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
         effectDetriangulate(m, allFaces(m), p);
     });
 
-    // Lights at night.
+    // Lights at night: coloured lamps over shapes and a terrain.
     {
         fresh();
         doc.style.sunAltitude = -20;
         doc.style.cinematic = true;
-        doc.style.lightRays = 1.0;
-        buildHouse(doc);
-        SceneObject lamp;
-        lamp.kind = SceneObject::SpotLight;
-        lamp.pos = Vec3(3.1, -1.2, 2.6);
-        lamp.target = Vec3(3.1, -2.5, 0);
-        lamp.intensity = 12;
-        lamp.range = 12;
-        lamp.coneAngle = 70;
-        lamp.color = Color(1, 0.8, 0.55);
-        doc.addObject(lamp);
-        SceneObject bulb;
-        bulb.pos = Vec3(-2, -2, 1.5);
-        bulb.intensity = 4;
-        bulb.color = Color(0.5, 0.7, 1);
-        doc.addObject(bulb);
+        doc.style.lightRays = 0.7;
         doc.style.showObjects = false;
-        look(Vec3(-0.4, 1, -0.4));
+        const Id white = addColor(doc, "White", Color::rgb8(235, 235, 230));
+        Mesh& m = doc.mesh();
+        Mesh g = noisyGround(12);
+        paintAll(g, white);
+        place(m, g, Mat4::translation({-6, -6, 0}));
+        const PrimitiveKind kinds[] = {PrimitiveKind::Sphere, PrimitiveKind::Torus, PrimitiveKind::GeoSphere, PrimitiveKind::Dodecahedron};
+        const Vec3 spots[] = {{-2, -1.5, 0.6}, {1.5, -2, 0.6}, {-1.5, 2, 0.6}, {2, 1.5, 0.6}};
+        for (int i = 0; i < 4; ++i) {
+            Mesh p = primitive(kinds[i], 0.9, 0.3);
+            paintAll(p, white);
+            place(m, p, Mat4::translation(spots[i]));
+        }
+        m.touch();
+        ++doc.materialsRevision;
+        const struct { Vec3 pos; Color c; } lamps[] = {
+            {{-3, 0, 2.2}, Color(1.0f, 0.25f, 0.2f)}, {{3, -1, 2.2}, Color(0.2f, 0.45f, 1.0f)}, {{0, 3, 2.2}, Color(0.3f, 1.0f, 0.4f)}};
+        for (const auto& l : lamps) {
+            SceneObject o;
+            o.pos = l.pos;
+            o.color = l.c;
+            o.intensity = 9;
+            o.range = 9;
+            doc.addObject(o);
+        }
+        SceneObject spot;
+        spot.kind = SceneObject::SpotLight;
+        spot.pos = Vec3(0, -3, 5);
+        spot.target = Vec3(0, 0, 0);
+        spot.color = Color(1.0f, 0.85f, 0.55f);
+        spot.intensity = 18;
+        spot.range = 14;
+        spot.coneAngle = 40;
+        doc.addObject(spot);
+        look(Vec3(-0.3, 1, -0.6), 0.7);
         frame(QStringLiteral("lights"));
         doc.style.cinematic = false;
+    }
+
+    // PBR materials in a low sun: depth from the normal and height maps.
+    {
+        fresh();
+        doc.style.sunAltitude = 18;
+        doc.style.sunAzimuth = 250;
+        doc.style.ambientOcclusion = true;
+        Mesh& m = doc.mesh();
+        auto box = [&](Vec3 lo, Vec3 hi, Id mat) {
+            Mesh b = boxMesh(lo, hi);
+            paintAll(b, mat);
+            place(m, b, Mat4());
+        };
+        const Id floorMat = libMaterial(doc, "Oak Floor");
+        Mesh floor;
+        floor.groundFacesDown = false;
+        floor.drawPolyline({{-1, -1, 0}, {9, -1, 0}, {9, 4, 0}, {-1, 4, 0}}, true);
+        paintAll(floor, floorMat);
+        place(m, floor, Mat4());
+        box({0, 2.5, 0}, {4, 3, 2.6}, libMaterial(doc, "Red Brick"));
+        box({4.2, 2.5, 0}, {8, 3, 2.6}, libMaterial(doc, "Stone Wall"));
+        Mesh col = primitive(PrimitiveKind::Cylinder, 0.35);
+        {
+            PrimitiveParams cp;
+            cp.kind = PrimitiveKind::Cylinder;
+            cp.radius = 0.35;
+            cp.height = 2.4;
+            cp.segments = 32;
+            col = Mesh();
+            buildPrimitive(cp, col);
+        }
+        paintAll(col, libMaterial(doc, "White Marble"));
+        place(m, col, Mat4::translation({1, 1, 0}));
+        Mesh ball = primitive(PrimitiveKind::Sphere, 0.6);
+        paintAll(ball, libMaterial(doc, "Brushed Steel"));
+        place(m, ball, Mat4::translation({3, 0.8, 0}));
+        box({4.6, 0.2, 0}, {6.2, 1.6, 0.9}, libMaterial(doc, "Concrete"));
+        box({6.6, 0.4, 0}, {8.2, 1.8, 1.4}, libMaterial(doc, "Corrugated Metal"));
+        m.touch();
+        ++doc.materialsRevision;
+        look(Vec3(-0.25, 1, -0.45), 0.7);
+        frame(QStringLiteral("pbr"));
+    }
+
+    // Texture Brush with PBR materials on a terrain.
+    {
+        fresh();
+        doc.style.sunAltitude = 30;
+        Mesh& m = doc.mesh();
+        const Id ground = libMaterial(doc, "Asphalt");
+        const Id stone = libMaterial(doc, "Stone Wall");
+        const Id brick = libMaterial(doc, "Red Brick");
+        m.drawPolyline({{0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {0, 10, 0}}, true);
+        paintAll(m, ground);
+        TerrainBrush hill;
+        hill.radius = 3.5;
+        hill.force = 1.5;
+        hill.hardness = 0.2;
+        {
+            TerrainStroke raise(TerrainMode::Raise, hill);
+            raise.begin(m, {5, 5, 0}, *allFaces(m).begin(), {0, 0, 1});
+            for (int i = 0; i < 12; ++i) raise.apply(m, {5, 5, 0}, 0.08);
+            raise.finish(m, {5, 5, 0});
+        }
+        paintAll(m, ground);
+        ++doc.materialsRevision;
+        look(Vec3(-0.45, 1, -0.6), 0.75);
+        TerrainBrush paint;
+        paint.radius = 1.1;
+        paint.force = 1;
+        paint.hardness = 0.5;
+        auto surfacePoint = [&](double x, double y) {
+            Ray r{Vec3(x, y, 50), Vec3(0, 0, -1)};
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+                double t;
+                if (m.faces[f].alive && m.rayFace(f, r, t)) return std::make_pair(r.at(t), f);
+            }
+            return std::make_pair(Vec3(x, y, 0), kNone);
+        };
+        int frameNo = 0;
+        auto strokeAlong = [&](Id mat, const std::function<Vec2(double)>& path, int steps) {
+            TerrainStroke st(TerrainMode::Paint, paint);
+            st.setPaintMaterial(mat);
+            const Vec2 p0 = path(0);
+            auto [hit, face] = surfacePoint(p0.x, p0.y);
+            if (face == kNone || !st.begin(m, hit, face, {0, 0, 1})) return;
+            for (int i = 0; i <= steps; ++i) {
+                const Vec2 q = path(i / double(steps));
+                auto [c, f2] = surfacePoint(q.x, q.y);
+                st.apply(m, c, 0.12);
+                m.touch();
+                if (i % 2 == 0) seq(QStringLiteral("texturebrush"), ++frameNo);
+            }
+            st.finish(m, path(1).x > -1 ? surfacePoint(path(1).x, path(1).y).first : hit);
+        };
+        seq(QStringLiteral("texturebrush"), ++frameNo);
+        strokeAlong(stone, [](double t) { return Vec2(1.5 + 7 * t, 2 + 6 * t * t); }, 24);
+        strokeAlong(brick, [](double t) { return Vec2(5 + 2.2 * std::cos(t * 5), 5 + 2.2 * std::sin(t * 5)); }, 24);
+        frame(QStringLiteral("texturebrush"));
+    }
+
+
+    // ---- Animator tutorial (ANIMATION.md) -------------------------------------
+    {
+        fresh();
+        buildHouse(doc);
+        // The door as a component of its own, standing in the doorway.
+        Mesh door = boxMesh({2.6, -0.12, 0.01}, {3.6, -0.08, 2.1});
+        paintAll(door, addColor(doc, "Door Wood", Color::rgb8(120, 80, 50)));
+        Selection sel;
+        appendMesh(doc.mesh(), door, Mat4(), nullptr, nullptr, false, &sel);
+        const Id doorInst = makeComponent(doc.state, sel, "Door");
+        SceneObject lamp;
+        lamp.name = "Porch Lamp";
+        lamp.pos = Vec3(3.1, -0.8, 2.6);
+        lamp.intensity = 0;
+        lamp.range = 8;
+        lamp.color = Color(1.0f, 0.75f, 0.45f);
+        const Id lampId = doc.addObject(lamp);
+        doc.style.sunAltitude = 12;
+        doc.style.showObjects = true;
+        doc.clearHistory();
+        for (const char* n : {"Hierarchy", "PropertiesPanel", "AnimatorPanel"})
+            if (auto* dk = w.findChild<QDockWidget*>(QString::fromLatin1(n))) dk->show();
+        w.resize(1500, 920);
+        auto* anim = w.findChild<AnimatorPanel*>();
+        look(Vec3(-0.35, 1, -0.45), 0.8);
+        pump(300);
+        if (anim) {
+            anim->modelReplaced();
+            // 1. Select the door, New Layer.
+            doc.selection.clear();
+            doc.selection.instances.insert(doorInst);
+            doc.notifySelection();
+            anim->addLayersFromSelection();
+            pump(200);
+            save(w.grab().toImage(), dir.filePath(QStringLiteral("anim_1_layer.png")));
+            // 2. Frame 30, turn the door on its hinge: Auto Key adds a keyframe.
+            anim->setFrame(30);
+            const Vec3 hinge(2.6, -0.1, 0);
+            doc.beginOp("Rotate");
+            doc.state.instances[doorInst].xf = Mat4::translation(hinge) * Mat4::rotation({0, 0, 1}, -1.75) * Mat4::translation(-hinge) *
+                                               doc.state.instances[doorInst].xf;
+            doc.commitOp();
+            anim->setFrame(18);
+            pump(200);
+            save(w.grab().toImage(), dir.filePath(QStringLiteral("anim_2_tween.png")));
+            // 3. The lamp: a second layer, off until frame 30, then bright by 45.
+            anim->setFrame(1);
+            doc.selection.clear();
+            doc.selection.objects.insert(lampId);
+            doc.notifySelection();
+            anim->addLayersFromSelection();
+            anim->setFrame(30);
+            doc.beginOp("Light");
+            doc.state.objects[lampId].intensity = 0.01;
+            doc.commitOp();
+            anim->setCurrentLayer(1);
+            anim->setFrame(1);
+            anim->toggleTween(); // hold: off from 1 to 30
+            anim->setFrame(45);
+            doc.beginOp("Light");
+            doc.state.objects[lampId].intensity = 9;
+            doc.commitOp();
+            anim->setFrame(38);
+            pump(200);
+            save(w.grab().toImage(), dir.filePath(QStringLiteral("anim_3_layers.png")));
+            // 4. Played: the viewport frame by frame.
+            doc.selection.clear();
+            doc.notifySelection();
+            doc.style.showObjects = false;
+            doc.style.cinematic = true;
+            doc.style.lightRays = 0.5;
+            for (int f = 1; f <= 50; ++f) {
+                anim->setFrame(f);
+                seq(QStringLiteral("anim_door"), f);
+            }
+            doc.style.cinematic = false;
+            anim->modelReplaced();
+        }
+        for (QDockWidget* dk : w.findChildren<QDockWidget*>()) dk->hide();
     }
 
     // Game Mode: first person.

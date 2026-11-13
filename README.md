@@ -21,7 +21,9 @@ code, formats or artwork); models are stored as open, documented JSON.
 
 ![A house, bent stairs, a terraformed lawn, a Follow Me pipe, a voxelated sphere, a rounded box and primitives in soft ray traced shadows](docs/media/hero.png)
 
-**[Read the documentation: every tool with a moving picture →](DOCUMENTATION.md)**
+**[Documentation: every tool with a moving picture →](DOCUMENTATION.md)** ·
+**[Animation tutorial →](ANIMATION.md)** ·
+**[Downloads (Linux AppImage, Windows) →](https://github.com/Dev1lroot/GNUSketch/releases)**
 
 ## What it does
 
@@ -30,7 +32,7 @@ code, formats or artwork); models are stored as open, documented JSON.
 | ![Push/Pull](docs/media/pushpull.gif) | **Direct modelling.** Lines split and close into faces; faces are true n-gons with holes. Push/Pull, Move, Rotate, Scale with grips, Offset, Follow Me, Round Corners, Bend, Solid Tools (union, subtract, intersect, trim, split). Inference snaps to endpoints, midpoints, edges, faces, axes, parallels and intersections; lengths can snap to steps, and typed values are exact. |
 | ![Bend](docs/media/bend.gif) | **Shapes beyond boxes.** Bend anything around an axis, ten parametric primitives, terrain sculpting with brushes, and effects: Noise, Blur, Decimate, Remesh to quads/hexagons/triangles, Voxelate, De-triangulate, Hollow and Solidify. |
 | ![Animator](docs/media/animator.gif) | **Alive models.** Components with animation states, an Animator timeline with keyframes and motion tweens, entities scripted in JavaScript (doors, buttons, actors), rigid-body physics, and Game Mode to walk around in first person. |
-| ![Cinematic lighting](docs/media/cinematic.png) | **Look and light.** PBR materials with maps and custom GLSL surface shaders, sun with shadows, point, spot and directional lights, ambient occlusion, and optional cinematic lighting: ray traced soft shadows and light rays. |
+| ![PBR materials](docs/media/pbr.png) | **Look and light.** PBR materials with maps and custom GLSL surface shaders, sun with shadows, point, spot and directional lights, ambient occlusion, and optional cinematic lighting: ray traced soft shadows and light rays. |
 | ![Hollow](docs/media/hollow.png) | **Made to be built.** Real units with chosen precision, 3D printing export and import (3MF, AMF, STL, PLY, OFF), Hollow with an exact wall thickness, Solidify for clean printable solids, OBJ (n-gons) and glTF 2.0 export. |
 
 ![The interface: Hierarchy, Properties, Materials, Instructor and the Animator](docs/media/window.png)

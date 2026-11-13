@@ -8,7 +8,7 @@ itself). The second half is the in-depth [reference](#reference).
 [Components and hierarchy](#components-and-hierarchy) · [Solid Tools](#solid-tools) ·
 [Effects](#effects) · [Terraform](#terraform) · [Materials](#materials) ·
 [Lights, cameras and cinematic lighting](#lights-cameras-and-cinematic-lighting) ·
-[Animator](#animator) · [Entities, scripts and physics](#entities-scripts-and-physics) ·
+[Animator](#animator) ([tutorial](ANIMATION.md)) · [Entities, scripts and physics](#entities-scripts-and-physics) ·
 [Game Mode](#game-mode) · [Files and 3D printing](#files-and-3d-printing) ·
 [Settings](#settings) · [Keyboard](#keyboard) · [Reference](#reference)
 
@@ -90,9 +90,11 @@ move together.
 Draws a copy of a face's outline inside or outside it at a distance.
 
 ### Follow Me
-![Follow Me](docs/media/followme.png)
+![Follow Me: an H beam swept along a rising curve](docs/media/followme.gif)
 
-Sweeps a face along a path of edges: pipes, beams, mouldings, lathed shapes.
+Sweeps a face along a path of edges, also curved and climbing in 3D: pipes, beams,
+mouldings, rails, lathed shapes. Select the path first, or click the face and then
+follow the path; the joints are mitred.
 
 ### Round Corners
 ![Round Corners](docs/media/roundcorners.png)
@@ -165,15 +167,26 @@ Mountain, Pit, Flatten and Texture Brush (Tools → Terraform): press and hold o
 surface. Radius, force, hardness and mesh density are in the Properties panel (and on
 Ctrl / Alt / Shift + wheel); the surface is subdivided under the brush as needed.
 
+### Texture Brush
+![Painting Stone Wall and Red Brick over an asphalt hill](docs/media/texturebrush.gif)
+
+Paints the current material over any surface, blending softly into what is there,
+PBR materials included (their normal and height maps keep their depth). Choose the
+material in the Materials panel; painting with the default material erases.
+
 ## Materials
 
+![PBR materials in a low sun: oak floor, red brick, stone wall, marble, brushed steel, concrete, corrugated metal](docs/media/pbr.png)
+
 Drop an image on a face to texture it. The Materials panel and Browser hold colours,
-textures and a library of architectural materials; the Material Editor makes **PBR**
-materials (base colour, normal, metallic, roughness, occlusion, height, emission,
-opacity maps) and custom **GLSL surface shaders** with their own properties.
+textures and a library of architectural PBR materials (bricks, stone, concrete,
+wood, tiles, metals, glass); the Material Editor makes your own **PBR** materials
+(base colour, normal, metallic, roughness, occlusion, height, emission and opacity
+maps) and custom **GLSL surface shaders** with their own properties. The maps give
+real depth in grazing light, as above.
 
 ## Lights, cameras and cinematic lighting
-![Lights at night](docs/media/lights.png)
+![Red, green and blue lamps and a warm spot over shapes and a terrain](docs/media/lights.png)
 
 Point, spot and directional lights and cameras (Scene toolbar or Draw → Lights);
 select one to edit it in Properties, Look Through a camera. The sun (Window →
@@ -189,6 +202,9 @@ press **New Layer**; move the playhead and change them: with **Auto Key** on a
 keyframe appears (or press F6). Between keyframes a **motion tween** (blue, with an
 arrow) moves smoothly; without one the thing holds. Drag keyframes, right-click for
 tweens, eye and lock per layer, frame rate, length, play and loop. Saved with the model.
+
+**Step by step: [ANIMATION.md](ANIMATION.md)** (a door that opens and a lamp that
+comes on).
 
 ## Entities, scripts and physics
 

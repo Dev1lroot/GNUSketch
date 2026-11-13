@@ -27,6 +27,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include <cmath>
@@ -309,14 +310,21 @@ int main(int argc, char** argv) {
     }
 
     {
-        // The standard place: <XDG data home>/GNUSketch/prefabs.
+        // The standard place: <XDG data home>/GNUSketch/prefabs on Linux, the
+        // system's data folder (%LOCALAPPDATA%) elsewhere.
         {
+#ifdef Q_OS_LINUX
             QTemporaryDir xdg;
             const QByteArray old = qgetenv("XDG_DATA_HOME");
             qputenv("XDG_DATA_HOME", xdg.path().toUtf8());
             CHECK(assetDir("prefabs") == QDir(xdg.path()).filePath("GNUSketch/prefabs"));
             CHECK(QFileInfo(assetDir("prefabs")).isDir());
             qputenv("XDG_DATA_HOME", old);
+#else
+            const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+            CHECK(assetDir("prefabs") == QDir(base).filePath("GNUSketch/prefabs"));
+            CHECK(QFileInfo(assetDir("prefabs")).isDir());
+#endif
         }
         // Prefabs live in the data directory, as ordinary model files.
         QTemporaryDir data;

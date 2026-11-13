@@ -1525,7 +1525,7 @@ void MainWindow::paste() {
         if (ne == kNone) continue;
         m.edges[ne].soft = e.soft;
         m.edges[ne].smooth = e.smooth;
-        m.edges[ne].hidden = e.hidden;
+        m.edges[ne].hidden = false; // pasted copies of hidden geometry show
         if (e.curve != kNone) {
             if (!curveMap.count(e.curve)) curveMap[e.curve] = m.newCurveId();
             m.edges[ne].curve = curveMap[e.curve];
@@ -1547,7 +1547,7 @@ void MainWindow::paste() {
         m.faces[nf].back = f.back;
         m.faces[nf].front.material = mapMat(f.front.material);
         m.faces[nf].back.material = mapMat(f.back.material);
-        m.faces[nf].hidden = f.hidden;
+        m.faces[nf].hidden = false;
         sel.faces.insert(nf);
     }
     // Components: reuse a definition with the same identity so pasted copies

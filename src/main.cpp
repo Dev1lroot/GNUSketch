@@ -37,6 +37,8 @@ int main(int argc, char** argv) {
     parser.addOption(selfTest);
     QCommandLineOption glProbe("gl-probe", "Create an offscreen OpenGL context, render one frame with the real renderer and exit (no window).");
     parser.addOption(glProbe);
+    QCommandLineOption shots("screenshots", "Render the README pictures into a folder and exit (use tools/readme-media.sh).", "dir");
+    parser.addOption(shots);
     QCommandLineOption game("game", "Walk around a saved model in the Game Mode window.", "model");
     parser.addOption(game);
     QCommandLineOption spawn("spawn", "Game Mode: where the character stands (x,y,z in meters).", "point", "0,0,0");
@@ -58,6 +60,10 @@ int main(int argc, char** argv) {
     if (!parser.positionalArguments().isEmpty()) w.openFile(parser.positionalArguments().first());
     w.show();
 
+    if (parser.isSet(shots)) {
+        const QString dir = parser.value(shots);
+        QTimer::singleShot(300, &w, [&w, dir] { QApplication::exit(gs::runScreenshots(w, dir)); });
+    }
     if (parser.isSet(selfTest)) {
         QTimer::singleShot(300, &w, [&w] { QApplication::exit(gs::runSelfTest(w)); });
     }

@@ -3622,6 +3622,28 @@ int main() {
         CHECK_EQ(Units::defaultPrecision(LengthUnit::Meters), 3);
     });
 
+
+    test("drawing over or copying hidden geometry shows it", [&] {
+        Mesh m;
+        rect(m, 0, 0, 2, 2);
+        const Id e = m.findEdge(m.findVertex({0, 0, 0}), m.findVertex({2, 0, 0}));
+        m.edges[e].hidden = true;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f) m.faces[f].hidden = m.faces[f].alive;
+        // A copy (Ctrl+Move) of the hidden face and edges is visible.
+        std::set<Id> faces;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) faces.insert(f);
+        std::set<Id> nf, ne, nv;
+        m.duplicate(faces, {}, nf, ne, nv);
+        bool shown = !nf.empty();
+        for (Id f : nf) shown = shown && !m.faces[f].hidden;
+        for (Id x : ne) shown = shown && !m.edges[x].hidden;
+        CHECK(shown);
+        // Drawing over the hidden edge shows it.
+        m.drawLine({0, 0, 0}, {2, 0, 0});
+        CHECK(!m.edges[m.findEdge(m.findVertex({0, 0, 0}), m.findVertex({2, 0, 0}))].hidden);
+    });
+
     // ---- push/pull leaves no ghost faces -----------------------------------
     {
         auto faceAt = [](const Mesh& m, Vec3 p, Vec3 n) {

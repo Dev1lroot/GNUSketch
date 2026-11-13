@@ -7,7 +7,18 @@ A free, native Linux 3D sketching tool with a push/pull workflow, written from
 scratch in C++20 with Qt 6 Widgets and OpenGL 3.3 (core profile). Clean-room design:
 no proprietary formats, code or artwork. All icons are original inline SVGs.
 
-![GNUSketch: rounded box, Follow Me beam, pipe and lathed vase, a wall with a pushed-through doorway, and traced 3D letters](docs/screenshot.png)
+![GNUSketch: the dark interface with Hierarchy, Properties, Materials, Instructor and the Animator timeline](docs/window.png)
+
+| Push/Pull | Animator (motion tween) |
+|---|---|
+| ![A rectangle pulled up into a block](docs/pushpull.gif) | ![A crate tumbling across the ground on the timeline](docs/animator.gif) |
+| **Cinematic lighting**: ray traced soft shadows | **Hollow** effect for 3D printing (cut open) |
+| ![The house in low sun with soft shadows](docs/cinematic.png) | ![A sphere hollowed with even walls, cut in half](docs/hollow.png) |
+
+![Rounded box, Follow Me beam, pipe and lathed vase, a wall with a pushed-through doorway, and traced 3D letters](docs/screenshot.png)
+
+The pictures are rendered by the program itself: `tools/readme-media.sh` (a
+virtual screen, nothing shows on the desktop; needs Python with Pillow).
 
 > **Status: early alpha (0.1).** The core modelling tools work. Expect rough edges
 > and see "Not implemented yet" below.

@@ -3619,6 +3619,39 @@ int runSelfTest(MainWindow& w) {
         vp->zoomExtents();
     }
 
+
+    // --- X-ray / back edges: snapping to what is behind faces --------------------
+    {
+        doc.reset();
+        doc.style = RenderStyle();
+        Mesh& m = d.mesh();
+        m.groundFacesDown = false;
+        m.drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) { m.pushPull(f, m.faces[f].normal.z < 0 ? -2 : 2); break; }
+        vp->camera().perspective = true;
+        vp->camera().eye = Vec3(-3, -5, 4);
+        vp->camera().target = Vec3(1, 1, 1);
+        vp->update();
+        d.pump();
+        // The far bottom corner is behind the box.
+        const Vec3 hidden(2, 2, 0);
+        const QPointF at = d.screen(hidden);
+        InferenceEngine::Options o;
+        const InferenceResult plain = vp->inference().infer(at.x(), at.y(), o);
+        d.check(!(plain.type == InferenceResult::Endpoint && plain.p.nearlyEquals(hidden)), "normally a corner behind faces does not snap");
+        doc.style.xray = true;
+        const InferenceResult xr = vp->inference().infer(at.x(), at.y(), o);
+        d.check(xr.type == InferenceResult::Endpoint && xr.p.nearlyEquals(hidden), "with X-ray it does");
+        doc.style.xray = false;
+        doc.style.backEdges = true;
+        const InferenceResult be = vp->inference().infer(at.x(), at.y(), o);
+        d.check(be.type == InferenceResult::Endpoint && be.p.nearlyEquals(hidden), "and with back edges shown");
+        doc.style = RenderStyle();
+        doc.reset();
+        vp->zoomExtents();
+    }
+
     // --- Game Mode: soft sun shadows ------------------------------------------
     {
         QTemporaryDir dir;

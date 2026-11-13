@@ -74,6 +74,7 @@ add_executable(gnusketch
   src/app/Theme.h src/app/Theme.cpp
   src/app/Properties.h src/app/Properties.cpp
   src/app/Animator.h src/app/Animator.cpp
+  src/app/Screenshots.cpp
   src/app/DrawTools.h src/app/DrawTools.cpp
   src/app/ModifyTools.h src/app/ModifyTools.cpp
   src/app/TerrainTools.h src/app/TerrainTools.cpp

@@ -12,6 +12,8 @@ bottom. Screenshots help.
 - [ ] Tool cursors and icons
 - [ ] Dark interface everywhere (menus, docks, tray, dialogs, browsers, tooltips); hint texts readable
 - [ ] Window > Settings: Dark/Light, Duotone/Full colour icons, primary and secondary colours, strength, presets; every icon changes live; Cancel/Esc puts it all back; OK keeps it after a restart
+- [ ] Window > Toolbars lists every toolbar (Standard, Views, Styles, Camera, Scene, Solid Tools, Large Tool Set) and shows/hides it; the Scene toolbar has the light/camera tools, Add Camera From View, Look Through and the Lights and Cameras panel (no Scene section in the tray any more; selecting one light opens the panel)
+- [ ] The Rotate icon is a protractor
 - [ ] Axes: red/green/blue solid on the positive side, dotted on the negative side, also looking along them and from below the ground
 
 ## Drawing
@@ -26,6 +28,7 @@ bottom. Screenshots help.
 ## Modifying
 - [ ] Push/Pull: box from rectangle, taller/shorter box, pocket, push through (hole), Ctrl = new start face, double-click repeat, several selected faces (separate and adjacent) move together
 - [ ] Move / Ctrl copy / `5x` array; Rotate with 15° snaps; Offset
+- [ ] Hold X / Y / Z with any tool (Line, Move, Rectangle, Circle, Rotate, Bend, Tape...): it stays on the red / green / blue axis (or plane/rotation axis) while held and is free again when let go; typing `5x` after a copy still makes an array; Zoom is now Alt+Z
 - [ ] Rotate snaps onto the red/green/blue axes, parallel to a hovered edge, into the plane of (or square to) a hovered face; the dashed line takes the colour of what it snapped to; hold Shift for 5° steps
 - [ ] Push/Pull: hover a face parallel to the one pushed (also of a component): it goes exactly to that plane; push a pocket's floor near the back wall: it snaps on and leaves a clean hole; push a step flush with its neighbour: the tops and walls become single faces
 - [ ] Faces that used to stay as "ghosts" after push/pull (two boxes side by side, a pocket pushed in two steps) are gone; nothing is left that cannot be erased
@@ -34,7 +37,7 @@ bottom. Screenshots help.
 - [ ] Intersections: push one component (or loose box) halfway into another; hover where their faces cut through each other ("On Intersection", magenta dashed seam), its ends ("Intersection"); draw a line from end to end, and a line along an axis that stops on the seam
 - [ ] Scale grips: corner (uniform), Shift+corner (free), edge midpoint (2 axes), face centre (1 axis), Ctrl about centre, typed `2` / `1.5,2` / `1,2,1` during and right after; a rotated component scales along its own sides; a flat rectangle shows only its 8 in-plane grips
 - [ ] Eraser (drag, Shift hide, Ctrl soften); Delete key; Undo/Redo
-- [ ] Select: click, window vs crossing, double/triple click, Ctrl/Shift modifiers
+- [ ] Select: click, window vs crossing, double/triple click, Ctrl/Shift modifiers; triple-click a box with a round hole through it: the hole's walls are selected too
 - [ ] Follow Me: circle along a line/arc (pipe), ring profile (hollow pipe), T/H beam along an L path, moulding around a box top (Alt-click the top face), profile around a circle (lathe); path selected first vs clicked after the profile
 - [ ] Primitives (Draw → Primitive…): every shape; fields change with the shape; face count and error text update live (torus tube ≥ ring radius disables Place); placed shape follows the cursor, click sets it, Esc cancels; one undo; smooth on/off; values remembered next time
 - [ ] Round Corners: rectangle corners, one cube edge, four top edges, all cube edges; live preview and too-large radius message
@@ -55,6 +58,7 @@ bottom. Screenshots help.
 - [ ] Arrow keys change the axis; a box bent around the red axis; a selected component with copies; lines without faces; too sharp a bend is refused with a message
 
 ## Effects
+- [ ] Round Corners and Trace Image are in the Effects menu (not Tools, not the tool palette); greyed out without a fitting selection
 - [ ] Effects menu is greyed out with nothing selected; select a box, Noise: the dialog previews live, Cancel restores it, OK is one Undo
 - [ ] Noise: only the blue axis on a flat plane makes terrain; only red on a wall; Distance and Bump size feel right in meters; New Pattern
 - [ ] Noise/Blur on only the top of a box: the sides stay flat and connected
@@ -75,6 +79,7 @@ bottom. Screenshots help.
 - [ ] WASD (also with a non-Latin keyboard layout), Shift, Space, arrow keys, R, Tab, F11, Esc then Esc
 - [ ] Walk into walls and slide along them; up stairs and slopes; off a ledge; under a low ceiling; on Noise terrain
 - [ ] Textures, sun, shadows and culling as set in the editor; closing the editor closes the game
+- [ ] F5 (and View > Render > Cinematic Lighting / Window > Sun > Cinematic in the editor): ray traced soft shadows from the sun and from point/spot/directional lights (lamps behind walls stay dark), light rays (sun shafts, lamp beams; Window > Sun > Light rays sets the strength, 0 = off); frame rate on a big model
 - [ ] Shadows are always on: crisp where things touch the ground, softer further from the caster; no flicker or stripes while walking; far away shadows still there (coarser)
 
 ## Materials and textures

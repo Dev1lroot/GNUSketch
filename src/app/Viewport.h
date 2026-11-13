@@ -129,6 +129,11 @@ private:
     QTimer* animTimer_ = nullptr; // repaints while a custom shader uses _Time
     QString vcbLabel_;
     QString vcbTyped_; // characters typed into the Measurements box from the viewport
+    // X/Y/Z held down: which one, and for which tool (it may change meanwhile).
+    int heldAxisArrow_ = 0;
+    const Tool* heldAxisTool_ = nullptr;
+    static int axisArrowForKey(int key);
+    static int axisArrowFor(const QKeyEvent* e);
 };
 
 } // namespace gs

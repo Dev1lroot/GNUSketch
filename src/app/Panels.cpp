@@ -839,6 +839,9 @@ SunPanel::SunPanel(Document* doc, Viewport* vp, QWidget* parent) : QWidget(paren
     auto* checks = new QHBoxLayout();
     checks->addWidget(sun_);
     checks->addWidget(shadows_);
+    cinematic_ = new QCheckBox(QStringLiteral("Cinematic"), this);
+    cinematic_->setToolTip(QStringLiteral("Ray traced soft shadows from the sun and every light, and light rays in the air."));
+    checks->addWidget(cinematic_);
     checks->addStretch(1);
     form->addRow(checks);
     auto row = [&](const QString& label, const QString& tip, double lo, double hi, QSlider*& slider, QDoubleSpinBox*& spin, const QString& suffix, int scale) {
@@ -868,7 +871,10 @@ SunPanel::SunPanel(Document* doc, Viewport* vp, QWidget* parent) : QWidget(paren
     row(QStringLiteral("Direction:"), QStringLiteral("Compass direction of the sun: 0° along the green axis, 90° along the red axis."), 0, 360, a, azimuth_, QStringLiteral("°"), 1);
     row(QStringLiteral("Height:"), QStringLiteral("Height of the sun above the horizon: low for evening light, below 0° for night."), -30, 90, e, altitude_, QStringLiteral("°"), 1);
     row(QStringLiteral("Brightness:"), QStringLiteral("Strength of the direct sunlight."), 0, 2, i, intensity_, QString(), 100);
+    QSlider* rs;
+    row(QStringLiteral("Light rays:"), QStringLiteral("Cinematic: how much the air glows in the light (sun shafts, beams of lamps). 0 = none."), 0, 1, rs, rays_, QString(), 100);
     connect(sun_, &QCheckBox::toggled, this, [this] { apply(); });
+    connect(cinematic_, &QCheckBox::toggled, this, [this] { apply(); });
     connect(shadows_, &QCheckBox::toggled, this, [this] { apply(); });
     refresh();
 }
@@ -878,6 +884,8 @@ void SunPanel::apply() {
     RenderStyle& s = doc_->style;
     s.sun = sun_->isChecked();
     s.shadows = shadows_->isChecked();
+    s.cinematic = cinematic_->isChecked();
+    s.lightRays = rays_->value();
     s.sunAzimuth = azimuth_->value();
     s.sunAltitude = altitude_->value();
     s.sunIntensity = intensity_->value();
@@ -890,6 +898,8 @@ void SunPanel::refresh() {
     const RenderStyle& s = doc_->style;
     sun_->setChecked(s.sun);
     shadows_->setChecked(s.shadows);
+    cinematic_->setChecked(s.cinematic);
+    rays_->setValue(s.lightRays);
     azimuth_->setValue(s.sunAzimuth);
     altitude_->setValue(s.sunAltitude);
     intensity_->setValue(s.sunIntensity);

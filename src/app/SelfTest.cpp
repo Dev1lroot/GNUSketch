@@ -41,6 +41,9 @@
 #include "Icons.h"
 #include "Theme.h"
 #include <QMenu>
+#include <QMenuBar>
+#include <QToolBar>
+#include <QDockWidget>
 #include <QFileInfo>
 #include "core/Components.h"
 #include "core/Primitives.h"
@@ -3049,6 +3052,196 @@ int runSelfTest(MainWindow& w) {
         doc.reset();
     }
 
+
+    // --- Connected selection through holes; menus; X/Y/Z; Scene toolbar -------
+    {
+        doc.reset();
+        Mesh& m = d.mesh();
+        m.groundFacesDown = false;
+        m.drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) { m.pushPull(f, m.faces[f].normal.z < 0 ? -2 : 2); break; }
+        // A round hole through the box, from the front (y = 0) to the back.
+        std::vector<Vec3> ring;
+        for (int i = 0; i < 16; ++i) ring.push_back(Vec3(1 + 0.5 * std::cos(i * kPi / 8), 0, 1 + 0.5 * std::sin(i * kPi / 8)));
+        m.drawPolyline(ring, true);
+        Id disc = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && std::fabs(m.faces[f].normal.y) > 0.99 && m.pointInFace(f, Vec3(1, 0, 1), false)) disc = f;
+        d.check(disc != kNone, "a circle on the front of a box");
+        if (disc != kNone) m.pushPull(disc, -2);
+        m.removeDegenerateFaces();
+        Id side = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faces[f].normal.x > 0.99) side = f;
+        Selection sel;
+        sel.faces.insert(side);
+        selectConnected(m, sel);
+        std::printf("    connected: %zu of %d faces\n", sel.faces.size(), m.aliveFaceCount());
+        d.check(m.aliveFaceCount() > 20 && (int)sel.faces.size() == m.aliveFaceCount(), "triple-click selects the hole's walls too (connected through the face)");
+
+        // Round Corners and Trace Image live in Effects.
+        QMenu* effectsMenu = nullptr;
+        QMenu* toolsMenu = nullptr;
+        for (QAction* a : w.menuBar()->actions()) {
+            if (a->text().remove('&') == QStringLiteral("Effects")) effectsMenu = a->menu();
+            if (a->text().remove('&') == QStringLiteral("Tools")) toolsMenu = a->menu();
+        }
+        auto menuHas = [](QMenu* menu, const char* key) {
+            if (!menu) return false;
+            for (QAction* a : menu->actions())
+                if (a->objectName() == QLatin1String(key)) return true;
+            return false;
+        };
+        d.check(menuHas(effectsMenu, "roundcorners") && menuHas(effectsMenu, "traceimage"), "Round Corners and Trace Image are in Effects");
+        d.check(!menuHas(toolsMenu, "roundcorners") && !menuHas(toolsMenu, "traceimage"), "and no longer in Tools");
+
+        // Zoom moved off Z; holding X keeps the line on the red axis.
+        QAction* zoom = nullptr;
+        for (QAction* a : w.findChildren<QAction*>())
+            if (a->text() == QStringLiteral("Zoom")) zoom = a;
+        d.check(zoom && zoom->shortcut() == QKeySequence(QStringLiteral("Alt+Z")), "Zoom is Alt+Z");
+        doc.reset();
+        vp->camera().eye = Vec3(4, -9, 7);
+        vp->camera().target = Vec3(0, 0, 0);
+        vp->update();
+        d.pump();
+        vp->setTool(ToolId::Line);
+        auto keyEv = [&](QEvent::Type t, int k, const QString& text) {
+            QKeyEvent e(t, k, Qt::NoModifier, text);
+            QApplication::sendEvent(vp, &e);
+        };
+        d.click(d.screen(Vec3(0, 0, 0)));
+        keyEv(QEvent::KeyPress, Qt::Key_X, QStringLiteral("x"));
+        d.move(d.screen(Vec3(2, 1.3, 0.7)));
+        d.click(d.screen(Vec3(2, 1.3, 0.7)));
+        keyEv(QEvent::KeyRelease, Qt::Key_X, QStringLiteral("x"));
+        d.key(Qt::Key_Escape);
+        bool onRed = false, any = false;
+        for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e) {
+            if (!d.mesh().edges[e].alive) continue;
+            any = true;
+            const Vec3 a = d.mesh().pos(d.mesh().edges[e].v[0]), b = d.mesh().pos(d.mesh().edges[e].v[1]);
+            onRed = std::fabs(a.y - b.y) < 1e-9 && std::fabs(a.z - b.z) < 1e-9 && std::fabs(a.x - b.x) > 0.5;
+        }
+        d.check(any && onRed, "holding X keeps the line on the red axis");
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.click(d.screen(Vec3(1, 1.5, 0)));
+        d.key(Qt::Key_Escape);
+        bool offAxis = false; // (a free line from a point runs in the axis plane facing the camera)
+        for (Id v = 0; v < (Id)d.mesh().vertices.size(); ++v)
+            if (d.mesh().vertices[v].alive && (std::fabs(d.mesh().pos(v).y) > 1e-3 || std::fabs(d.mesh().pos(v).z) > 1e-3)) offAxis = true;
+        d.check(offAxis, "let go, the next line is free again");
+        vp->setTool(ToolId::Select);
+        doc.reset();
+
+        // Scene: a toolbar (Window > Toolbars), its panel not in the tray.
+        QToolBar* sceneBar = w.findChild<QToolBar*>(QStringLiteral("SceneToolbar"));
+        d.check(sceneBar && sceneBar->actions().size() >= 5, "the Scene toolbar has the light and camera tools");
+        QMenu* bars = w.findChild<QMenu*>(QStringLiteral("ToolbarsMenu"));
+        QStringList names;
+        if (bars) {
+            emit bars->aboutToShow();
+            for (QAction* a : bars->actions()) names << a->text();
+        }
+        d.check(names.contains(QStringLiteral("Scene")) && names.contains(QStringLiteral("Standard")), "Window > Toolbars lists the toolbars");
+        if (sceneBar && bars) {
+            for (QAction* a : bars->actions())
+                if (a->text() == QStringLiteral("Scene")) a->trigger();
+            d.pump();
+            d.check(!sceneBar->isVisible(), "and hides one");
+            for (QAction* a : bars->actions())
+                if (a->text() == QStringLiteral("Scene")) a->trigger();
+            d.pump();
+            d.check(sceneBar->isVisible(), "and shows it again");
+        }
+        QDockWidget* lights = w.findChild<QDockWidget*>(QStringLiteral("LightsAndCameras"));
+        d.check(lights != nullptr, "lights and cameras have their own panel");
+        bool inTray = false;
+        if (QDockWidget* tray = w.findChild<QDockWidget*>(QStringLiteral("DefaultTray")))
+            for (QWidget* c : tray->findChildren<QWidget*>()) inTray = inTray || c->metaObject()->className() == QByteArray("gs::ScenePanel");
+        d.check(!inTray, "not in the tray");
+    }
+
+    // --- Cinematic lighting: ray traced lamp shadows, light rays -------------------
+    {
+        doc.reset();
+        doc.style = RenderStyle();
+        doc.style.showAxes = false;
+        Mesh& m = d.mesh();
+        m.groundFacesDown = false;
+        m.viewHint = Vec3(0, 0, 10);
+        m.drawPolyline({{-5, -5, 0}, {5, -5, 0}, {5, 5, 0}, {-5, 5, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faces[f].normal.z < 0) m.reverseFace(f);
+        // A wall standing on the floor, between the lamp and the far side.
+        m.drawPolyline({{0, -2, 0.001}, {0.2, -2, 0.001}, {0.2, 2, 0.001}, {0, 2, 0.001}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faceArea(f) < 1.0 && std::fabs(m.faces[f].normal.z) > 0.99) {
+                m.pushPull(f, m.faces[f].normal.z > 0 ? 2.0 : -2.0);
+                break;
+            }
+        m.touch();
+        Material white;
+        white.name = "White";
+        white.color = Color(1, 1, 1);
+        doc.state.materials = {white};
+        for (Face& F : m.faces) F.front.material = F.back.material = 0;
+        ++doc.materialsRevision;
+        doc.style.sunAltitude = -30; // night: only the lamp
+        SceneObject lamp;
+        lamp.pos = Vec3(-1.5, 0, 1.0);
+        lamp.intensity = 4;
+        lamp.range = 12;
+        doc.addObject(lamp);
+        doc.notifyChanged();
+        vp->camera().perspective = true;
+        vp->camera().eye = Vec3(1, -10, 9);
+        vp->camera().target = Vec3(0.5, 0, 0);
+        auto frame = [&] {
+            vp->update();
+            d.pump();
+            return vp->grabFramebuffer().convertToFormat(QImage::Format_RGB32);
+        };
+        const qreal dpr = vp->devicePixelRatioF();
+        auto grayAt = [&](const QImage& im, const Vec3& p) {
+            const QPointF q = d.screen(p);
+            return qGray(im.pixel(int(q.x() * dpr), int(q.y() * dpr)));
+        };
+        const Vec3 behind(1.4, 0, 0), front(-2.0, -1.5, 0);
+        const QImage plain = frame();
+        doc.style.cinematic = true;
+        doc.style.lightRays = 0;
+        const QImage traced = frame();
+        std::printf("    behind the wall: %d plain, %d traced; in front %d / %d\n", grayAt(plain, behind), grayAt(traced, behind),
+                    grayAt(plain, front), grayAt(traced, front));
+        d.check(grayAt(traced, behind) + 25 < grayAt(plain, behind), "cinematic: a lamp's light is blocked by the wall (ray traced)");
+        d.check(std::abs(grayAt(traced, front) - grayAt(plain, front)) < 25, "where it reaches, it lights as before");
+        doc.style.lightRays = 1.0;
+        const QImage rays = frame();
+        long sumNo = 0, sumRays = 0;
+        for (int y = 0; y < traced.height(); y += 4)
+            for (int x = 0; x < traced.width(); x += 4) {
+                sumNo += qGray(traced.pixel(x, y));
+                sumRays += qGray(rays.pixel(x, y));
+            }
+        std::printf("    light rays: mean brightness %.1f -> %.1f\n", 16.0 * sumNo / (traced.width() * traced.height()),
+                    16.0 * sumRays / (traced.width() * traced.height()));
+        d.check(sumRays > sumNo * 1.02, "light rays make the air around the lamp glow");
+        // Daytime: the sun's shadow is ray traced too.
+        doc.style.sunAltitude = 40;
+        doc.style.sunAzimuth = 270; // from the -x side: the wall shades +x
+        doc.style.lightRays = 0;
+        doc.state.objects.clear();
+        const QImage day = frame();
+        const Vec3 shade(0.6, 1.0, 0), sunny(-2.5, 1.0, 0);
+        std::printf("    sun: shade %d, sunny %d\n", grayAt(day, shade), grayAt(day, sunny));
+        d.check(grayAt(day, shade) + 20 < grayAt(day, sunny), "cinematic: the sun casts a ray traced shadow");
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->zoomExtents();
+    }
+
     // --- Game Mode: soft sun shadows ------------------------------------------
     {
         QTemporaryDir dir;
@@ -3213,6 +3406,19 @@ int runGlProbe() {
     r.render(doc, cam, pv, 1.0);
     r.setSoftShadows(true, 10.0);
     r.render(doc, cam, pv, 1.0);
+    // Cinematic: ray traced shadows from the sun and a lamp, light rays.
+    SceneObject lamp;
+    lamp.pos = Vec3(3, -1, 1.5);
+    lamp.intensity = 3;
+    lamp.range = 10;
+    doc.addObject(lamp);
+    doc.style.cinematic = true;
+    doc.style.lightRays = 1.0;
+    QElapsedTimer cineClock;
+    cineClock.start();
+    for (int k = 0; k < 3; ++k) r.render(doc, cam, pv, 1.0);
+    f->glFinish();
+    std::printf("gl-probe: cinematic frame %.1f ms\n", cineClock.nsecsElapsed() / 3e6);
     GLenum err = f->glGetError();
     QImage img = fbo.toImage();
     QSet<QRgb> colors;

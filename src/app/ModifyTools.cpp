@@ -68,8 +68,20 @@ std::set<Id> selectionVertices(const Mesh& m, const Selection& s) {
 }
 
 void selectConnected(const Mesh& m, Selection& s) {
+    // Connected through edges and through faces: a hole's loop shares no edge
+    // with the face's outline, only the face itself (a hole cut through a box).
     std::set<Id> verts = selectionVertices(m, s);
     std::vector<Id> stack(verts.begin(), verts.end());
+    auto addFace = [&](Id f) {
+        if (!s.faces.insert(f).second) return;
+        for (Id v : m.faceVertices(f))
+            if (verts.insert(v).second) stack.push_back(v);
+    };
+    for (Id f : std::set<Id>(s.faces))
+        if (m.faces[f].alive) {
+            s.faces.erase(f);
+            addFace(f);
+        }
     while (!stack.empty()) {
         Id v = stack.back();
         stack.pop_back();
@@ -77,7 +89,7 @@ void selectConnected(const Mesh& m, Selection& s) {
             if (!m.edges[e].alive) continue;
             s.edges.insert(e);
             for (Id f : m.edgeFaces(e))
-                if (m.faces[f].alive) s.faces.insert(f);
+                if (m.faces[f].alive) addFace(f);
             Id o = m.edges[e].other(v);
             if (verts.insert(o).second) stack.push_back(o);
         }
@@ -1257,6 +1269,20 @@ void RotateTool::mouseMove(const MouseEvent& e) {
         applyLive(currentTransform());
         setVcb(QString::number(angle_ * 180 / kPi, 'f', 1) + QStringLiteral("°"));
     }
+    update();
+}
+
+void RotateTool::holdAxis(int axis) {
+    heldAxis_ = axis;
+    if (stage_ >= 2) return; // the turn has started about its axis
+    if (axis >= 0) {
+        heldSaved_ = forcedAxis_;
+        forcedAxis_ = axis;
+        normal_ = kAxes[axis];
+    } else {
+        forcedAxis_ = heldSaved_;
+    }
+    mouseMove(lastMouse_);
     update();
 }
 

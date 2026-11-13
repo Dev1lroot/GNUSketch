@@ -151,6 +151,10 @@ struct RenderStyle {
     bool sky = true;
     bool ground = true;
     bool shadows = false;      // sun shadows on faces and the ground
+    // Cinematic lighting: ray traced soft shadows from the sun and every light,
+    // and light rays (volumetric shafts) of the given strength 0..1.
+    bool cinematic = false;
+    double lightRays = 0.5;
     bool ambientOcclusion = false; // darkening in creases and corners (screen space)
     bool antialiasing = true;  // multisampling
     bool backfaceCulling = false; // the back of a face is not drawn or picked

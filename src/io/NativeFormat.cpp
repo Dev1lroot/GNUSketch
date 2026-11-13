@@ -622,6 +622,8 @@ QJsonObject styleToJson(const RenderStyle& s) {
     st["sky"] = s.sky;
     st["ground"] = s.ground;
     st["shadows"] = s.shadows;
+    st["cinematic"] = s.cinematic;
+    st["lightRays"] = s.lightRays;
     st["ambientOcclusion"] = s.ambientOcclusion;
     st["antialiasing"] = s.antialiasing;
     st["backfaceCulling"] = s.backfaceCulling;
@@ -650,6 +652,8 @@ void styleFromJson(const QJsonObject& st, RenderStyle& s) {
     s.sky = st["sky"].toBool(s.sky);
     s.ground = st["ground"].toBool(s.ground);
     s.shadows = st["shadows"].toBool(s.shadows);
+    s.cinematic = st["cinematic"].toBool(s.cinematic);
+    s.lightRays = std::clamp(st["lightRays"].toDouble(s.lightRays), 0.0, 1.0);
     s.ambientOcclusion = st["ambientOcclusion"].toBool(s.ambientOcclusion);
     s.antialiasing = st["antialiasing"].toBool(s.antialiasing);
     s.backfaceCulling = st["backfaceCulling"].toBool(s.backfaceCulling);

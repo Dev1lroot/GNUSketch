@@ -64,6 +64,7 @@ add_executable(gnusketch
   src/main.cpp
   src/render/Camera.h src/render/Camera.cpp
   src/render/Renderer.h src/render/Renderer.cpp
+  src/render/RayScene.h src/render/RayScene.cpp
   src/render/OffscreenRenderer.h src/render/OffscreenRenderer.cpp
   src/app/Inference.h src/app/Inference.cpp
   src/app/Tool.h src/app/Tool.cpp

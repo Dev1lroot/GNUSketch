@@ -188,6 +188,10 @@ private:
     // steps; Shift = 5° steps. Returns the snapped angle (or `raw`).
     double snapAngle(const MouseEvent& e, const InferenceResult& r, double raw);
     bool keyRelease(QKeyEvent* e) override;
+public:
+    void holdAxis(int axis) override;
+private:
+    int heldSaved_ = -1;
     int stage_ = 0;
     int forcedAxis_ = -1;
     Vec3 center_, normal_ = Vec3(0, 0, 1), refDir_, cur_;

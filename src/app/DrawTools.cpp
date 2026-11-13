@@ -253,6 +253,14 @@ bool PlanarShapeTool::keyPress(QKeyEvent* e) {
     return true;
 }
 
+void PlanarShapeTool::holdAxis(int axis) {
+    if (axis >= 0 && heldAxis_ < 0) heldSaved_ = forcedAxis_;
+    forcedAxis_ = axis >= 0 ? axis : heldSaved_;
+    heldAxis_ = axis;
+    mouseMove(lastMouse_);
+    update();
+}
+
 Plane PlanarShapeTool::resolvePlane(const MouseEvent& e, const Vec3& p0, Id startFace) {
     if (forcedAxis_ >= 0) return Plane(kAxes[forcedAxis_], p0);
     if (startFace != kNone && mesh().faces[startFace].alive) return mesh().facePlane(startFace);

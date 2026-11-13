@@ -33,6 +33,10 @@ private:
 
     int stage_ = 0;
     int forcedAxis_ = -1;
+    int heldSaved_ = -1;
+public:
+    void holdAxis(int axis) override;
+private:
     Vec3 start_, end_, cur_;
     double angle_ = 0;
     int segments_ = 0;

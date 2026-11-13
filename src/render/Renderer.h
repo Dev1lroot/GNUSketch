@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Camera.h"
+#include "RayScene.h"
 #include "core/Document.h"
 
 #include <QElapsedTimer>
@@ -135,6 +136,10 @@ private:
     // Sun shadow map from the given meshes (with their world transforms).
     void renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Vec3& mn, const Vec3& mx);
     void setShadowUniforms(QOpenGLShaderProgram* p);
+    // Cinematic: the scene's triangles for ray traced shadows, and light rays.
+    void uploadRayScene(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters);
+    bool renderSceneDepth(const std::vector<std::pair<const MeshGpu*, Mat4>>& meshes, const Camera& cam);
+    void drawLightRays(const std::vector<std::pair<const MeshGpu*, Mat4>>& meshes, const Camera& cam, const RenderStyle& st, bool haveDepth);
     void drawShadowCasters(unsigned fbo, int size, const Mat4& vp, const std::vector<std::pair<const MeshGpu*, Mat4>>& casters);
     bool ensureNearShadowMap();
     void renderNearShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Camera& cam, const Vec3& mn, const Vec3& mx);
@@ -144,7 +149,13 @@ private:
     bool ensureAoTargets(int w, int h);
     void freeAoTargets();
 
-    std::unique_ptr<QOpenGLShaderProgram> faceProg_, lineProg_, skyProg_, flatProg_, depthProg_, aoProg_, aoBlendProg_;
+    std::unique_ptr<QOpenGLShaderProgram> faceProg_, lineProg_, skyProg_, flatProg_, depthProg_, aoProg_, aoBlendProg_, volumeProg_;
+    RayScene rayScene_;
+    unsigned rtTbo_[3] = {}, rtTex_[3] = {};
+    uint64_t rtUploadedRev_ = 0;
+    int rtInstBase_ = 0;
+    bool rtOn_ = false;
+    double rtEps_ = 1e-3;
     unsigned aoDepthFbo_ = 0, aoFbo_ = 0, aoDepthTex_ = 0, aoTex_ = 0;
     int aoW_ = 0, aoH_ = 0;
     unsigned shadowFbo_ = 0, shadowTex_ = 0;

@@ -197,7 +197,7 @@ void MainWindow::buildActions() {
     toolAction(ToolId::Tape, QStringLiteral("Tape Measure"), QStringLiteral("T"));
     toolAction(ToolId::Orbit, QStringLiteral("Orbit"), QStringLiteral("O"));
     toolAction(ToolId::Pan, QStringLiteral("Pan"), QStringLiteral("H"));
-    toolAction(ToolId::Zoom, QStringLiteral("Zoom"), QStringLiteral("Z"));
+    toolAction(ToolId::Zoom, QStringLiteral("Zoom"), QStringLiteral("Alt+Z")); // X/Y/Z held lock the axes
     toolAction(ToolId::ZoomWindow, QStringLiteral("Zoom Window"), QStringLiteral("Ctrl+Shift+W"));
     toolAction(ToolId::Mountain, QStringLiteral("Mountain"), QString());
     toolAction(ToolId::Pit, QStringLiteral("Pit"), QString());
@@ -374,6 +374,8 @@ void MainWindow::buildActions() {
     objectsAct_ = styleToggle("objects", "", QStringLiteral("&Lights and Cameras"), &RenderStyle::showObjects);
     hiddenAct_ = styleToggle("hiddengeom", "", QStringLiteral("&Hidden Geometry"), &RenderStyle::showHidden);
     shadowsAct_ = styleToggle("shadows", "", QStringLiteral("&Shadows"), &RenderStyle::shadows);
+    cinematicAct_ = styleToggle("cinematic", "", QStringLiteral("&Cinematic Lighting"), &RenderStyle::cinematic);
+    cinematicAct_->setStatusTip(QStringLiteral("Ray traced soft shadows from the sun and every light, and light rays in the air (Window > Sun sets their strength). Needs a good graphics card."));
     aoAct_ = styleToggle("ambientocclusion", "", QStringLiteral("Ambient &Occlusion"), &RenderStyle::ambientOcclusion);
     antialiasAct_ = styleToggle("antialiasing", "", QStringLiteral("&Antialiasing"), &RenderStyle::antialiasing);
     sunAct_ = styleToggle("sun", "", QStringLiteral("S&un"), &RenderStyle::sun);
@@ -501,6 +503,7 @@ void MainWindow::buildMenus() {
     QMenu* render = view->addMenu(QStringLiteral("&Render"));
     render->addAction(sunAct_);
     render->addAction(shadowsAct_);
+    render->addAction(cinematicAct_);
     render->addAction(aoAct_);
     render->addAction(antialiasAct_);
     render->addAction(cullAct_);
@@ -565,8 +568,6 @@ void MainWindow::buildMenus() {
     tools->addSeparator();
     tools->addAction(toolActions_[ToolId::Bend]);
     tools->addAction(toolActions_[ToolId::TexturePosition]);
-    tools->addAction(acts_["roundcorners"]);
-    tools->addAction(acts_["traceimage"]);
     tools->addSeparator();
     tools->addAction(toolActions_[ToolId::PlaceCharacter]);
     tools->addAction(acts_["entityprops"]);
@@ -581,6 +582,11 @@ void MainWindow::buildMenus() {
         if (!sub) sub = effects->addMenu(d.submenu);
         sub->addAction(acts_[d.key()]);
     }
+    // Commands that work on the selection, with a dialog and no clicking in
+    // the model: they belong with the effects.
+    effects->addSeparator();
+    effects->addAction(acts_["roundcorners"]);
+    effects->addAction(acts_["traceimage"]);
 
     QMenu* win = menuBar()->addMenu(QStringLiteral("&Window"));
     win->addAction(acts_["settings"]);
@@ -599,7 +605,18 @@ void MainWindow::buildMenus() {
     trayAct->setChecked(true);
     connect(trayAct, &QAction::toggled, this, [this](bool on) { trayDock_->setVisible(on); });
     connect(win, &QMenu::aboutToShow, this, [this, trayAct] { trayAct->setChecked(trayDock_->isVisible()); });
-    for (const char* name : {"Entity Info", "Terraform", "Materials", "Scene", "Styles", "Sun", "Instructor"}) {
+    QMenu* bars = win->addMenu(QStringLiteral("Tool&bars"));
+    bars->setObjectName(QStringLiteral("ToolbarsMenu"));
+    connect(bars, &QMenu::aboutToShow, this, [this, bars] {
+        bars->clear();
+        for (QToolBar* tb : findChildren<QToolBar*>(Qt::FindDirectChildrenOnly)) bars->addAction(tb->toggleViewAction());
+    });
+    win->addAction(QStringLiteral("&Lights and Cameras"), this, [this] {
+        sceneDock_->show();
+        sceneDock_->raise();
+    });
+    win->addSeparator();
+    for (const char* name : {"Entity Info", "Terraform", "Materials", "Styles", "Sun", "Instructor"}) {
         QAction* a = win->addAction(QString::fromUtf8(name));
         QString key = QString::fromUtf8(name);
         connect(a, &QAction::triggered, this, [this, key] {
@@ -652,6 +669,40 @@ void MainWindow::buildToolbars() {
     camera->addAction(perspectiveAct_);
     camera->addAction(parallelAct_);
 
+    // Scene: lights and cameras, and their properties (a panel of its own).
+    auto* scene = addToolBar(QStringLiteral("Scene"));
+    scene->setObjectName("SceneToolbar");
+    scene->setIconSize(QSize(24, 24));
+    for (ToolId id : {ToolId::PlacePointLight, ToolId::PlaceSpotLight, ToolId::PlaceDirectionalLight, ToolId::PlaceCamera})
+        scene->addAction(toolActions_[id]);
+    scene->addAction(acts_["addcamera"]);
+    {
+        auto* look = new QToolButton(scene);
+        look->setText(QStringLiteral("Look Through"));
+        look->setToolTip(QStringLiteral("Look through a camera placed in the model"));
+        look->setIcon(Icons::get("look_through"));
+        look->setPopupMode(QToolButton::InstantPopup);
+        auto* menu = new QMenu(look);
+        connect(menu, &QMenu::aboutToShow, this, [this, menu] {
+            menu->clear();
+            const auto& objs = doc_.state.objects;
+            for (Id i = 0; i < (Id)objs.size(); ++i)
+                if (objs[i].alive && objs[i].kind == SceneObject::ViewCamera)
+                    menu->addAction(QString::fromStdString(objs[i].name), this, [this, i] { viewport_->lookThrough(i); });
+            if (menu->isEmpty()) menu->addAction(QStringLiteral("No cameras in the model"))->setEnabled(false);
+        });
+        look->setMenu(menu);
+        scene->addWidget(look);
+    }
+    scene->addSeparator();
+    sceneAct_ = scene->addAction(Icons::get("light_point"), QStringLiteral("Lights and Cameras"));
+    sceneAct_->setObjectName(QStringLiteral("sceneprops"));
+    sceneAct_->setCheckable(true);
+    sceneAct_->setToolTip(QStringLiteral("Lights and Cameras: list and properties of the lights and cameras in the model"));
+    connect(sceneAct_, &QAction::toggled, this, [this](bool on) {
+        if (sceneDock_) sceneDock_->setVisible(on);
+    });
+
     auto* solids = addToolBar(QStringLiteral("Solid Tools"));
     solids->setObjectName("SolidToolsToolbar");
     solids->setIconSize(QSize(24, 24));
@@ -667,8 +718,7 @@ void MainWindow::buildToolbars() {
     gl->setContentsMargins(2, 2, 2, 2);
     gl->setHorizontalSpacing(1);
     gl->setVerticalSpacing(1);
-    // Cell values: tool id, -1 = empty, -2 = separator row, -3 = zoom extents,
-    // -4 = round corners, -5 = trace image.
+    // Cell values: tool id, -1 = empty, -2 = separator row, -3 = zoom extents.
     const int rows[][2] = {
         {(int)ToolId::Select, (int)ToolId::Paint},
         {(int)ToolId::Eraser, (int)ToolId::Tape},
@@ -680,7 +730,6 @@ void MainWindow::buildToolbars() {
         {(int)ToolId::Move, (int)ToolId::PushPull},
         {(int)ToolId::Rotate, (int)ToolId::Offset},
         {(int)ToolId::Scale, (int)ToolId::FollowMe},
-        {-4, -5},
         {(int)ToolId::Bend, (int)ToolId::TexturePosition},
         {-2, -2},
         {(int)ToolId::Mountain, (int)ToolId::Pit},
@@ -704,10 +753,7 @@ void MainWindow::buildToolbars() {
             auto* b = new QToolButton(grid);
             b->setIconSize(QSize(28, 28));
             b->setAutoRaise(true);
-            b->setDefaultAction(row[c] == -3 ? acts_["zoomext"]
-                                : row[c] == -4 ? acts_["roundcorners"]
-                                : row[c] == -5 ? acts_["traceimage"]
-                                               : toolActions_[(ToolId)row[c]]);
+            b->setDefaultAction(row[c] == -3 ? acts_["zoomext"] : toolActions_[(ToolId)row[c]]);
             gl->addWidget(b, r, c);
         }
         ++r;
@@ -729,7 +775,6 @@ void MainWindow::buildTray() {
     materials_ = new MaterialsPanel(&doc_, viewport_, tray);
     styles_ = new StylesPanel(&doc_, viewport_, tray);
     sun_ = new SunPanel(&doc_, viewport_, tray);
-    scene_ = new ScenePanel(&doc_, viewport_, tray);
     instructor_ = new InstructorPanel(tray);
     terrain_ = new TerrainPanel(&doc_, viewport_,
                                 {toolActions_[ToolId::Mountain], toolActions_[ToolId::Pit], toolActions_[ToolId::Flatten],
@@ -738,7 +783,6 @@ void MainWindow::buildTray() {
     sections_["Entity Info"] = tray->addSection(QStringLiteral("Entity Info"), entityInfo_, true);
     sections_["Terraform"] = tray->addSection(QStringLiteral("Terraform"), terrain_, false);
     sections_["Materials"] = tray->addSection(QStringLiteral("Materials"), materials_, true);
-    sections_["Scene"] = tray->addSection(QStringLiteral("Scene"), scene_, false);
     sections_["Styles"] = tray->addSection(QStringLiteral("Styles"), styles_, false);
     sections_["Sun"] = tray->addSection(QStringLiteral("Sun"), sun_, false);
     sections_["Instructor"] = tray->addSection(QStringLiteral("Instructor"), instructor_, false);
@@ -746,6 +790,24 @@ void MainWindow::buildTray() {
     trayDock_->setWidget(scroll);
     trayDock_->setMinimumWidth(368);
     addDockWidget(Qt::RightDockWidgetArea, trayDock_);
+
+    // Lights and cameras: opened from the Scene toolbar (not part of the tray).
+    sceneDock_ = new QDockWidget(QStringLiteral("Lights and Cameras"), this);
+    sceneDock_->setObjectName("LightsAndCameras");
+    scene_ = new ScenePanel(&doc_, viewport_, sceneDock_);
+    auto* sceneScroll = new QScrollArea(sceneDock_);
+    sceneScroll->setWidgetResizable(true);
+    sceneScroll->setFrameShape(QFrame::NoFrame);
+    sceneScroll->setWidget(scene_);
+    sceneDock_->setWidget(sceneScroll);
+    sceneDock_->setMinimumWidth(300);
+    addDockWidget(Qt::RightDockWidgetArea, sceneDock_);
+    sceneDock_->hide();
+    connect(sceneDock_, &QDockWidget::visibilityChanged, this, [this](bool) {
+        if (!sceneAct_) return;
+        QSignalBlocker b(sceneAct_);
+        sceneAct_->setChecked(sceneDock_->isVisible());
+    });
 
     hierarchyDock_ = new QDockWidget(QStringLiteral("Hierarchy"), this);
     hierarchyDock_->setObjectName("Hierarchy");
@@ -809,7 +871,7 @@ void MainWindow::onSelectionChanged() {
     scene_->refresh();
     if (hierarchy_) hierarchy_->refresh();
     if (doc_.selection.objects.size() == 1 && !doc_.selection.faces.size() && !doc_.selection.edges.size() && !doc_.selection.instances.size())
-        sections_["Scene"]->setExpanded(true);
+        sceneDock_->show(); // a light or camera alone: its properties
     bool any = !doc_.selection.empty();
     for (const char* k : {"cut", "copy", "delete", "hide", "roundcorners"}) acts_[k]->setEnabled(any);
     acts_["traceimage"]->setEnabled(!doc_.selection.faces.empty());
@@ -844,7 +906,7 @@ void MainWindow::updateUndoActions() {
 
 void MainWindow::syncStyleActions() {
     const RenderStyle& s = doc_.style;
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_}) a->blockSignals(true);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, cinematicAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_}) a->blockSignals(true);
     xrayAct_->setChecked(s.xray);
     backEdgesAct_->setChecked(s.backEdges);
     edgesAct_->setChecked(s.edges);
@@ -854,11 +916,12 @@ void MainWindow::syncStyleActions() {
     objectsAct_->setChecked(s.showObjects);
     hiddenAct_->setChecked(s.showHidden);
     shadowsAct_->setChecked(s.shadows);
+    cinematicAct_->setChecked(s.cinematic);
     aoAct_->setChecked(s.ambientOcclusion);
     antialiasAct_->setChecked(s.antialiasing);
     sunAct_->setChecked(s.sun);
     cullAct_->setChecked(s.backfaceCulling);
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_}) a->blockSignals(false);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, cinematicAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_}) a->blockSignals(false);
     auto it = faceStyleActs_.find((int)s.faceStyle);
     if (it != faceStyleActs_.end()) it->second->setChecked(true);
     perspectiveAct_->setChecked(viewport_->camera().perspective);
@@ -2291,7 +2354,8 @@ void MainWindow::showShortcuts() {
                                             "<tr><td><b>Q</b></td><td>Rotate</td><td><b>S</b></td><td>Scale</td></tr>"
                                             "<tr><td><b>F</b></td><td>Offset</td><td><b>T</b></td><td>Tape Measure</td></tr>"
                                             "<tr><td><b>O</b></td><td>Orbit</td><td><b>H</b></td><td>Pan</td></tr>"
-                                            "<tr><td><b>Z</b></td><td>Zoom</td><td><b>Shift+Z</b></td><td>Zoom Extents</td></tr>"
+                                            "<tr><td><b>Alt+Z</b></td><td>Zoom</td><td><b>Shift+Z</b></td><td>Zoom Extents</td></tr>"
+                                            "<tr><td><b>Hold X / Y / Z</b></td><td>Keep the tool on the red / green / blue axis</td><td></td><td></td></tr>"
                                             "<tr><td><b>Middle mouse</b></td><td>Orbit</td><td><b>Shift+Middle</b></td><td>Pan</td></tr>"
                                             "<tr><td><b>Arrows</b></td><td>Lock axis / plane</td><td><b>Shift</b></td><td>Lock inference</td></tr>"
                                             "<tr><td><b>Ctrl+T</b></td><td>Select none</td><td><b>Esc</b></td><td>Cancel</td></tr>"

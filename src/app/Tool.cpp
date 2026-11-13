@@ -60,7 +60,14 @@ void Tool::clearLocks() {
     shiftLock_ = false;
 }
 
+void Tool::holdAxis(int axis) {
+    heldAxis_ = axis;
+    mouseMove(lastMouse_);
+    update();
+}
+
 Color Tool::lockColor() const {
+    if (heldAxis_ >= 0) return Renderer::axisColor(heldAxis_);
     if (lockAxis_ >= 0) return Renderer::axisColor(lockAxis_);
     return Color::rgb8(220, 0, 220);
 }
@@ -80,7 +87,11 @@ InferenceResult Tool::inferPoint(const MouseEvent& e, std::optional<Vec3> ref, s
                                  const std::set<Id>* exclude, bool axes) {
     InferenceEngine::Options o;
     o.ref = ref;
-    if (ref && lockDir_) {
+    if (ref && heldAxis_ >= 0) {
+        static const Vec3 axes[3] = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)};
+        o.lockDir = axes[heldAxis_];
+        o.lockAxis = heldAxis_;
+    } else if (ref && lockDir_) {
         o.lockDir = lockDir_;
         o.lockAxis = lockAxis_;
     }

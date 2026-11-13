@@ -58,6 +58,11 @@ public:
     virtual bool keyPress(QKeyEvent* e);
     virtual bool keyRelease(QKeyEvent* e);
     virtual bool vcbEnter(const QString&) { return false; }
+    // X/Y/Z held down: keep the tool on that axis (0 red, 1 green, 2 blue)
+    // until called with -1. Tools with an axis of their own (the plane of a
+    // shape, the axis of a rotation or bend) use that; others lock their
+    // direction to it.
+    virtual void holdAxis(int axis);
     // Mouse wheel (steps of one notch, positive = away from the user). Return
     // true to consume it instead of zooming.
     virtual bool wheel(double /*steps*/, Qt::KeyboardModifiers) { return false; }
@@ -86,7 +91,7 @@ protected:
                                std::optional<Plane> plane = std::nullopt,
                                const std::set<Id>* exclude = nullptr, bool axes = true);
     void clearLocks();
-    bool hasLock() const { return lockDir_.has_value(); }
+    bool hasLock() const { return lockDir_.has_value() || heldAxis_ >= 0; }
     Color lockColor() const;
     // Colour for a rubber-band line from a to b (axis colours when aligned).
     Color lineColor(const Vec3& a, const Vec3& b) const;
@@ -95,6 +100,7 @@ protected:
     InferenceResult inf_;
     std::optional<Vec3> lockDir_;
     int lockAxis_ = -1;
+    int heldAxis_ = -1; // X/Y/Z held
     bool shiftLock_ = false;
     MouseEvent lastMouse_;
 };

@@ -247,6 +247,10 @@ was read, tags, props and animations included.
   are fixed automatically; a component with holes in its surface or edges shared by
   more than two faces isn't a solid, and the status bar says why. Entity Info
   shows **Solid Component** and the volume for solids.
+* **View → Render → Cinematic Lighting** (also Window → Sun, F5 in Game Mode):
+  ray traced soft shadows from the sun and from every light (a bounding volume
+  hierarchy of the model is traced on the graphics card), and light rays: sun shafts
+  through the air and beams of lamps, with Window → Sun → Light rays for their strength.
 * **View → Render**: sun **Shadows**, **Ambient Occlusion** (soft darkening in
   creases, corners and where objects meet; screen-space, so it follows what is on
   screen) and **Antialiasing** toggles.
@@ -281,9 +285,10 @@ was read, tags, props and animations included.
 | P | Push/Pull | M | Move / Copy (Ctrl) / Array (`5x`, `/5`) |
 | Q | Rotate (Ctrl = copy) | S | Scale with grips (corner / edge / face, Shift, Ctrl) |
 | F | Offset | T | Tape Measure (guides, model resize) |
-| O / H / Z | Orbit / Pan / Zoom | Shift+Z | Zoom Extents |
+| O / H / Alt+Z | Orbit / Pan / Zoom | Shift+Z | Zoom Extents |
+| hold X / Y / Z | keep any tool on the red / green / blue axis (what the arrow keys lock in that tool) while held | | |
 
-Also Freehand, Zoom Window, **Follow Me**, **Round Corners**, the **Solid Tools** and the
+Also Freehand, Zoom Window, **Follow Me**, the **Solid Tools** and the
 **Terraform** brushes and Texture Brush (Tools menu and the
 tool set; no shortcut keys). Middle mouse orbits and Shift+middle pans with any
 tool. The wheel zooms towards the cursor; double-clicking the middle button

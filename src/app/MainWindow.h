@@ -152,6 +152,8 @@ private:
     EntityProperties* entityProps_ = nullptr;
     HierarchyPanel* hierarchy_ = nullptr;
     QDockWidget* hierarchyDock_ = nullptr;
+    QDockWidget* sceneDock_ = nullptr; // lights and cameras (ScenePanel)
+    QAction* sceneAct_ = nullptr;      // its button on the Scene toolbar
     MaterialEditor* materialEditor_ = nullptr;
     MaterialBrowser* materialBrowser_ = nullptr;
     PrefabBrowser* prefabBrowser_ = nullptr;
@@ -170,7 +172,7 @@ private:
     QAction *undoAct_ = nullptr, *redoAct_ = nullptr;
     QAction *perspectiveAct_ = nullptr, *parallelAct_ = nullptr;
     QAction *xrayAct_ = nullptr, *backEdgesAct_ = nullptr, *axesAct_ = nullptr, *guidesAct_ = nullptr,
-            *hiddenAct_ = nullptr, *edgesAct_ = nullptr, *profilesAct_ = nullptr, *shadowsAct_ = nullptr, *aoAct_ = nullptr,
+            *hiddenAct_ = nullptr, *edgesAct_ = nullptr, *profilesAct_ = nullptr, *shadowsAct_ = nullptr, *cinematicAct_ = nullptr, *aoAct_ = nullptr,
             *antialiasAct_ = nullptr, *sunAct_ = nullptr, *cullAct_ = nullptr, *objectsAct_ = nullptr;
     std::map<int, QAction*> faceStyleActs_;
     std::map<QString, QAction*> acts_;

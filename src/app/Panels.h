@@ -144,6 +144,8 @@ private:
     Viewport* vp_;
     QCheckBox* sun_;
     QCheckBox* shadows_;
+    QCheckBox* cinematic_;
+    QDoubleSpinBox* rays_;
     QDoubleSpinBox* azimuth_;
     QDoubleSpinBox* altitude_;
     QDoubleSpinBox* intensity_;

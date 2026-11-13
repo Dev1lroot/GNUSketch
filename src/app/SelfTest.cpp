@@ -185,6 +185,11 @@ int runSelfTest(MainWindow& w) {
         std::printf("%s\n", qPrintable(vp->glError()));
         return 1;
     }
+    // The same window size everywhere (CI displays differ), so the points the
+    // checks look at are on screen.
+    w.showNormal();
+    w.resize(1600, 1000);
+    d.pump();
     vp->setFocus();
     vp->camera().setViewport(vp->width(), vp->height());
 
@@ -2903,6 +2908,15 @@ int runSelfTest(MainWindow& w) {
         d.check(saveNative(doc, path, {}, &err), "it saves");
         GameWindow game;
         d.check(game.load(path, Vec3(-2.5, -3, 0.01), 0.0, &err), "Game Mode loads it");
+        // Before the window runs (it simulates in real time, and a slow
+        // software renderer lets a lot of it pass during the first frames).
+        bool startsHigh = false;
+        if (EntityWorld* e0 = game.entities(); e0 && e0->count() == 2) {
+            const int light0 = e0->entity(0).props.mass == 25 ? 0 : 1;
+            Vec3 lo, hi;
+            game.world().bodyBounds(e0->entity(light0).parts[0].body, lo, hi);
+            startsHigh = lo.z > 2.5;
+        }
         game.show();
         d.pump();
         EntityWorld* ents = game.entities();
@@ -2917,7 +2931,7 @@ int runSelfTest(MainWindow& w) {
             auto frames = [&](double seconds) {
                 for (double t = 0; t < seconds; t += 1.0 / 60) game.simulate(1.0 / 60);
             };
-            d.check(bodyMin(light).z > 2.5, "it starts in the air");
+            d.check(startsHigh, "it starts in the air");
             frames(1.5);
             d.check(std::fabs(bodyMin(light).z) < 0.1, "it falls to the ground");
             frames(1.0);

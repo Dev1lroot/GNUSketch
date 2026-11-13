@@ -14,6 +14,7 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStyleFactory>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -35,6 +36,8 @@ ThemeSettings ThemeSettings::load() {
     if (p.isValid()) t.primary = p;
     if (q.isValid()) t.secondary = q;
     t.secondaryOpacity = std::clamp(s.value("ui/iconSecondaryOpacity", t.secondaryOpacity).toDouble(), 0.0, 1.0);
+    t.fontSize = std::clamp(s.value("ui/fontSize", t.fontSize).toInt(), 0, 32);
+    t.iconSize = std::clamp(s.value("ui/iconSize", t.iconSize).toInt(), 12, 64);
     return t;
 }
 
@@ -45,6 +48,8 @@ void ThemeSettings::save() const {
     s.setValue("ui/iconPrimary", primary.name());
     s.setValue("ui/iconSecondary", secondary.name());
     s.setValue("ui/iconSecondaryOpacity", secondaryOpacity);
+    s.setValue("ui/fontSize", fontSize);
+    s.setValue("ui/iconSize", iconSize);
 }
 
 namespace Theme {
@@ -165,6 +170,11 @@ QString fmtNum(double v) { return QString::number(std::clamp(v, 0.0, 1.0), 'f', 
 } // namespace
 
 const ThemeSettings& current() { return state(); }
+
+ThemeNotifier* notifier() {
+    static ThemeNotifier* n = new ThemeNotifier;
+    return n;
+}
 int revision() { return rev(); }
 
 QByteArray recolorSvg(const QByteArray& body, const ThemeSettings& s) {
@@ -243,8 +253,14 @@ void apply(const ThemeSettings& s) {
     ++rev();
     if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance())) {
         applyPalette(*app, s.dark);
+        // Font size: the system's font, or the same at the chosen size.
+        static const QFont systemFont = QApplication::font();
+        QFont f = systemFont;
+        if (s.fontSize > 0) f.setPointSize(s.fontSize);
+        if (QApplication::font() != f) QApplication::setFont(f);
         for (QWidget* w : QApplication::allWidgets()) w->update();
     }
+    emit notifier()->changed();
 }
 
 void applyStored() { apply(ThemeSettings::load()); }
@@ -304,6 +320,15 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     opacity_->setRange(10, 100);
     form->addRow(QStringLiteral("Secondary strength:"), opacity_);
 
+    fontSize_ = new QSpinBox(this);
+    fontSize_->setRange(0, 32);
+    fontSize_->setSpecialValueText(QStringLiteral("System"));
+    fontSize_->setSuffix(QStringLiteral(" pt"));
+    form->addRow(QStringLiteral("Font size:"), fontSize_);
+    iconSize_ = new QComboBox(this);
+    for (int px : {16, 20, 24, 28, 32, 40, 48}) iconSize_->addItem(QStringLiteral("%1 px").arg(px), px);
+    form->addRow(QStringLiteral("Toolbar icons:"), iconSize_);
+
     auto* presets = new QHBoxLayout;
     struct Preset { const char* name; QColor a, b; };
     const Preset list[] = {
@@ -337,6 +362,8 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     connect(theme_, &QComboBox::currentIndexChanged, this, [this](int i) { edit_.dark = i == 0; refresh(); });
     connect(iconStyle_, &QComboBox::currentIndexChanged, this, [this](int i) { edit_.duotone = i == 0; refresh(); });
     connect(opacity_, &QSlider::valueChanged, this, [this](int v) { edit_.secondaryOpacity = v / 100.0; refresh(); });
+    connect(fontSize_, &QSpinBox::valueChanged, this, [this](int v) { edit_.fontSize = v; refresh(); });
+    connect(iconSize_, &QComboBox::currentIndexChanged, this, [this](int i) { edit_.iconSize = iconSize_->itemData(i).toInt(); refresh(); });
     connect(primaryBtn_, &QToolButton::clicked, this, [this] { pick(&edit_.primary); });
     connect(secondaryBtn_, &QToolButton::clicked, this, [this] { pick(&edit_.secondary); });
     refresh();
@@ -358,9 +385,18 @@ void SettingsDialog::setPrimary(const QColor& c) { edit_.primary = c; refresh();
 void SettingsDialog::setSecondary(const QColor& c) { edit_.secondary = c; refresh(); }
 void SettingsDialog::setDuotone(bool on) { edit_.duotone = on; refresh(); }
 void SettingsDialog::setDark(bool on) { edit_.dark = on; refresh(); }
+void SettingsDialog::setFontSize(int points) { edit_.fontSize = points; refresh(); }
+void SettingsDialog::setIconSize(int pixels) { edit_.iconSize = pixels; refresh(); }
 
 void SettingsDialog::refresh() {
-    const QSignalBlocker b1(theme_), b2(iconStyle_), b3(opacity_);
+    const QSignalBlocker b1(theme_), b2(iconStyle_), b3(opacity_), b4(fontSize_), b5(iconSize_);
+    fontSize_->setValue(edit_.fontSize);
+    int iconIndex = iconSize_->findData(edit_.iconSize);
+    if (iconIndex < 0) {
+        iconSize_->addItem(QStringLiteral("%1 px").arg(edit_.iconSize), edit_.iconSize);
+        iconIndex = iconSize_->count() - 1;
+    }
+    iconSize_->setCurrentIndex(iconIndex);
     theme_->setCurrentIndex(edit_.dark ? 0 : 1);
     iconStyle_->setCurrentIndex(edit_.duotone ? 0 : 1);
     opacity_->setValue(int(std::lround(edit_.secondaryOpacity * 100)));

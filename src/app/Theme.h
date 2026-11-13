@@ -10,6 +10,7 @@
 class QApplication;
 class QComboBox;
 class QSlider;
+class QSpinBox;
 class QToolButton;
 
 namespace gs {
@@ -20,13 +21,24 @@ struct ThemeSettings {
     QColor primary{226, 230, 236};   // outlines and details
     QColor secondary{79, 156, 255};  // filled areas
     double secondaryOpacity = 0.75;  // strength of the filled areas, 0..1
+    int fontSize = 0;  // interface font in points (0 = the system's)
+    int iconSize = 24; // toolbar icons in pixels
 
     static ThemeSettings load();
     void save() const;
     bool operator==(const ThemeSettings&) const = default;
 };
 
+// Tells windows that the theme changed (connect to resize their icons).
+class ThemeNotifier : public QObject {
+    Q_OBJECT
+signals:
+    void changed();
+};
+
 namespace Theme {
+
+ThemeNotifier* notifier();
 
 // Current settings (loaded once, then whatever apply() was last given).
 const ThemeSettings& current();
@@ -54,6 +66,8 @@ public:
     void setSecondary(const QColor& c);
     void setDuotone(bool on);
     void setDark(bool on);
+    void setFontSize(int points);
+    void setIconSize(int pixels);
     // Esc, the window's close button and Cancel all undo the live preview.
     void reject() override;
 
@@ -67,6 +81,8 @@ private:
     QToolButton* primaryBtn_ = nullptr;
     QToolButton* secondaryBtn_ = nullptr;
     QSlider* opacity_ = nullptr;
+    QSpinBox* fontSize_ = nullptr;
+    QComboBox* iconSize_ = nullptr;
     QWidget* preview_ = nullptr;
 };
 

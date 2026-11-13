@@ -221,6 +221,16 @@ public:
     bool vcbEnter(const QString& text) override;
     void buildPreview(Preview& pv) override;
 
+    // The selection's box: its sizes along its axes (W red, L green, H blue;
+    // a single component's own axes). False without a selection.
+    bool boxLengths(Vec3& lengths) const;
+    enum class Anchor { BottomCentre, Corner, Centre };
+    // Scales the selection to these sizes (one undo step), keeping the anchor
+    // point of its box in place. Zero sizes stay as they are.
+    bool setDimensions(const Vec3& lengths, Anchor anchor);
+    // "W: 2000mm  L: 1000mm  H: 500mm" for sizes in meters.
+    QString dimensionText(const Vec3& lengths) const;
+
 protected:
     Mat4 currentTransform() const override;
 
@@ -252,6 +262,7 @@ private:
     double pressX_ = 0, pressY_ = 0;
     // The last scale, so a value typed afterwards can adjust it.
     bool canAdjust_ = false;
+    std::optional<Vec3> anchorOverride_; // setDimensions
     Box lastBox_;
     Grip lastGrip_ = {2, 2, 2};
     bool lastCentered_ = false;

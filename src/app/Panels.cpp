@@ -152,51 +152,6 @@ QImage makeStone(std::mt19937& rng) {
 } // namespace
 
 // ===========================================================================
-// Tray
-// ===========================================================================
-
-TraySection::TraySection(const QString& title, QWidget* content, QWidget* parent) : QWidget(parent), content_(content) {
-    auto* lay = new QVBoxLayout(this);
-    lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(0);
-    header_ = new QToolButton(this);
-    header_->setText(title);
-    header_->setCheckable(true);
-    header_->setChecked(true);
-    header_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    header_->setArrowType(Qt::DownArrow);
-    header_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    header_->setObjectName("TrayHeader");
-    lay->addWidget(header_);
-    lay->addWidget(content_);
-    connect(header_, &QToolButton::toggled, this, [this](bool on) { setExpanded(on); });
-}
-
-void TraySection::setExpanded(bool on) {
-    header_->blockSignals(true);
-    header_->setChecked(on);
-    header_->blockSignals(false);
-    header_->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
-    content_->setVisible(on);
-}
-
-bool TraySection::expanded() const { return header_->isChecked(); }
-
-Tray::Tray(QWidget* parent) : QWidget(parent) {
-    layout_ = new QVBoxLayout(this);
-    layout_->setContentsMargins(2, 2, 2, 2);
-    layout_->setSpacing(2);
-    layout_->addStretch(1);
-}
-
-TraySection* Tray::addSection(const QString& title, QWidget* content, bool expanded) {
-    auto* s = new TraySection(title, content, this);
-    layout_->insertWidget(layout_->count() - 1, s);
-    s->setExpanded(expanded);
-    return s;
-}
-
-// ===========================================================================
 // Entity Info
 // ===========================================================================
 
@@ -285,7 +240,7 @@ void EntityInfoPanel::refresh() {
                             ? QString::fromLatin1(sceneObjectTypeName(doc_->state.objects[*s.objects.begin()].kind))
                             : QStringLiteral("%1 Lights and Cameras").arg(s.objects.size()));
         measureLabel_->setText(s.objects.size() == 1 ? QString::fromStdString(doc_->state.objects[*s.objects.begin()].name) : QString());
-        measure_->setText(QStringLiteral("See Window > Scene"));
+        measure_->setText(QStringLiteral("Its settings are below"));
     } else if (!s.instances.empty() && s.faces.empty() && s.edges.empty()) {
         const ModelState& st = doc_->state;
         Id def = st.instances[*s.instances.begin()].def;

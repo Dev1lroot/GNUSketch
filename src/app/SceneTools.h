@@ -44,12 +44,35 @@ private:
     Vec3 pos_;
 };
 
-// Lists the lights and cameras of the model and edits the selected one.
+// What the next light placed by the light tools is like (Properties panel
+// while such a tool is equipped).
+SceneObject& placementDefaults(SceneObject::Kind kind);
+
+// Edits those settings for one kind of light.
+class PlacementSettings : public QWidget {
+    Q_OBJECT
+public:
+    explicit PlacementSettings(QWidget* parent = nullptr);
+    void setKind(SceneObject::Kind kind);
+    void refresh();
+
+private:
+    SceneObject::Kind kind_ = SceneObject::PointLight;
+    QFormLayout* form_;
+    QPushButton* color_;
+    QDoubleSpinBox *intensity_, *range_, *cone_, *softness_;
+    bool updating_ = false;
+};
+
+// Edits the selected light or camera (the one selected alone). With the list
+// shown it also lists them all.
 class ScenePanel : public QWidget {
     Q_OBJECT
 public:
     ScenePanel(Document* doc, Viewport* vp, QWidget* parent = nullptr);
     void refresh();
+    // Without the list and the add buttons (inside the Properties panel).
+    void setListVisible(bool on);
 
 private:
     template <class Fn> void edit(const char* op, Fn fn);
@@ -58,6 +81,7 @@ private:
     Document* doc_;
     Viewport* vp_;
     QListWidget* list_;
+    QWidget* addRow_ = nullptr;
     QWidget* editor_;
     QFormLayout* form_;
     QLineEdit* name_;

@@ -671,6 +671,8 @@ void PushPullTool::mouseMove(const MouseEvent& e) {
     o.excludeVerts = &faceVerts_;
     inf_ = engine().infer(e.x, e.y, o);
     dist_ = (inf_.p - start_).dot(normal_);
+    // Length snapping of a free push/pull (face and point snaps below win).
+    if (!inf_.hasLine) dist_ = snapLen(dist_);
     // Face snaps (point snaps, drawn with an inference line, and edges under
     // the cursor win):
     //  1. hovering a face parallel to the pushed one (loose or of a component)
@@ -1527,6 +1529,7 @@ bool ScaleTool::uniformMode() const {
 }
 
 Vec3 ScaleTool::anchor() const {
+    if (anchorOverride_) return *anchorOverride_;
     if (mods_ & Qt::ControlModifier) return box_.at({1, 1, 1});
     return box_.at({2 - grip_[0], 2 - grip_[1], 2 - grip_[2]});
 }
@@ -1736,6 +1739,45 @@ bool ScaleTool::vcbEnter(const QString& text) {
     return true;
 }
 
+bool ScaleTool::boxLengths(Vec3& lengths) const {
+    const Box b = active_ ? box_ : selectionBox();
+    if (!b.valid) return false;
+    for (int k = 0; k < 3; ++k) lengths[k] = b.len[k] * (active_ ? std::fabs(factor_[k]) : 1.0);
+    return true;
+}
+
+QString ScaleTool::dimensionText(const Vec3& l) const {
+    const Units& u = vp_->doc().units;
+    return QStringLiteral("W: %1   L: %2   H: %3")
+        .arg(QString::fromStdString(u.format(l.x)), QString::fromStdString(u.format(l.y)), QString::fromStdString(u.format(l.z)));
+}
+
+bool ScaleTool::setDimensions(const Vec3& lengths, Anchor anchor) {
+    if (active_) return false;
+    box_ = selectionBox();
+    if (!box_.valid) return false;
+    Vec3 f(1, 1, 1);
+    bool any = false;
+    for (int k = 0; k < 3; ++k)
+        if (box_.len[k] > kTol && lengths[k] > kTol && std::fabs(lengths[k] - box_.len[k]) > 1e-12) {
+            f[k] = lengths[k] / box_.len[k];
+            any = true;
+        }
+    if (!any) return false;
+    const Vec3 a = anchor == Anchor::Corner ? box_.o : anchor == Anchor::Centre ? box_.at({1, 1, 1}) : box_.at({1, 1, 0});
+    if (!begin("Scale", false)) return false;
+    applyFactors(f);
+    anchorOverride_ = a;
+    finish(currentTransform());
+    anchorOverride_.reset();
+    factor_ = Vec3(1, 1, 1);
+    canAdjust_ = false;
+    box_ = selectionBox();
+    refreshStatus();
+    update();
+    return true;
+}
+
 void ScaleTool::buildPreview(Preview& pv) {
     if (!box_.valid) return;
     using MK = Preview::MarkerKind;
@@ -1749,6 +1791,12 @@ void ScaleTool::buildPreview(Preview& pv) {
     for (int i = 0; i < (int)gs.size(); ++i) {
         bool hot = active_ ? gs[i] == grip_ : i == hover_;
         pv.markers.push_back({mt.transformPoint(box_.at(gs[i])), hot ? MK::GripHot : MK::Grip});
+    }
+    // The box's sizes, live while scaling.
+    {
+        Vec3 l;
+        for (int k = 0; k < 3; ++k) l[k] = box_.len[k] * (active_ ? std::fabs(factor_[k]) : 1.0);
+        pv.labels.push_back({mt.transformPoint(box_.at({2, 0, 2})), dimensionText(l).toStdString()});
     }
     if (active_) {
         Vec3 a = anchor();
@@ -1854,6 +1902,7 @@ void OffsetTool::mouseMove(const MouseEvent& e) {
     if (face_ < 0 || !mesh().faces[face_].alive) { reset(); return; }
     InferenceResult r = inferPoint(e, std::nullopt, mesh().facePlane(face_), nullptr, false);
     dist_ = signedDist(face_, r.p) - signedDist(face_, start_);
+    if (lengthSnappable(r)) dist_ = snapLen(dist_); // length snapping
     setVcb(fmtLen(dist_));
     update();
 }

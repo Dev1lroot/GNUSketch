@@ -3365,6 +3365,263 @@ int main() {
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
 
+
+    test("timeline: tweens, holds, turns without shrinking", [&] {
+        ModelState st;
+        st.defs.push_back(ComponentDef{});
+        Instance in;
+        in.def = 0;
+        st.instances.push_back(in);
+        SceneObject lamp;
+        lamp.intensity = 1;
+        st.objects.push_back(lamp);
+        TimelineLayer box;
+        box.kind = TimelineLayer::Instance;
+        box.target = 0;
+        setKey(box, captureKey(st, box, 1));
+        st.instances[0].xf = Mat4::translation(Vec3(10, 0, 0)) * Mat4::rotation(Vec3(0, 0, 1), kPi / 2);
+        setKey(box, captureKey(st, box, 11));
+        CHECK(box.keys.size() == 2 && box.keys[0].frame == 1 && box.keys[1].frame == 11);
+        st.timeline.layers.push_back(box);
+        TimelineLayer light;
+        light.kind = TimelineLayer::Object;
+        light.target = 0;
+        setKey(light, captureKey(st, light, 1, false)); // holds: no tween
+        st.objects[0].intensity = 5;
+        setKey(light, captureKey(st, light, 11));
+        st.timeline.layers.push_back(light);
+        CHECK(applyTimeline(st, 6));
+        const Mat4& m = st.instances[0].xf;
+        CHECK(std::fabs(m.at(0, 3) - 5) < 1e-9);
+        // Half way round a quarter turn: 45°, and the axes keep their length.
+        const Vec3 xAxis(m.at(0, 0), m.at(1, 0), m.at(2, 0));
+        CHECK(std::fabs(xAxis.length() - 1) < 1e-9);
+        CHECK(std::fabs(std::atan2(xAxis.y, xAxis.x) - kPi / 4) < 1e-9);
+        CHECK(std::fabs(st.objects[0].intensity - 1) < 1e-12); // held
+        applyTimeline(st, 11);
+        CHECK(std::fabs(st.objects[0].intensity - 5) < 1e-12);
+        applyTimeline(st, 50); // after the last key: stays there
+        CHECK(std::fabs(st.instances[0].xf.at(0, 3) - 10) < 1e-9);
+        CHECK(!applyTimeline(st, 50)); // nothing more to move
+        CHECK_EQ(st.timeline.lastKeyFrame(), 11);
+        // A scaled one blends its scale.
+        const Mat4 big = Mat4::scale(Vec3(3, 3, 3));
+        const Mat4 half = interpolateTransform(Mat4(), big, 0.5);
+        CHECK(std::fabs(half.at(0, 0) - 2) < 1e-9 && std::fabs(half.at(2, 2) - 2) < 1e-9);
+    });
+
+
+    // ---- De-triangulate, Hollow, Solidify ------------------------------------
+    {
+        auto allFaces = [](const Mesh& m) {
+            std::set<Id> f;
+            for (Id i = 0; i < (Id)m.faces.size(); ++i)
+                if (m.faces[i].alive) f.insert(i);
+            return f;
+        };
+        // A box of 12 triangles, as an STL brings it (slightly off, like floats).
+        auto triBox = [](Mesh& m, Vec3 lo, Vec3 hi, bool inward = false) {
+            Vec3 c[8];
+            for (int i = 0; i < 8; ++i) c[i] = Vec3((i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y, (i & 4) ? hi.z : lo.z);
+            const int q[6][4] = {{0, 2, 3, 1}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 4, 6, 2}, {1, 3, 7, 5}};
+            int n = 0;
+            for (const auto& f : q) {
+                Id v[4];
+                for (int k = 0; k < 4; ++k) v[k] = m.addVertex(c[f[k]] + Vec3(1e-9 * ((n * 7 + k) % 3), 0, 0));
+                ++n;
+                const Vec3 out = (c[f[0]] + c[f[2]]) * 0.5 - (lo + hi) * 0.5;
+                for (auto t : {std::array<Id, 3>{v[0], v[1], v[2]}, std::array<Id, 3>{v[0], v[2], v[3]}})
+                    m.addFaceRaw({t[0], t[1], t[2]}, {}, inward ? -out : out);
+            }
+        };
+        test("effects: de-triangulate joins an STL box into six faces", [&] {
+            Mesh m;
+            triBox(m, Vec3(0, 0, 0), Vec3(2, 1, 0.5));
+            CHECK_EQ(m.aliveFaceCount(), 12);
+            std::string err;
+            CHECK(effectDetriangulate(m, allFaces(m), DetriangulateParams{}, nullptr, &err));
+            CHECK_EQ(m.aliveFaceCount(), 6);
+            CHECK_EQ(m.aliveEdgeCount(), 12);
+            CHECK(isSolid(m) && std::fabs(solidVolume(m) - 1.0) < 1e-6);
+        });
+        test("effects: de-triangulate makes quads on a curved surface", [&] {
+            PrimitiveParams pp;
+            pp.kind = PrimitiveKind::Cylinder;
+            pp.segments = 16;
+            Mesh m;
+            CHECK(buildPrimitive(pp, m));
+            const double v0 = solidVolume(m);
+            CHECK(effectTriangulate(m, allFaces(m)));
+            const int tris = m.aliveFaceCount();
+            DetriangulateParams dp;
+            dp.quads = true;
+            CHECK(effectDetriangulate(m, allFaces(m), dp));
+            // Two caps and 16 side quads.
+            CHECK(m.aliveFaceCount() < tris && m.aliveFaceCount() == 18);
+            CHECK(isSolid(m) && std::fabs(solidVolume(m) - v0) < 1e-9);
+        });
+        test("effects: hollow a box: an inner wall facing the cavity", [&] {
+            Mesh m;
+            rect(m, 0, 0, 1, 1);
+            m.pushPull(onlyFace(m), m.faces[onlyFace(m)].normal.z < 0 ? -1 : 1);
+            HollowParams hp;
+            hp.thickness = 0.1;
+            hp.detail = 40;
+            EffectResult r;
+            std::string err;
+            CHECK(effectHollow(m, allFaces(m), hp, &r, &err));
+            // Outer shell plus inner shell, each closed; the material left is the
+            // 1 m cube minus the 0.8 m cavity.
+            CHECK(isSolid(m));
+            const double v = solidVolume(m), want = 1.0 - 0.8 * 0.8 * 0.8;
+            std::printf("    hollow box volume %.4f (want %.4f), %d faces\n", v, want, m.aliveFaceCount());
+            CHECK(std::fabs(v - want) < 0.02);
+            // The inner wall's flat sides became n-gons, not thousands of triangles.
+            CHECK(m.aliveFaceCount() < 200);
+            // Thicker than half the box: nothing to hollow.
+            Mesh b;
+            rect(b, 0, 0, 1, 1);
+            b.pushPull(onlyFace(b), b.faces[onlyFace(b)].normal.z < 0 ? -1 : 1);
+            hp.thickness = 0.6;
+            CHECK(!effectHollow(b, allFaces(b), hp, nullptr, &err) && !err.empty());
+            // An open surface is refused.
+            Mesh plane;
+            rect(plane, 0, 0, 1, 1);
+            hp.thickness = 0.1;
+            CHECK(!effectHollow(plane, allFaces(plane), hp, nullptr, &err));
+        });
+        test("effects: hollow a torus (a shape with a hole through it)", [&] {
+            PrimitiveParams pp;
+            pp.kind = PrimitiveKind::Torus;
+            pp.radius = 1;
+            pp.radius2 = 0.4;
+            pp.segments = 24;
+            pp.rings = 12;
+            Mesh m;
+            CHECK(buildPrimitive(pp, m));
+            const double v0 = solidVolume(m);
+            HollowParams hp;
+            hp.thickness = 0.1;
+            hp.detail = 60;
+            std::string err;
+            CHECK(effectHollow(m, allFaces(m), hp, nullptr, &err));
+            CHECK(isSolid(m));
+            const double v = solidVolume(m);
+            std::printf("    torus %.4f -> hollow %.4f\n", v0, v);
+            // Roughly a tube wall: 1 - (0.3/0.4)^2 of the volume.
+            CHECK(v > 0 && std::fabs(v / v0 - (1 - 0.5625)) < 0.06);
+        });
+        test("effects: solidify removes inner walls, sealed hollows and loose sheets", [&] {
+            Mesh m;
+            triBox(m, Vec3(0, 0, 0), Vec3(2, 2, 2));
+            triBox(m, Vec3(0.5, 0.5, 0.5), Vec3(1.5, 1.5, 1.5), true); // a sealed hollow
+            // A wall inside the solid and a sheet sticking out of it.
+            m.drawPolyline({{1, 0.2, 0.2}, {1, 0.4, 0.2}, {1, 0.4, 0.4}, {1, 0.2, 0.4}}, true);
+            m.drawPolyline({{3, 0, 0}, {4, 0, 0}, {4, 1, 0}, {3, 1, 0}}, true);
+            std::string err;
+            CHECK(effectSolidify(m, allFaces(m), SolidifyParams{}, nullptr, &err));
+            CHECK_EQ(m.aliveFaceCount(), 12); // just the outer box
+            CHECK(isSolid(m) && std::fabs(solidVolume(m) - 8) < 1e-6);
+        });
+        test("effects: solidify merges overlapping parts and turns faces the right way", [&] {
+            Mesh m;
+            rect(m, 0, 0, 2, 2);
+            m.pushPull(onlyFace(m), m.faces[onlyFace(m)].normal.z < 0 ? -2 : 2);
+            Mesh b;
+            rect(b, 1, 1, 3, 3);
+            b.pushPull(onlyFace(b), b.faces[onlyFace(b)].normal.z < 0 ? -2 : 2);
+            for (Id f = 0; f < (Id)b.faces.size(); ++f)
+                if (b.faces[f].alive && b.faces[f].normal.x > 0.9) b.reverseFace(f); // one face inside out
+            appendMesh(m, b, Mat4::translation(Vec3(0, 0, 1)));
+            std::string err;
+            CHECK(effectSolidify(m, allFaces(m), SolidifyParams{}, nullptr, &err));
+            CHECK(isSolid(m));
+            const double v = solidVolume(m);
+            std::printf("    union volume %.4f (want 15)\n", v);
+            CHECK(std::fabs(v - 15) < 1e-6); // 8 + 8 - the 1 m overlap
+        });
+    }
+
+
+    test("erasing the edge between two faces in one plane joins them, either way round", [&] {
+        Mesh m;
+        rect(m, 0, 0, 2, 2);
+        rect(m, 2, 0, 4, 2);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faceInteriorPoint(f).x > 2) m.reverseFace(f);
+        m.eraseEdge(m.findEdge(m.findVertex({2, 0, 0}), m.findVertex({2, 2, 0})), true);
+        CHECK_EQ(m.aliveFaceCount(), 1);
+        CHECK(std::fabs(totalArea(m) - 8) < 1e-9);
+        CHECK_EQ(m.aliveEdgeCount(), 4); // the points left on the outline go too
+        // A wall standing on the edge goes, the floor joins.
+        Mesh w;
+        rect(w, 0, 0, 2, 2);
+        rect(w, 2, 0, 4, 2);
+        w.drawPolyline({{2, 0, 0}, {2, 2, 0}, {2, 2, 1}, {2, 0, 1}}, true);
+        CHECK_EQ(w.aliveFaceCount(), 3);
+        w.eraseEdge(w.findEdge(w.findVertex({2, 0, 0}), w.findVertex({2, 2, 0})), true);
+        CHECK_EQ(w.aliveFaceCount(), 1);
+        CHECK(std::fabs(totalArea(w) - 8) < 1e-9);
+    });
+    test("edges moved or pasted onto a face are joined to it", [&] {
+        Document d;
+        Mesh& m = d.mesh();
+        rect(m, 0, 0, 2, 2);
+        const std::vector<Id> line = m.drawSegments({{{5, 0, 0}, {5, 2, 0}}});
+        std::set<Id> vs;
+        for (Id e : line) vs.insert(m.edges[e].v[0]), vs.insert(m.edges[e].v[1]);
+        d.beginOp("Move");
+        d.mesh().transformVertices(vs, Mat4::translation({-4, 0, 0}), true);
+        d.commitOp();
+        CHECK_EQ(d.mesh().aliveFaceCount(), 2);
+        CHECK_EQ(d.mesh().aliveEdgeCount(), 7);
+        // Pasted: its own vertices on top of the face's corners and outline.
+        d.beginOp("Paste");
+        Mesh& p = d.mesh();
+        const Id a = p.addVertexRaw({0, 0, 0}), b = p.addVertexRaw({1, 1, 0}), c = p.addVertexRaw({0.5, 2, 0});
+        p.addEdgeRaw(a, b);
+        p.addEdgeRaw(b, c);
+        d.commitOp();
+        // The left half is cut in three by the two new lines.
+        CHECK_EQ(d.mesh().aliveFaceCount(), 4);
+        CHECK(std::fabs(totalArea(d.mesh()) - 4) < 1e-9);
+        // A line just lying inside a face (touching nothing) stays a line on it.
+        d.beginOp("Draw");
+        Mesh& q = d.mesh();
+        q.addEdgeRaw(q.addVertexRaw({1.5, 0.5, 0}), q.addVertexRaw({1.7, 0.6, 0}));
+        d.commitOp();
+        CHECK_EQ(d.mesh().aliveFaceCount(), 4);
+    });
+
+
+    test("units: display precision and length snapping", [&] {
+        Units u;
+        u.unit = LengthUnit::Millimeters;
+        u.precision = 0;
+        CHECK(u.format(1.23456) == "1235mm");
+        u.precision = 2;
+        CHECK(u.format(1.23456) == "1234.56mm");
+        u.unit = LengthUnit::Meters;
+        u.precision = 0; // exactly what was chosen, no hidden minimum
+        CHECK(u.format(1.23456) == "1m");
+        u.precision = 3;
+        CHECK(u.format(1.23456) == "1.235m");
+        CHECK(u.snapped(1.23456) == 1.23456); // off
+        u.snap = Units::Snap::Precision;  // a thousandth of a meter
+        CHECK(std::fabs(u.snapped(1.23456) - 1.235) < 1e-12);
+        u.unit = LengthUnit::Millimeters;
+        u.precision = 1; // 0.1 mm
+        CHECK(std::fabs(u.snapped(0.0123456) - 0.0123) < 1e-12);
+        u.snap = Units::Snap::Step;
+        u.snapStep = 0.25;
+        CHECK(std::fabs(u.snapped(1.13) - 1.25) < 1e-12 && std::fabs(u.snapped(-0.3) + 0.25) < 1e-12);
+        u.unit = LengthUnit::Feet;
+        u.precision = 0;
+        u.snap = Units::Snap::Precision; // whole inches
+        CHECK(std::fabs(u.snapped(0.03) - 0.0254) < 1e-12);
+        CHECK_EQ(Units::defaultPrecision(LengthUnit::Meters), 3);
+    });
+
     // ---- push/pull leaves no ghost faces -----------------------------------
     {
         auto faceAt = [](const Mesh& m, Vec3 p, Vec3 n) {

@@ -600,6 +600,14 @@ void Mesh::insertSegment(const Vec3& pa, const Vec3& pb, Id curve, std::vector<I
 }
 
 std::vector<Id> Mesh::drawSegments(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve) {
+    std::vector<Id> drawn = drawSegmentsKeepHidden(segs, curve);
+    // Drawing over hidden edges shows them again.
+    for (Id e : drawn)
+        if (e >= 0 && e < (Id)edges.size()) edges[e].hidden = false;
+    return drawn;
+}
+
+std::vector<Id> Mesh::drawSegmentsKeepHidden(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve) {
     std::vector<Id> created, lineEdges;
     for (const auto& s : segs) {
         if (s.first.nearlyEquals(s.second)) continue;
@@ -950,6 +958,30 @@ void Mesh::eraseEdge(Id e, bool heal) {
         if (faces[f].alive) fs.push_back(f);
     Id a = edges[e].v[0], b = edges[e].v[1];
 
+    if (heal && fs.size() >= 2) {
+        // Two faces on the edge lying in one plane merge, also when one of them
+        // faces the other way (it is turned round first, keeping its look);
+        // any other face on the edge (a wall standing on it) goes.
+        int pa = -1, pb = -1;
+        for (size_t i = 0; i < fs.size() && pa < 0; ++i)
+            for (size_t j = i + 1; j < fs.size(); ++j)
+                if (std::fabs(faces[fs[i]].normal.dot(faces[fs[j]].normal)) > 1 - 1e-6 &&
+                    facePlane(fs[i]).coincident(facePlane(fs[j]), kTol * 10)) {
+                    pa = (int)i;
+                    pb = (int)j;
+                    break;
+                }
+        if (pa >= 0) {
+            for (size_t i = 0; i < fs.size(); ++i)
+                if ((int)i != pa && (int)i != pb) faces[fs[i]].alive = false;
+            const Id A = fs[pa], B = fs[pb];
+            if (faces[A].normal.dot(faces[B].normal) < 0) reverseFace(faceArea(A) < faceArea(B) ? A : B);
+            fs.resize(2);
+            fs[0] = A;
+            fs[1] = B;
+            adjDirty_ = true;
+        }
+    }
     if (heal && fs.size() == 2) {
         Plane p1 = facePlane(fs[0]), p2 = facePlane(fs[1]);
         if (p1.coincident(p2, kTol * 10) && faces[fs[0]].normal.dot(faces[fs[1]].normal) > 0) {
@@ -990,6 +1022,45 @@ void Mesh::removeEdgesWithoutFaces(const std::vector<Id>& candidates) {
         adjDirty_ = true;
         revision = nextMeshRevision();
     }
+}
+
+void Mesh::attachLyingEdges(const std::vector<Id>& candidates) {
+    std::set<Id> verts;
+    for (Id e : candidates)
+        if (e >= 0 && e < (Id)edges.size() && edges[e].alive) {
+            verts.insert(edges[e].v[0]);
+            verts.insert(edges[e].v[1]);
+        }
+    if (verts.empty()) return;
+    // Pasted or exploded geometry comes with its own vertices: one per place.
+    weld(verts);
+    std::vector<std::pair<Vec3, Vec3>> boxes(faces.size());
+    for (Id f = 0; f < (Id)faces.size(); ++f) {
+        if (!faces[f].alive) continue;
+        Vec3 mn(1e300, 1e300, 1e300), mx(-1e300, -1e300, -1e300);
+        for (Id v : faces[f].outer)
+            for (int k = 0; k < 3; ++k) mn[k] = std::min(mn[k], pos(v)[k]), mx[k] = std::max(mx[k], pos(v)[k]);
+        boxes[f] = {mn - Vec3(kTol * 10, kTol * 10, kTol * 10), mx + Vec3(kTol * 10, kTol * 10, kTol * 10)};
+    }
+    std::vector<std::pair<Vec3, Vec3>> segs;
+    for (Id e : candidates) {
+        if (e < 0 || e >= (Id)edges.size() || !edges[e].alive) continue;
+        const Id va = edges[e].v[0], vb = edges[e].v[1];
+        const Vec3 a = pos(va), b = pos(vb), mid = (a + b) * 0.5;
+        for (Id f = 0; f < (Id)faces.size(); ++f) {
+            if (!faces[f].alive) continue;
+            const auto& [mn, mx] = boxes[f];
+            bool out = false;
+            for (int k = 0; k < 3 && !out; ++k) out = std::max(a[k], b[k]) < mn[k] || std::min(a[k], b[k]) > mx[k];
+            if (out || faceEdgeDirection(f, va, vb) != 0) continue; // its own edge
+            const Plane P = facePlane(f);
+            if (!P.contains(a, kTol * 10) || !P.contains(b, kTol * 10) || !pointInFace(f, mid, true)) continue;
+            segs.emplace_back(a, b);
+            break;
+        }
+    }
+    // Drawn again, they split the edges they touch and the faces they cross.
+    if (!segs.empty()) drawSegmentsKeepHidden(segs);
 }
 
 int Mesh::removeDegenerateFaces() {
@@ -1529,7 +1600,7 @@ void Mesh::duplicate(const std::set<Id>& faceIds, const std::set<Id>& edgeIds, s
         if (ne == kNone) continue;
         edges[ne].soft = src.soft;
         edges[ne].smooth = src.smooth;
-        edges[ne].hidden = src.hidden;
+        edges[ne].hidden = false; // a copy of hidden geometry shows
         edges[ne].curve = mapCurve(src.curve);
         newEdges.insert(ne);
     }
@@ -1548,7 +1619,7 @@ void Mesh::duplicate(const std::set<Id>& faceIds, const std::set<Id>& edgeIds, s
         if (nf == kNone) continue;
         faces[nf].front = src.front;
         faces[nf].back = src.back;
-        faces[nf].hidden = src.hidden;
+        faces[nf].hidden = false;
         newFaces.insert(nf);
     }
 }

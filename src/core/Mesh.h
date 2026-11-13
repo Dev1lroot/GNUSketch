@@ -135,7 +135,9 @@ public:
     // then finds/splits faces. Returns ids of the edges that make up the line.
     std::vector<Id> drawLine(const Vec3& a, const Vec3& b, Id curve = kNone);
     // Draws several segments with a single face-inference pass at the end.
+    // Edges drawn over hidden ones show them again.
     std::vector<Id> drawSegments(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve = kNone);
+    std::vector<Id> drawSegmentsKeepHidden(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve = kNone);
     std::vector<Id> drawPolyline(const std::vector<Vec3>& pts, bool closed, Id curve = kNone);
 
     // Inserts vertex v into edge e. `inFaces` (all faces using e) limits the
@@ -152,6 +154,10 @@ public:
     // that is the outline itself, or a second copy of a face facing the same
     // way. Returns how many went. Run after every committed edit.
     int removeDegenerateFaces();
+    // Edges lying on a face without being part of it (moved, pasted or
+    // exploded onto it) are joined to it: they split its outline where they
+    // touch it and the face where they cross it, as if drawn there.
+    void attachLyingEdges(const std::vector<Id>& candidates);
     // Removes those of the given edges that no longer bound any face (one
     // adjacency pass, for bulk edits).
     void removeEdgesWithoutFaces(const std::vector<Id>& candidates);

@@ -91,6 +91,14 @@ protected:
                                std::optional<Plane> plane = std::nullopt,
                                const std::set<Id>* exclude = nullptr, bool axes = true);
     void clearLocks();
+    // Length snapping (Model Info > Units): a length in whole steps.
+    double snapLen(double meters);
+    // Whether a point found this way may be moved to a whole length from the
+    // reference point (not when it sits on a vertex, an edge or a guide).
+    static bool lengthSnappable(const InferenceResult& r);
+    // inferPoint() snaps the distance from the reference point (tools that
+    // snap their sizes themselves turn this off).
+    bool snapDistance_ = true;
     bool hasLock() const { return lockDir_.has_value() || heldAxis_ >= 0; }
     Color lockColor() const;
     // Colour for a rubber-band line from a to b (axis colours when aligned).

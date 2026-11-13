@@ -22,7 +22,22 @@ void Document::commitOp() {
         const ModelState& before = undo_.back().second;
         Mesh& m = state.activeMesh();
         const Mesh& old = before.editing == state.editing ? before.activeMesh() : m;
-        if (&old == &m || old.revision != m.revision) m.removeDegenerateFaces();
+        if (&old == &m || old.revision != m.revision) {
+            // Edges new or moved by this edit that lie on a face get joined to it.
+            if (&old != &m) {
+                std::vector<Id> changed;
+                for (Id e = 0; e < (Id)m.edges.size() && changed.size() < 20000; ++e) {
+                    const Edge& E = m.edges[e];
+                    if (!E.alive) continue;
+                    bool moved = e >= (Id)old.edges.size() || !old.edges[e].alive || old.edges[e].v[0] != E.v[0] || old.edges[e].v[1] != E.v[1];
+                    for (Id v : E.v)
+                        moved = moved || v >= (Id)old.vertices.size() || !old.vertices[v].p.nearlyEquals(m.vertices[v].p, 1e-12);
+                    if (moved) changed.push_back(e);
+                }
+                if (!changed.empty()) m.attachLyingEdges(changed);
+            }
+            m.removeDegenerateFaces();
+        }
     }
     redo_.clear();
     modified = true;

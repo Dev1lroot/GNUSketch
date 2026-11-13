@@ -28,30 +28,6 @@ namespace gs {
 class Viewport;
 class MaterialEditor;
 
-// Collapsible section with a SketchUp-tray-like header.
-class TraySection : public QWidget {
-    Q_OBJECT
-public:
-    TraySection(const QString& title, QWidget* content, QWidget* parent = nullptr);
-    void setExpanded(bool on);
-    bool expanded() const;
-    QWidget* content() const { return content_; }
-
-private:
-    QToolButton* header_;
-    QWidget* content_;
-};
-
-class Tray : public QWidget {
-    Q_OBJECT
-public:
-    explicit Tray(QWidget* parent = nullptr);
-    TraySection* addSection(const QString& title, QWidget* content, bool expanded);
-
-private:
-    QVBoxLayout* layout_;
-};
-
 class EntityInfoPanel : public QWidget {
     Q_OBJECT
 public:

@@ -6,17 +6,21 @@ bottom. Screenshots help.
 ## Look and feel
 - [ ] Menus (File Edit View Camera Draw Tools Window Help)
 - [ ] Top toolbars (Standard, Views, Styles, Camera), left two-column tool set
-- [ ] Right "Default Tray" (Entity Info, Materials, Styles, Instructor)
+- [ ] No Default Tray: Hierarchy (left), Properties, Materials, Instructor (right) open at the start; Window > Environment (Sun + Styles) and Window > Animator; every panel can be closed, moved, docked elsewhere and reopened from the Window menu; layout remembered after a restart
+- [ ] Properties: Select tool + a face / edge / component shows their info (component: Game Properties… button); a light or camera shows its editor (colour, brightness, range, cone, position…); Mountain/Pit/Flatten/Texture Brush show the brush settings; the light tools show the next light's colour/brightness/range/cone
+- [ ] Window > Settings: font size (System, or points) and toolbar icon size change everything live; Cancel restores; OK keeps after a restart
 - [ ] Status bar hint text, Measurements box on the right
 - [ ] Sky/ground background, red/green/blue axes, edges/profiles, face colours
 - [ ] Tool cursors and icons
-- [ ] Dark interface everywhere (menus, docks, tray, dialogs, browsers, tooltips); hint texts readable
+- [ ] Dark interface everywhere (menus, docks, tray, dialogs, browsers, tooltips, the Animator); hint texts readable
 - [ ] Window > Settings: Dark/Light, Duotone/Full colour icons, primary and secondary colours, strength, presets; every icon changes live; Cancel/Esc puts it all back; OK keeps it after a restart
-- [ ] Window > Toolbars lists every toolbar (Standard, Views, Styles, Camera, Scene, Solid Tools, Large Tool Set) and shows/hides it; the Scene toolbar has the light/camera tools, Add Camera From View, Look Through and the Lights and Cameras panel (no Scene section in the tray any more; selecting one light opens the panel)
+- [ ] Window > Toolbars lists every toolbar (Standard, Views, Styles, Camera, Scene, Solid Tools, Large Tool Set) and shows/hides it; the Scene toolbar has the light/camera tools, Add Camera From View, Look Through and a Properties button
 - [ ] The Rotate icon is a protractor
 - [ ] Axes: red/green/blue solid on the positive side, dotted on the negative side, also looking along them and from below the ground
 
 ## Drawing
+- [ ] Window > Model Info (and Properties while a drawing tool is equipped): unit; display precision picked by example (0mm, 0.0mm, 0.00mm... / 0.000m / 0' 0"); every length shown follows it (Measurements box, Entity Info, Scale sizes, Tape)
+- [ ] Length snapping Off / To display precision / Every step (1m, 10cm, 5mm, 1/16"): Line (along axes and in any direction), Rectangle (each side), Circle/Polygon radius, Arc, Push/Pull, Move, Offset, Tape come out in whole steps; endpoints, midpoints, edges and guides still snap exactly; typed values are not rounded; remembered for new models and saved with the model
 - [ ] Line: chains, closes faces, splits faces, typed length, arrow-key axis locks
 - [ ] Axis + target: draw along the red/green/blue axis and finish on an edge it crosses (exact crossing), on an edge it misses (edge wins), and into a wall face (stops on the surface); same with Shift/arrow lock
 - [ ] Magenta inference: from a hexagon corner along each of its edges and their extensions; hover a slanted edge then draw parallel to it; Shift locks it; typed length along it
@@ -35,8 +39,12 @@ bottom. Screenshots help.
 - [ ] Rotate sticks to the face under the cursor, loose or of a component (tilted/rotated ones too); hold Shift to keep that plane while picking a centre elsewhere; arrow keys still lock axes
 - [ ] Inside an open component: endpoints, midpoints, edges and faces of the loose geometry and of other components around it still snap (and hide snaps behind them); draw a line from the component to an outside corner; Rotate sticks to an outside face
 - [ ] Intersections: push one component (or loose box) halfway into another; hover where their faces cut through each other ("On Intersection", magenta dashed seam), its ends ("Intersection"); draw a line from end to end, and a line along an axis that stops on the seam
+- [ ] Scale: the box shows "W: … L: … H: …" in the model's units, live while dragging; a single (rotated) component shows its own sizes
+- [ ] Scale + Properties: W/L/H fields; type a size (120, 12cm, 1.2m, 4') + Enter rescales; Keep proportions on: the other two follow, off: only that one; "Keep in place" bottom centre / corner / centre; one undo per typed size; flat selections grey out the flat size
 - [ ] Scale grips: corner (uniform), Shift+corner (free), edge midpoint (2 axes), face centre (1 axis), Ctrl about centre, typed `2` / `1.5,2` / `1,2,1` during and right after; a rotated component scales along its own sides; a flat rectangle shows only its 8 in-plane grips
 - [ ] Eraser (drag, Shift hide, Ctrl soften); Delete key; Undo/Redo
+- [ ] Erase (Eraser or select + Delete) the edge between two faces in one plane: they become one face, also when one of them was reversed (back colour) and when a wall stands on that edge (the wall goes, the floor joins)
+- [ ] Move or Ctrl-copy a line onto a face (across it, or from edge to edge), paste lines onto a face, explode a component lying on a face: the face is split by them like drawn lines; a short line just lying inside a face stays a line
 - [ ] Select: click, window vs crossing, double/triple click, Ctrl/Shift modifiers; triple-click a box with a round hole through it: the hole's walls are selected too
 - [ ] Follow Me: circle along a line/arc (pipe), ring profile (hollow pipe), T/H beam along an L path, moulding around a box top (Alt-click the top face), profile around a circle (lathe); path selected first vs clicked after the profile
 - [ ] Primitives (Draw → Primitive…): every shape; fields change with the shape; face count and error text update live (torus tube ≥ ring radius disables Place); placed shape follows the cursor, click sets it, Esc cancels; one undo; smooth on/off; values remembered next time
@@ -66,10 +74,13 @@ bottom. Screenshots help.
 - [ ] Decimate a noisy terrain by percentage and by polygons per m²: the outline stays, the "Polygons: a → b" line is right
 - [ ] Quads / Hexagons / Triangles on a plane, a box, a terrain; Rotation; textures and materials stay on
 - [ ] Voxelate a box (exact size with a fitting cube size), a sphere, a terrain, a textured face: live preview with the size slider, materials stay; Merge flat sides; very small size says the detail was reduced; result works with Push/Pull and Solid Tools
+- [ ] De-triangulate an imported STL/3MF (or a Triangulated model): flat sides become single faces, straight outlines lose their extra points; with "Quads on curved surfaces" a sphere/cylinder becomes quads; the tolerance joins slightly uneven sides
+- [ ] Hollow a box, a sphere, a torus, a model with thin parts, an imported figurine: the wall thickness is right (Tape Measure / section), thin parts stay solid, the inside faces point into the cavity (back colour inside), slicer sees a hollow part; too thick a wall says so; an open surface is refused
+- [ ] Solidify: two overlapping boxes become one; a box with an inner wall, a sealed hollow inside and a loose plane sticking out keeps only the outer skin; a face turned inside out is turned back; an imported model with internal junk prints as one solid
 - [ ] Subdivide, Triangulate, Merge Flat Faces; Ctrl+F repeats; effects on a component with copies change only the selected one
 
 ## Sun and culling
-- [ ] Window > Sun: Direction moves light and shadows; Height low = warm evening, below 0° = night; Brightness; the disc is visible looking towards it
+- [ ] Window > Environment: Direction moves light and shadows; Height low = warm evening, below 0° = night; Brightness; the disc is visible looking towards it
 - [ ] View > Render > Sun off gives the old flat modelling light
 - [ ] Backface Culling: a box looks the same; from inside it you see out; a plane is see-through from behind and cannot be picked from behind
 
@@ -79,7 +90,7 @@ bottom. Screenshots help.
 - [ ] WASD (also with a non-Latin keyboard layout), Shift, Space, arrow keys, R, Tab, F11, Esc then Esc
 - [ ] Walk into walls and slide along them; up stairs and slopes; off a ledge; under a low ceiling; on Noise terrain
 - [ ] Textures, sun, shadows and culling as set in the editor; closing the editor closes the game
-- [ ] F5 (and View > Render > Cinematic Lighting / Window > Sun > Cinematic in the editor): ray traced soft shadows from the sun and from point/spot/directional lights (lamps behind walls stay dark), light rays (sun shafts, lamp beams; Window > Sun > Light rays sets the strength, 0 = off); frame rate on a big model
+- [ ] F5 (and View > Render > Cinematic Lighting / Window > Environment > Cinematic in the editor): ray traced soft shadows from the sun and from point/spot/directional lights (lamps behind walls stay dark), light rays (sun shafts, lamp beams; Window > Environment > Light rays sets the strength, 0 = off); frame rate on a big model
 - [ ] Shadows are always on: crisp where things touch the ground, softer further from the caster; no flicker or stripes while walking; far away shadows still there (coarser)
 
 ## Materials and textures
@@ -131,15 +142,24 @@ bottom. Screenshots help.
 
 ## Lights and cameras
 - [ ] Draw > Lights: point light above the clicked point; `3` before clicking changes the height; spot and directional aim with a second click; Sun at night shows them best
-- [ ] Window > Scene: colour, brightness, range, cone, softness; list follows the selection; Delete; Undo
+- [ ] Properties of a selected light/camera: colour, brightness, range, cone, softness; Delete; Undo
 - [ ] Move, Rotate, Ctrl+Move copy and Eraser on markers; window selection takes them; View > Lights and Cameras hides markers
 - [ ] Camera > Add Camera From View, orbit away, double-click its marker: same view; Camera > Look Through; Set From View
 - [ ] Copy/paste a light into another window; save and reopen; Game Mode shows the light without the marker
+
+## Animator
+- [ ] Window > Animator: select a component, New Layer (+); the layer shows its name, eye, lock, colour square and a keyframe at the playhead
+- [ ] Move the playhead (click/drag the ruler), move or rotate the component: a keyframe appears (Auto Key); scrub between: it slides and turns smoothly (motion tween, blue with an arrow)
+- [ ] Right-click: Remove Motion Tween (grey, holds), Create Motion Tween, Insert/Clear Keyframe; F6 / Shift+F6; drag a keyframe to another frame; double-click a frame inserts one
+- [ ] A light: brightness and colour change over time; a camera moves (Look Through while playing)
+- [ ] Play/Pause, loop, first frame, previous/next keyframe; frame rate and length; elapsed time; eye hides, lock stops changes; rename (double-click the name); delete layer
+- [ ] Undo/redo of every timeline change and of an auto keyframe; save, reopen, the timeline is there
 
 ## Files
 - [ ] Save/Open `.gsketch`; Export OBJ/glTF/STL and open them in Blender; Import OBJ
 - [ ] File > Import > formats and File > Export > formats (3D Model, 3D Printing sections), plugin formats included
 - [ ] File > Open Recent: files opened and saved appear newest first, numbered; a deleted file disappears; Clear Recent Files
+- [ ] Import (File > Import > 3D Printing, and File > Open) 3MF/AMF/STL/PLY/OFF from a slicer or Thingiverse: right size (unit question for STL/PLY/OFF from elsewhere, remembered), a component named after the file, flat sides as single faces, curved ones smooth, 3MF colours as materials, multi-part 3MF placed right
 - [ ] Export 3MF/AMF/STL/PLY/OFF of a 20 mm box in mm and in inches; open them in a slicer (PrusaSlicer, Cura, OrcaSlicer): right size, closed solid, 3MF/AMF colours
 - [ ] Ctrl+V of geometry/components: it follows the cursor at once (grabbed by its bottom corner, snaps to points/axes), click places it, typed distance works, Esc or Ctrl+Z cancels the whole paste, one Undo removes a placed paste
 - [ ] Clipboard: copy geometry (with a textured face) in one GNUSketch window and paste it into a second instance; paste a screenshot, a browser image and image files copied in Dolphin as planes

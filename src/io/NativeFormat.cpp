@@ -448,9 +448,60 @@ QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
         root["instances"] = insts;
     }
     QJsonArray objects;
-    for (const SceneObject& o : state.objects)
-        if (o.alive) objects.append(objectToJson(o));
+    std::map<Id, int> objMap; // object id -> its number in the file
+    for (Id i = 0; i < (Id)state.objects.size(); ++i)
+        if (state.objects[i].alive) {
+            objMap[i] = objects.size();
+            objects.append(objectToJson(state.objects[i]));
+        }
     if (!objects.isEmpty()) root["objects"] = objects;
+    // The Animator's timeline; layers whose target is gone are dropped.
+    {
+        const Timeline& tl = state.timeline;
+        QJsonArray layers;
+        for (const TimelineLayer& l : tl.layers) {
+            int target = -1;
+            if (l.kind == TimelineLayer::Instance) {
+                auto it = instMap.find(l.target);
+                if (it != instMap.end()) target = it->second;
+            } else {
+                auto it = objMap.find(l.target);
+                if (it != objMap.end()) target = it->second;
+            }
+            if (target < 0) continue;
+            QJsonObject lj;
+            lj["name"] = QString::fromStdString(l.name);
+            lj["kind"] = l.kind == TimelineLayer::Instance ? QStringLiteral("instance") : QStringLiteral("object");
+            lj["target"] = target;
+            if (l.locked) lj["locked"] = true;
+            lj["color"] = QJsonArray{l.color.r, l.color.g, l.color.b};
+            QJsonArray keys;
+            for (const TimelineKey& k : l.keys) {
+                QJsonObject kj;
+                kj["frame"] = k.frame;
+                kj["tween"] = k.tween;
+                if (l.kind == TimelineLayer::Instance) {
+                    QJsonArray xf;
+                    for (double v : k.xf.m) xf.append(v);
+                    kj["transform"] = xf;
+                } else {
+                    kj["pos"] = vec(k.pos);
+                    kj["target"] = vec(k.target);
+                    kj["color"] = QJsonArray{k.color.r, k.color.g, k.color.b, k.color.a};
+                    kj["intensity"] = k.intensity;
+                    kj["range"] = k.range;
+                    kj["cone"] = k.cone;
+                    kj["fov"] = k.fov;
+                    kj["enabled"] = k.enabled;
+                }
+                keys.append(kj);
+            }
+            lj["keys"] = keys;
+            layers.append(lj);
+        }
+        if (!layers.isEmpty() || tl.fps != 24 || tl.length != 120)
+            root["timeline"] = QJsonObject{{"fps", tl.fps}, {"length", tl.length}, {"layers", layers}};
+    }
     root["view"] = view;
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
@@ -578,6 +629,49 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
         st.guides.push_back(g);
     }
     for (const auto& oj : root["objects"].toArray()) st.objects.push_back(objectFromJson(oj.toObject()));
+    if (root.contains("timeline")) {
+        const QJsonObject tj = root["timeline"].toObject();
+        Timeline& tl = st.timeline;
+        tl.fps = std::clamp(tj["fps"].toDouble(24), 1.0, 240.0);
+        tl.length = std::clamp(tj["length"].toInt(120), 1, 100000);
+        for (const auto& lv : tj["layers"].toArray()) {
+            const QJsonObject lj = lv.toObject();
+            TimelineLayer l;
+            l.name = lj["name"].toString().toStdString();
+            l.kind = lj["kind"].toString() == QLatin1String("object") ? TimelineLayer::Object : TimelineLayer::Instance;
+            const int t = lj["target"].toInt(-1);
+            if (l.kind == TimelineLayer::Instance) {
+                auto it = fileInstance.find(t);
+                l.target = it == fileInstance.end() ? kNone : it->second;
+            } else {
+                l.target = t >= 0 && t < (int)st.objects.size() ? t : kNone;
+            }
+            if (l.target == kNone) continue;
+            l.locked = lj["locked"].toBool();
+            const QJsonArray c = lj["color"].toArray();
+            if (c.size() >= 3) l.color = Color((float)c[0].toDouble(), (float)c[1].toDouble(), (float)c[2].toDouble());
+            for (const auto& kv : lj["keys"].toArray()) {
+                const QJsonObject kj = kv.toObject();
+                TimelineKey k;
+                k.frame = std::max(1, kj["frame"].toInt(1));
+                k.tween = kj["tween"].toBool(true);
+                const QJsonArray xf = kj["transform"].toArray();
+                if (xf.size() == 16)
+                    for (int i = 0; i < 16; ++i) k.xf.m[i] = xf[i].toDouble();
+                k.pos = vec(kj["pos"]);
+                k.target = vec(kj["target"]);
+                const QJsonArray kc = kj["color"].toArray();
+                if (kc.size() == 4) k.color = Color((float)kc[0].toDouble(), (float)kc[1].toDouble(), (float)kc[2].toDouble(), (float)kc[3].toDouble());
+                k.intensity = kj["intensity"].toDouble();
+                k.range = kj["range"].toDouble();
+                k.cone = kj["cone"].toDouble();
+                k.fov = kj["fov"].toDouble();
+                k.enabled = kj["enabled"].toBool(true);
+                setKey(l, k);
+            }
+            tl.layers.push_back(std::move(l));
+        }
+    }
     if (view) *view = root["view"].toObject();
     return true;
 }

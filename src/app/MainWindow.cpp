@@ -27,7 +27,10 @@
 #include "io/ObjIO.h"
 #include "io/StlExport.h"
 #include "io/PrintExport.h"
+#include "io/PrintImport.h"
 #include "Theme.h"
+#include "Properties.h"
+#include "Animator.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -107,10 +110,7 @@ MainWindow::MainWindow() {
         auto it = toolActions_.find(id);
         if (it != toolActions_.end()) it->second->setChecked(true);
         instructor_->showTool(id);
-        if (isTerrainTool(id)) {
-            terrain_->refresh();
-            sections_["Terraform"]->setExpanded(true);
-        }
+        properties_->setTool(id, it != toolActions_.end() ? it->second->text() : QString());
     });
     connect(viewport_, &Viewport::materialPicked, this, [this] { materials_->refresh(); entityInfo_->refresh(); });
     connect(viewport_, &Viewport::imageDropped, this, [this](const QString& p) { materials_->addImageMaterial(p); });
@@ -136,11 +136,12 @@ MainWindow::MainWindow() {
     QSettings s;
     restoreGeometry(s.value("window/geometry").toByteArray());
     if (!restoreState(s.value("window/state").toByteArray())) resize(1400, 900);
-    int unit = s.value("model/units", (int)LengthUnit::Millimeters).toInt();
-    doc_.units.unit = (LengthUnit)std::clamp(unit, 0, 4);
+    UnitsSettings::loadDefaults(doc_.units);
     if (s.value("camera/orbitPivot", 0).toInt() == (int)Viewport::OrbitPivot::CameraTarget)
         acts_["orbit_target"]->trigger();
 
+    connect(Theme::notifier(), &ThemeNotifier::changed, this, [this] { applyUiSizes(); });
+    applyUiSizes();
     viewport_->setTool(ToolId::Select);
     instructor_->showTool(ToolId::Select);
     updateTitle();
@@ -258,11 +259,19 @@ void MainWindow::buildActions() {
         // Undo during a live move/paste just cancels it.
         bool live = doc_.inOp();
         viewport_->cancelTool();
-        if (!live) doc_.undo();
+        if (!live) {
+            animator_->setSuspended(true);
+            doc_.undo();
+            animator_->setSuspended(false);
+            animator_->reapply();
+        }
     });
     redoAct_ = act("redo", "redo", QStringLiteral("&Redo"), QKeySequence(QStringLiteral("Ctrl+Y")), [this] {
         viewport_->cancelTool();
+        animator_->setSuspended(true);
         doc_.redo();
+        animator_->setSuspended(false);
+        animator_->reapply();
     });
     acts_["redo"]->setShortcuts({QKeySequence(QStringLiteral("Ctrl+Y")), QKeySequence(QStringLiteral("Ctrl+Shift+Z"))});
     act("cut", "cut", QStringLiteral("Cu&t"), QKeySequence::Cut, [this] { copySelection(true); });
@@ -415,9 +424,8 @@ void MainWindow::buildActions() {
     }
 
     act("instructor", "help", QStringLiteral("&Instructor"), QKeySequence(QStringLiteral("F1")), [this] {
-        auto it = sections_.find("Instructor");
-        if (it != sections_.end()) it->second->setExpanded(!it->second->expanded());
-        trayDock_->show();
+        instructorDock_->setVisible(!instructorDock_->isVisible());
+        if (instructorDock_->isVisible()) instructorDock_->raise();
     });
     act("shortcuts", "", QStringLiteral("&Keyboard Shortcuts"), QKeySequence(), [this] { showShortcuts(); });
     act("about", "", QStringLiteral("&About GNUSketch"), QKeySequence(), [this] { about(); });
@@ -440,6 +448,13 @@ void MainWindow::buildMenus() {
     for (const LoadedPlugin& p : Plugins::all())   // (formats from plugins)
         if (FormatPlugin* f = p.format; f->canImport())
             imp->addAction(QStringLiteral("%1 (*.%2)…").arg(f->formatName(), f->extensions().join(", *.")), this, [this, f] { importPlugin(f); });
+    imp->addSection(QStringLiteral("3D Printing"));
+    for (const auto& [ext, text] : {std::pair<const char*, const char*>{"3mf", "3MF (*.3mf)…"}, {"amf", "AMF (*.amf)…"},
+                                     {"stl", "STL, binary or ASCII (*.stl)…"}, {"ply", "PLY (*.ply)…"}, {"off", "OFF (*.off)…"}}) {
+        const QString e = QString::fromLatin1(ext);
+        QAction* a = imp->addAction(QString::fromUtf8(text), this, [this, e] { importForPrint(e); });
+        a->setObjectName(QStringLiteral("import") + e);
+    }
     QMenu* exp = file->addMenu(Icons::get("export"), QStringLiteral("&Export"));
     exp->setObjectName(QStringLiteral("ExportMenu"));
     exp->addSection(QStringLiteral("3D Model"));
@@ -590,41 +605,38 @@ void MainWindow::buildMenus() {
 
     QMenu* win = menuBar()->addMenu(QStringLiteral("&Window"));
     win->addAction(acts_["settings"]);
-    win->addSeparator();
-    win->addAction(acts_["modelinfo"]);
-    win->addAction(acts_["materialbrowser"]);
-    win->addAction(acts_["materialeditor"]);
-    win->addAction(acts_["prefabbrowser"]);
-    QAction* hierAct = win->addAction(QStringLiteral("&Hierarchy"));
-    hierAct->setCheckable(true);
-    connect(hierAct, &QAction::toggled, this, [this](bool on) { hierarchyDock_->setVisible(on); });
-    connect(win, &QMenu::aboutToShow, this, [this, hierAct] { QSignalBlocker b(hierAct); hierAct->setChecked(hierarchyDock_->isVisible()); });
-    win->addSeparator();
-    QAction* trayAct = win->addAction(QStringLiteral("Default &Tray"));
-    trayAct->setCheckable(true);
-    trayAct->setChecked(true);
-    connect(trayAct, &QAction::toggled, this, [this](bool on) { trayDock_->setVisible(on); });
-    connect(win, &QMenu::aboutToShow, this, [this, trayAct] { trayAct->setChecked(trayDock_->isVisible()); });
     QMenu* bars = win->addMenu(QStringLiteral("Tool&bars"));
     bars->setObjectName(QStringLiteral("ToolbarsMenu"));
     connect(bars, &QMenu::aboutToShow, this, [this, bars] {
         bars->clear();
         for (QToolBar* tb : findChildren<QToolBar*>(Qt::FindDirectChildrenOnly)) bars->addAction(tb->toggleViewAction());
     });
-    win->addAction(QStringLiteral("&Lights and Cameras"), this, [this] {
-        sceneDock_->show();
-        sceneDock_->raise();
-    });
     win->addSeparator();
-    for (const char* name : {"Entity Info", "Terraform", "Materials", "Styles", "Sun", "Instructor"}) {
-        QAction* a = win->addAction(QString::fromUtf8(name));
-        QString key = QString::fromUtf8(name);
-        connect(a, &QAction::triggered, this, [this, key] {
-            trayDock_->show();
-            auto it = sections_.find(key);
-            if (it != sections_.end()) it->second->setExpanded(true);
+    // Panels (the docks are made after the menus: looked up when the menu opens).
+    struct PanelEntry { const char* text; QDockWidget* MainWindow::*dock; const char* key; };
+    static const PanelEntry panels[] = {
+        {"&Hierarchy", &MainWindow::hierarchyDock_, "panel_hierarchy"}, {"&Properties", &MainWindow::propertiesDock_, "panel_properties"},
+        {"&Materials", &MainWindow::materialsDock_, "panel_materials"},  {"&Instructor", &MainWindow::instructorDock_, "panel_instructor"},
+        {"&Environment", &MainWindow::environmentDock_, "panel_environment"}, {"&Animator", &MainWindow::animatorDock_, "panel_animator"}};
+    for (const PanelEntry& e : panels) {
+        QAction* a = win->addAction(QString::fromUtf8(e.text));
+        a->setObjectName(QString::fromLatin1(e.key));
+        a->setCheckable(true);
+        QDockWidget* MainWindow::*dock = e.dock;
+        connect(a, &QAction::triggered, this, [this, dock](bool on) {
+            (this->*dock)->setVisible(on);
+            if (on) (this->*dock)->raise();
+        });
+        connect(win, &QMenu::aboutToShow, this, [this, a, dock] {
+            QSignalBlocker b(a);
+            a->setChecked((this->*dock) && (this->*dock)->isVisible());
         });
     }
+    win->addSeparator();
+    win->addAction(acts_["modelinfo"]);
+    win->addAction(acts_["materialbrowser"]);
+    win->addAction(acts_["materialeditor"]);
+    win->addAction(acts_["prefabbrowser"]);
 
     QMenu* help = menuBar()->addMenu(QStringLiteral("&Help"));
     help->addAction(acts_["instructor"]);
@@ -695,12 +707,12 @@ void MainWindow::buildToolbars() {
         scene->addWidget(look);
     }
     scene->addSeparator();
-    sceneAct_ = scene->addAction(Icons::get("light_point"), QStringLiteral("Lights and Cameras"));
+    sceneAct_ = scene->addAction(Icons::get("info"), QStringLiteral("Properties"));
     sceneAct_->setObjectName(QStringLiteral("sceneprops"));
-    sceneAct_->setCheckable(true);
-    sceneAct_->setToolTip(QStringLiteral("Lights and Cameras: list and properties of the lights and cameras in the model"));
-    connect(sceneAct_, &QAction::toggled, this, [this](bool on) {
-        if (sceneDock_) sceneDock_->setVisible(on);
+    sceneAct_->setToolTip(QStringLiteral("Properties: edit the selected light or camera, or the light tools' settings"));
+    connect(sceneAct_, &QAction::triggered, this, [this] {
+        propertiesDock_->show();
+        propertiesDock_->raise();
     });
 
     auto* solids = addToolBar(QStringLiteral("Solid Tools"));
@@ -764,50 +776,66 @@ void MainWindow::buildToolbars() {
 }
 
 void MainWindow::buildTray() {
-    trayDock_ = new QDockWidget(QStringLiteral("Default Tray"), this);
-    trayDock_->setObjectName("DefaultTray");
-    trayDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    auto* scroll = new QScrollArea(trayDock_);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    auto* tray = new Tray(scroll);
-    entityInfo_ = new EntityInfoPanel(&doc_, viewport_, tray);
-    materials_ = new MaterialsPanel(&doc_, viewport_, tray);
-    styles_ = new StylesPanel(&doc_, viewport_, tray);
-    sun_ = new SunPanel(&doc_, viewport_, tray);
-    instructor_ = new InstructorPanel(tray);
+    // Separate panels (docks) instead of one tray: Hierarchy on the left,
+    // Properties, Materials and Instructor on the right, Environment (sun
+    // and styles) and the Animator from the Window menu.
+    auto makeDock = [&](const QString& title, const char* name, QWidget* content, bool scroll) {
+        auto* dock = new QDockWidget(title, this);
+        dock->setObjectName(QString::fromLatin1(name));
+        if (scroll) {
+            auto* area = new QScrollArea(dock);
+            area->setWidgetResizable(true);
+            area->setFrameShape(QFrame::NoFrame);
+            area->setWidget(content);
+            dock->setWidget(area);
+        } else {
+            dock->setWidget(content);
+        }
+        return dock;
+    };
+    entityInfo_ = new EntityInfoPanel(&doc_, viewport_, this);
+    materials_ = new MaterialsPanel(&doc_, viewport_, this);
+    styles_ = new StylesPanel(&doc_, viewport_, this);
+    sun_ = new SunPanel(&doc_, viewport_, this);
+    scene_ = new ScenePanel(&doc_, viewport_, this);
+    instructor_ = new InstructorPanel(this);
     terrain_ = new TerrainPanel(&doc_, viewport_,
                                 {toolActions_[ToolId::Mountain], toolActions_[ToolId::Pit], toolActions_[ToolId::Flatten],
                                  toolActions_[ToolId::TextureBrush]},
-                                tray);
-    sections_["Entity Info"] = tray->addSection(QStringLiteral("Entity Info"), entityInfo_, true);
-    sections_["Terraform"] = tray->addSection(QStringLiteral("Terraform"), terrain_, false);
-    sections_["Materials"] = tray->addSection(QStringLiteral("Materials"), materials_, true);
-    sections_["Styles"] = tray->addSection(QStringLiteral("Styles"), styles_, false);
-    sections_["Sun"] = tray->addSection(QStringLiteral("Sun"), sun_, false);
-    sections_["Instructor"] = tray->addSection(QStringLiteral("Instructor"), instructor_, false);
-    scroll->setWidget(tray);
-    trayDock_->setWidget(scroll);
-    trayDock_->setMinimumWidth(368);
-    addDockWidget(Qt::RightDockWidgetArea, trayDock_);
+                                this);
+    placement_ = new PlacementSettings(this);
+    properties_ = new PropertiesPanel(&doc_, viewport_, entityInfo_, scene_, terrain_, placement_, this);
+    connect(properties_, &PropertiesPanel::entityPropertiesRequested, this, [this] { showEntityProperties(); });
 
-    // Lights and cameras: opened from the Scene toolbar (not part of the tray).
-    sceneDock_ = new QDockWidget(QStringLiteral("Lights and Cameras"), this);
-    sceneDock_->setObjectName("LightsAndCameras");
-    scene_ = new ScenePanel(&doc_, viewport_, sceneDock_);
-    auto* sceneScroll = new QScrollArea(sceneDock_);
-    sceneScroll->setWidgetResizable(true);
-    sceneScroll->setFrameShape(QFrame::NoFrame);
-    sceneScroll->setWidget(scene_);
-    sceneDock_->setWidget(sceneScroll);
-    sceneDock_->setMinimumWidth(300);
-    addDockWidget(Qt::RightDockWidgetArea, sceneDock_);
-    sceneDock_->hide();
-    connect(sceneDock_, &QDockWidget::visibilityChanged, this, [this](bool) {
-        if (!sceneAct_) return;
-        QSignalBlocker b(sceneAct_);
-        sceneAct_->setChecked(sceneDock_->isVisible());
-    });
+    propertiesDock_ = makeDock(QStringLiteral("Properties"), "PropertiesPanel", properties_, true);
+    materialsDock_ = makeDock(QStringLiteral("Materials"), "MaterialsPanel", materials_, true);
+    instructorDock_ = makeDock(QStringLiteral("Instructor"), "InstructorPanel", instructor_, false);
+    auto* env = new QWidget(this);
+    {
+        auto* lay = new QVBoxLayout(env);
+        lay->setContentsMargins(4, 4, 4, 4);
+        const std::pair<const char*, QWidget*> parts[] = {{"Sun", sun_}, {"Styles", styles_}};
+        for (const auto& [title, w] : parts) {
+            auto* l = new QLabel(QString::fromLatin1(title), env);
+            l->setObjectName(QStringLiteral("SectionHeader"));
+            lay->addWidget(l);
+            w->setParent(env);
+            lay->addWidget(w);
+        }
+        lay->addStretch(1);
+    }
+    environmentDock_ = makeDock(QStringLiteral("Environment"), "EnvironmentPanel", env, true);
+    animator_ = new AnimatorPanel(&doc_, viewport_, this);
+    animatorDock_ = makeDock(QStringLiteral("Animator"), "AnimatorPanel", animator_, false);
+    for (QDockWidget* d : {propertiesDock_, materialsDock_, instructorDock_, environmentDock_}) {
+        d->setMinimumWidth(300);
+        addDockWidget(Qt::RightDockWidgetArea, d);
+    }
+    addDockWidget(Qt::BottomDockWidgetArea, animatorDock_);
+    tabifyDockWidget(propertiesDock_, environmentDock_);
+    propertiesDock_->raise();
+    environmentDock_->hide();
+    animatorDock_->hide();
 
     hierarchyDock_ = new QDockWidget(QStringLiteral("Hierarchy"), this);
     hierarchyDock_->setObjectName("Hierarchy");
@@ -856,6 +884,8 @@ void MainWindow::buildStatusBar() {
 void MainWindow::onDocChanged() {
     updateTitle();
     updateUndoActions();
+    if (animator_) animator_->documentChanged();
+    if (properties_) properties_->refresh();
     entityInfo_->refresh();
     materials_->refresh();
     scene_->refresh();
@@ -867,11 +897,12 @@ void MainWindow::onDocChanged() {
 }
 
 void MainWindow::onSelectionChanged() {
+    if (properties_) properties_->refresh();
     entityInfo_->refresh();
     scene_->refresh();
     if (hierarchy_) hierarchy_->refresh();
     if (doc_.selection.objects.size() == 1 && !doc_.selection.faces.size() && !doc_.selection.edges.size() && !doc_.selection.instances.size())
-        sceneDock_->show(); // a light or camera alone: its properties
+        propertiesDock_->show(); // a light or camera alone: its properties
     bool any = !doc_.selection.empty();
     for (const char* k : {"cut", "copy", "delete", "hide", "roundcorners"}) acts_[k]->setEnabled(any);
     acts_["traceimage"]->setEnabled(!doc_.selection.faces.empty());
@@ -946,6 +977,7 @@ void MainWindow::newFile() {
     if (!maybeSave()) return;
     viewport_->cancelTool();
     doc_.reset();
+    animator_->modelReplaced();
     viewport_->camera() = Camera();
     viewport_->update();
     updateTitle();
@@ -955,7 +987,7 @@ void MainWindow::open() {
     if (!maybeSave()) return;
     QSettings s;
     QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Model"), s.value("files/lastDir").toString(),
-                                                QStringLiteral("GNUSketch Model (*.gsketch);;Wavefront OBJ (*.obj)") +
+                                                QStringLiteral("GNUSketch Model (*.gsketch);;Wavefront OBJ (*.obj);;3D Printing (*.3mf *.amf *.stl *.ply *.off)") +
                                                     (Plugins::fileFilters(false).isEmpty() ? QString() : ";;" + Plugins::fileFilters(false)));
     if (path.isEmpty()) return;
     s.setValue("files/lastDir", QFileInfo(path).absolutePath());
@@ -968,6 +1000,15 @@ bool MainWindow::openFile(const QString& path) {
     if (FormatPlugin* f = Plugins::forFile(path, false)) {
         const bool ok = importWithPlugin(f, path, true);
         if (ok) addRecentFile(path);
+        animator_->modelReplaced();
+        return ok;
+    }
+    if (!printImportFormat(path).isEmpty()) {
+        const bool ok = importPrintFile(path, true);
+        if (ok) {
+            addRecentFile(path);
+            animator_->modelReplaced();
+        }
         return ok;
     }
     if (path.endsWith(".obj", Qt::CaseInsensitive)) {
@@ -980,6 +1021,7 @@ bool MainWindow::openFile(const QString& path) {
         viewport_->zoomExtents();
         onDocChanged();
         addRecentFile(path);
+        animator_->modelReplaced();
         return true;
     }
     QJsonObject view;
@@ -993,6 +1035,7 @@ bool MainWindow::openFile(const QString& path) {
     onDocChanged();
     onSelectionChanged();
     addRecentFile(path);
+    animator_->modelReplaced();
     return true;
 }
 
@@ -1192,6 +1235,88 @@ void MainWindow::exportForPrint(int format) {
     else statusLabel_->setText(QStringLiteral("Exported %1 (%2)").arg(path, QString::fromLatin1(printUnitName(fmt, unit))));
 }
 
+void MainWindow::applyUiSizes() {
+    // Window > Settings: toolbar icons at the chosen size (the large tool
+    // set's a little bigger, as it was).
+    const int px = Theme::current().iconSize;
+    for (QToolBar* tb : findChildren<QToolBar*>(Qt::FindDirectChildrenOnly)) {
+        if (tb->objectName() == QLatin1String("LargeToolSet")) {
+            for (QToolButton* b : tb->findChildren<QToolButton*>()) b->setIconSize(QSize(px * 7 / 6, px * 7 / 6));
+        } else {
+            tb->setIconSize(QSize(px, px));
+        }
+    }
+}
+
+void MainWindow::importForPrint(const QString& ext) {
+    QSettings s;
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Import %1").arg(ext.toUpper()), s.value("files/lastDir").toString(),
+                                                      QStringLiteral("%1 (*.%2)").arg(ext.toUpper(), ext));
+    if (path.isEmpty()) return;
+    s.setValue("files/lastDir", QFileInfo(path).absolutePath());
+    importPrintFile(path, false);
+}
+
+bool MainWindow::importPrintFile(const QString& path, bool intoEmpty) {
+    viewport_->cancelTool();
+    // STL, PLY and OFF have no unit: GNUSketch's own say it in a comment,
+    // for the others ask (slicers take millimeters).
+    double metersPerUnit = 1e-3;
+    if (!printFileUnit(path, metersPerUnit)) {
+        QSettings s;
+        QDialog dlg(this);
+        dlg.setWindowTitle(QStringLiteral("Import %1").arg(QFileInfo(path).fileName()));
+        auto* form = new QFormLayout(&dlg);
+        auto* note = new QLabel(QStringLiteral("This file does not say which unit its numbers are in. 3D printing files are usually in millimeters."), &dlg);
+        note->setWordWrap(true);
+        form->addRow(note);
+        auto* unit = new QComboBox(&dlg);
+        unit->setObjectName(QStringLiteral("ImportUnit"));
+        unit->addItems({QStringLiteral("Millimeters"), QStringLiteral("Centimeters"), QStringLiteral("Meters"), QStringLiteral("Inches"), QStringLiteral("Feet")});
+        unit->setCurrentIndex(std::clamp(s.value("files/printImportUnit", 0).toInt(), 0, 4));
+        form->addRow(QStringLiteral("Unit:"), unit);
+        auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        form->addRow(box);
+        connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        if (dlg.exec() != QDialog::Accepted) return false;
+        s.setValue("files/printImportUnit", unit->currentIndex());
+        metersPerUnit = Units::toMeters((LengthUnit)unit->currentIndex());
+    }
+    PrintModel model;
+    QString err;
+    if (!readPrintFile(path, metersPerUnit, model, &err)) {
+        QMessageBox::warning(this, QStringLiteral("Import"), QStringLiteral("Could not read %1:\n%2").arg(path, err));
+        return false;
+    }
+    if (intoEmpty) doc_.reset();
+    doc_.beginOp("Import");
+    const Id inst = importPrintModel(doc_, model, QFileInfo(path).completeBaseName().toStdString(), &err);
+    if (inst == kNone) {
+        doc_.cancelOp();
+        QMessageBox::warning(this, QStringLiteral("Import"), err);
+        return false;
+    }
+    doc_.selection.clear();
+    doc_.selection.instances.insert(inst);
+    doc_.commitOp();
+    if (intoEmpty) {
+        doc_.clearHistory();
+        doc_.modified = true;
+    }
+    doc_.notifySelection();
+    viewport_->zoomExtents();
+    Vec3 mn, mx;
+    instanceBounds(doc_.state, inst, mn, mx);
+    const Vec3 size = mx - mn;
+    statusLabel_->setText(QStringLiteral("Imported %1 triangles as the component \"%2\", %3 × %4 × %5")
+                              .arg(model.tris.size())
+                              .arg(QString::fromStdString(doc_.state.defs[doc_.state.instances[inst].def].name))
+                              .arg(QString::fromStdString(doc_.units.format(size.x)), QString::fromStdString(doc_.units.format(size.y)),
+                                   QString::fromStdString(doc_.units.format(size.z))));
+    return true;
+}
+
 void MainWindow::showSettings() {
     SettingsDialog dlg(this);
     dlg.exec();
@@ -1255,6 +1380,8 @@ QJsonObject MainWindow::viewState() const {
     o["style"] = styleToJson(doc_.style);
     o["units"] = (int)doc_.units.unit;
     o["precision"] = doc_.units.precision;
+    o["lengthSnap"] = (int)doc_.units.snap;
+    o["snapStep"] = doc_.units.snapStep;
     return o;
 }
 
@@ -1272,6 +1399,8 @@ void MainWindow::applyViewState(const QJsonObject& o) {
     if (o.contains("style")) styleFromJson(o["style"].toObject(), doc_.style);
     if (o.contains("units")) doc_.units.unit = (LengthUnit)std::clamp(o["units"].toInt(), 0, 4);
     if (o.contains("precision")) doc_.units.precision = std::clamp(o["precision"].toInt(), 0, 6);
+    if (o.contains("lengthSnap")) doc_.units.snap = (Units::Snap)std::clamp(o["lengthSnap"].toInt(), 0, 2);
+    if (o.contains("snapStep")) doc_.units.snapStep = std::max(1e-6, o["snapStep"].toDouble());
     viewport_->update();
 }
 
@@ -1476,7 +1605,9 @@ void MainWindow::deleteSelection() {
     Mesh& m = doc_.mesh();
     doc_.beginOp("Erase");
     for (Id f : doc_.selection.faces) m.eraseFace(f);
-    for (Id e : doc_.selection.edges) m.eraseEdge(e, false);
+    // An edge between two faces in one plane goes and they become one face
+    // (as with the Eraser); otherwise the faces it bounds go with it.
+    for (Id e : doc_.selection.edges) m.eraseEdge(e, true);
     for (Id i : doc_.selection.instances) doc_.state.instances[i].alive = false;
     for (Id o : doc_.selection.objects) doc_.state.objects[o].alive = false;
     m.removeOrphanVertices();
@@ -1579,15 +1710,15 @@ void MainWindow::modelInfo() {
     QDialog dlg(this);
     dlg.setWindowTitle(QStringLiteral("Model Info"));
     auto* fl = new QFormLayout(&dlg);
-    auto* unit = new QComboBox(&dlg);
-    unit->addItems({QStringLiteral("Millimeters"), QStringLiteral("Centimeters"), QStringLiteral("Meters"),
-                    QStringLiteral("Inches"), QStringLiteral("Feet and inches")});
-    unit->setCurrentIndex((int)doc_.units.unit);
-    auto* prec = new QSpinBox(&dlg);
-    prec->setRange(0, 6);
-    prec->setValue(doc_.units.precision);
-    fl->addRow(QStringLiteral("Length unit:"), unit);
-    fl->addRow(QStringLiteral("Precision (decimals):"), prec);
+    const Units before = doc_.units;
+    auto* units = new UnitsSettings(&doc_, true, &dlg);
+    units->setObjectName(QStringLiteral("ModelInfoUnits"));
+    connect(units, &UnitsSettings::changed, this, [this] {
+        entityInfo_->refresh();
+        properties_->refresh();
+        viewport_->update();
+    });
+    fl->addRow(units);
     const Mesh& m = doc_.mesh();
     fl->addRow(QStringLiteral("Statistics:"), new QLabel(QStringLiteral("%1 faces, %2 edges, %3 vertices, %4 materials, %5 guides")
                                                              .arg(m.aliveFaceCount()).arg(m.aliveEdgeCount()).arg(m.aliveVertexCount())
@@ -1596,12 +1727,16 @@ void MainWindow::modelInfo() {
     fl->addRow(bb);
     connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    if (dlg.exec() != QDialog::Accepted) return;
-    doc_.units.unit = (LengthUnit)unit->currentIndex();
-    doc_.units.precision = prec->value();
-    QSettings().setValue("model/units", unit->currentIndex());
+    if (dlg.exec() != QDialog::Accepted) {
+        doc_.units = before; // the changes showed live
+        UnitsSettings::remember(before);
+    } else {
+        doc_.modified = true;
+    }
     entityInfo_->refresh();
     materials_->refresh();
+    properties_->refresh();
+    viewport_->update();
 }
 
 void MainWindow::runEffect(const EffectDef& def, bool repeat) {

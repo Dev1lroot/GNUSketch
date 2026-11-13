@@ -40,6 +40,12 @@
 #include "Viewport.h"
 #include "Icons.h"
 #include "Theme.h"
+#include "io/PrintExport.h"
+#include "EffectsUi.h"
+#include "Properties.h"
+#include <QComboBox>
+#include "Animator.h"
+#include "SceneTools.h"
 #include <QMenu>
 #include <QMenuBar>
 #include <QToolBar>
@@ -1711,7 +1717,8 @@ int runSelfTest(MainWindow& w) {
         d.check(doc.selection.faces.count(face) == 1, "clicking a face selects it for the tool");
         auto* tool = dynamic_cast<TextureTool*>(vp->tool());
         d.check(tool != nullptr, "the tool is active");
-        const Face& F = m.faces[face];
+        // (Looked up each time: Esc and undo put back a copy of the model.)
+        auto F_ = [&]() -> const Face& { return d.mesh().faces[face]; };
         auto uvNow = [&](const Vec3& p) { return faceTexCoord(d.mesh().faces[face], true, p, doc.material(matId)); };
         const Vec3 probe(1.3, 2.1, 0);
 
@@ -1758,7 +1765,7 @@ int runSelfTest(MainWindow& w) {
         };
         auto axes = [&] { return explicitTexMap(d.mesh().faces[face], true, doc.material(matId)); };
         {
-            d.check(F.front.tex.valid, "the face has its own mapping now");
+            d.check(F_().front.tex.valid, "the face has its own mapping now");
             const TexMap a = axes();
             d.check(dragHandle(TextureTool::Handle::Corner2, QPointF(60, -60)), "a corner can be dragged");
             const TexMap b = axes();
@@ -3155,12 +3162,7 @@ int runSelfTest(MainWindow& w) {
             d.pump();
             d.check(sceneBar->isVisible(), "and shows it again");
         }
-        QDockWidget* lights = w.findChild<QDockWidget*>(QStringLiteral("LightsAndCameras"));
-        d.check(lights != nullptr, "lights and cameras have their own panel");
-        bool inTray = false;
-        if (QDockWidget* tray = w.findChild<QDockWidget*>(QStringLiteral("DefaultTray")))
-            for (QWidget* c : tray->findChildren<QWidget*>()) inTray = inTray || c->metaObject()->className() == QByteArray("gs::ScenePanel");
-        d.check(!inTray, "not in the tray");
+        d.check(w.findChild<QDockWidget*>(QStringLiteral("DefaultTray")) == nullptr, "there is no Default Tray any more");
     }
 
     // --- Cinematic lighting: ray traced lamp shadows, light rays -------------------
@@ -3239,6 +3241,381 @@ int runSelfTest(MainWindow& w) {
         d.check(grayAt(day, shade) + 20 < grayAt(day, sunny), "cinematic: the sun casts a ray traced shadow");
         doc.reset();
         doc.style = RenderStyle();
+        vp->zoomExtents();
+    }
+
+
+    // --- Panels, Properties, Animator, Settings sizes ---------------------------
+    {
+        doc.reset();
+        auto dock = [&](const char* name) { return w.findChild<QDockWidget*>(QString::fromLatin1(name)); };
+        bool four = true;
+        for (const char* n : {"Hierarchy", "PropertiesPanel", "MaterialsPanel", "InstructorPanel"}) four = four && dock(n) && !dock(n)->isHidden();
+        d.check(four, "Hierarchy, Properties, Materials and Instructor are open");
+        d.check(dock("EnvironmentPanel") && dock("EnvironmentPanel")->isHidden() && dock("EnvironmentPanel")->findChild<SunPanel*>() &&
+                    dock("EnvironmentPanel")->findChild<StylesPanel*>(),
+                "Environment holds Sun and Styles (from the Window menu)");
+        d.check(dock("AnimatorPanel") && dock("AnimatorPanel")->findChild<AnimatorPanel*>(), "the Animator is a panel");
+        if (QAction* envAct = w.findChild<QAction*>(QStringLiteral("panel_environment"))) {
+            envAct->trigger();
+            d.pump();
+            d.check(!dock("EnvironmentPanel")->isHidden(), "Window > Environment opens it");
+            dock("EnvironmentPanel")->hide();
+        }
+
+        // Properties: the tool's settings or the selection's.
+        auto* props = w.findChild<PropertiesPanel*>();
+        d.check(props != nullptr, "there is a Properties panel");
+        if (props) {
+            vp->setTool(ToolId::Mountain);
+            d.pump();
+            d.check(props->showing() == QLatin1String("tool") && props->findChild<TerrainPanel*>() && props->findChild<TerrainPanel*>()->isVisible(),
+                    "a terraform tool shows its brush settings");
+            vp->setTool(ToolId::PlacePointLight);
+            d.pump();
+            auto* placement = props->findChild<PlacementSettings*>();
+            d.check(props->showing() == QLatin1String("tool") && placement && placement->isVisible(), "a light tool shows the next light's settings");
+            placementDefaults(SceneObject::PointLight).intensity = 7.5;
+            placementDefaults(SceneObject::PointLight).range = 4;
+            vp->zoomExtents();
+            d.click(d.screen(Vec3(0.3, 0.2, 0)));
+            d.pump();
+            Id lamp = kNone;
+            for (Id i = 0; i < (Id)doc.state.objects.size(); ++i)
+                if (doc.state.objects[i].alive) lamp = i;
+            d.check(lamp != kNone && std::fabs(doc.state.objects[lamp].intensity - 7.5) < 1e-9 && std::fabs(doc.state.objects[lamp].range - 4) < 1e-9,
+                    "the placed light has them");
+            placementDefaults(SceneObject::PointLight) = SceneObject();
+            vp->setTool(ToolId::Select);
+            d.pump();
+            doc.selection.clear();
+            if (lamp != kNone) doc.selection.objects.insert(lamp);
+            doc.notifySelection();
+            d.pump();
+            auto* scene = props->findChild<ScenePanel*>();
+            d.check(props->showing() == QLatin1String("selection") && scene && scene->isVisible(), "a selected light shows its properties");
+            if (scene && lamp != kNone) {
+                QDoubleSpinBox* brightness = nullptr;
+                for (QDoubleSpinBox* sp : scene->findChildren<QDoubleSpinBox*>())
+                    if (std::fabs(sp->value() - 7.5) < 1e-9) brightness = sp;
+                if (brightness) brightness->setValue(2.25);
+                d.check(std::fabs(doc.state.objects[lamp].intensity - 2.25) < 1e-9, "and changes them");
+            }
+        }
+
+        // Animator: a component moved through keyframes.
+        doc.reset();
+        d.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        Selection all;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) all.faces.insert(f);
+        doc.beginOp("Make Component");
+        const Id box = makeComponent(doc.state, all, "Box");
+        doc.commitOp();
+        auto* anim = w.findChild<AnimatorPanel*>();
+        d.check(anim != nullptr && box != kNone, "a component to animate");
+        if (anim && box != kNone) {
+            dock("AnimatorPanel")->show();
+            d.pump();
+            anim->modelReplaced();
+            doc.selection.clear();
+            doc.selection.instances.insert(box);
+            doc.notifySelection();
+            anim->addLayersFromSelection();
+            d.check(doc.state.timeline.layers.size() == 1 && doc.state.timeline.layers[0].keys.size() == 1, "New Layer animates the selection, with a keyframe");
+            anim->setFrame(25);
+            const Mat4 start = doc.state.instances[box].xf;
+            doc.beginOp("Move");
+            doc.state.instances[box].xf = Mat4::translation(Vec3(4, 0, 0)) * start;
+            doc.commitOp();
+            d.check(doc.state.timeline.layers[0].keyAt(25) >= 0, "Auto Key: moving it makes a keyframe at the playhead");
+            anim->setFrame(13);
+            d.check(std::fabs(doc.state.instances[box].xf.at(0, 3) - start.at(0, 3) - 2) < 1e-6, "half way, it is half way (motion tween)");
+            anim->setFrame(1);
+            d.check(std::fabs(doc.state.instances[box].xf.at(0, 3) - start.at(0, 3)) < 1e-9, "scrubbing back puts it back");
+            anim->setCurrentLayer(0);
+            anim->setFrame(1);
+            anim->toggleTween();
+            anim->setFrame(13);
+            d.check(std::fabs(doc.state.instances[box].xf.at(0, 3) - start.at(0, 3)) < 1e-9, "without the tween it holds");
+            anim->toggleTween();
+            anim->play();
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < 400) d.pump();
+            anim->stop();
+            d.check(anim->frame() > 1, "Play runs the timeline");
+            QTemporaryDir dir;
+            const QString path = QDir(dir.path()).filePath(QStringLiteral("anim.gsketch"));
+            d.check(saveNative(doc, path, {}), "an animated model saves");
+            Document again;
+            if (loadNative(again, path, nullptr)) {
+                std::printf("    loaded: %zu layers", again.state.timeline.layers.size());
+                for (const TimelineLayer& l : again.state.timeline.layers) std::printf(", target %d (box %d), %zu keys", l.target, box, l.keys.size());
+                std::printf("\n");
+            }
+            d.check(loadNative(again, path, nullptr) && again.state.timeline.layers.size() == 1 &&
+                        again.state.timeline.layers[0].keys.size() == 2 && again.state.timeline.layers[0].keys[1].frame == 25 &&
+                        again.state.timeline.layers[0].target == box,
+                    "and opens with its timeline");
+            anim->setFrame(25);
+            doc.undo(); // the two tween switches,
+            doc.undo();
+            doc.undo(); // then the move: its keyframe goes with it
+            anim->reapply();
+            d.check(doc.state.timeline.layers.empty() || doc.state.timeline.layers[0].keyAt(25) < 0, "undo takes the auto keyframe away too");
+            dock("AnimatorPanel")->hide();
+            anim->modelReplaced();
+        }
+        doc.reset();
+
+        // Font and icon sizes.
+        {
+            const int font0 = QApplication::font().pointSize();
+            SettingsDialog dlg(&w);
+            dlg.setIconSize(40);
+            QToolBar* standard = w.findChild<QToolBar*>(QStringLiteral("StandardToolbar"));
+            d.check(standard && standard->iconSize() == QSize(40, 40), "Settings: toolbar icons change size");
+            dlg.setFontSize(15);
+            d.check(QApplication::font().pointSize() == 15, "Settings: the font changes size");
+            dlg.reject();
+            d.check(standard && standard->iconSize() == QSize(24, 24) && QApplication::font().pointSize() == font0, "and Cancel puts them back");
+        }
+    }
+
+
+    // --- De-triangulate, Hollow, Solidify on an imported model ----------------
+    {
+        doc.reset();
+        QTemporaryDir dir;
+        Document src;
+        PrimitiveParams pp;
+        pp.kind = PrimitiveKind::Sphere;
+        pp.radius = 0.02;
+        pp.segments = 48;
+        pp.rings = 24;
+        buildPrimitive(pp, src.mesh());
+        Mesh boxMesh;
+        PrimitiveParams bp;
+        bp.kind = PrimitiveKind::Box;
+        bp.width = bp.depth = bp.height = 0.03;
+        buildPrimitive(bp, boxMesh);
+        appendMesh(src.mesh(), boxMesh, Mat4::translation(Vec3(0.06, 0, 0)));
+        const QString stl = QDir(dir.path()).filePath(QStringLiteral("parts.stl"));
+        d.check(exportPrint(src, stl, PrintFormat::StlBinary, LengthUnit::Millimeters) && w.openFile(stl), "an STL (a sphere and a box) opens");
+        auto action = [&](const char* key) { return w.findChild<QAction*>(QString::fromLatin1(key)); };
+        d.check(action("effect_de-triangulate") && action("effect_hollow") && action("effect_solidify"), "De-triangulate, Hollow and Solidify are in Effects");
+        auto run = [&](const char* name, const QVariantMap& values) {
+            for (const EffectDef& def : effectRegistry()) {
+                if (def.name != QLatin1String(name)) continue;
+                Selection sel;
+                sel.instances.insert(0);
+                doc.selection = sel;
+                doc.notifySelection();
+                d.pump();
+                if (!action(def.key().toLatin1().constData())->isEnabled()) return std::string("not enabled");
+                QVariantMap v = values;
+                for (const EffectParam& prm : def.params)
+                    if (!v.contains(prm.key)) v[prm.key] = prm.type == EffectParam::Bool ? QVariant(prm.def != 0) : QVariant(prm.def);
+                std::string err;
+                QElapsedTimer t;
+                t.start();
+                doc.beginOp(name);
+                const bool ok = applyEffect(doc.state, sel, [&](Mesh& m, const std::set<Id>& f, EffectResult* r, std::string* e) { return def.apply(m, f, v, r, e); }, nullptr, &err);
+                doc.commitOp();
+                std::printf("    %s: %s in %lld ms, %d faces\n", name, ok ? "ok" : err.c_str(), (long long)t.elapsed(),
+                            doc.state.defs[doc.state.instances[0].def].mesh.aliveFaceCount());
+                return ok ? std::string() : err;
+            }
+            return std::string("missing");
+        };
+        // (Importing already joins flat triangles: split them again first.)
+        d.check(run("Triangulate", {}).empty(), "Triangulate splits it into triangles");
+        const int before = doc.state.defs[0].mesh.aliveFaceCount();
+        d.check(run("De-triangulate", {{"quads", true}}).empty() && doc.state.defs[0].mesh.aliveFaceCount() < before * 0.55,
+                "De-triangulate joins the triangles (flat sides, quads on the sphere)");
+        d.check(doc.state.defs[0].mesh.aliveFaceCount() <= 6 + 48 * 24, "the box became six faces (sphere quads stay)");
+        d.check(run("Solidify", {}).empty() && isSolid(doc.state.defs[0].mesh), "Solidify leaves a closed solid");
+        const double v0 = solidVolume(doc.state.defs[0].mesh);
+        d.check(run("Hollow", {{"thickness", 0.003}, {"detail", 64}}).empty(), "Hollow runs on it");
+        const double v1 = solidVolume(doc.state.defs[0].mesh);
+        std::printf("    volume %.3f cm3 -> %.3f cm3\n", v0 * 1e6, v1 * 1e6);
+        d.check(isSolid(doc.state.defs[0].mesh) && v1 > 0 && v1 < v0 * 0.8, "with less material, still a solid");
+        doc.undo();
+        d.check(std::fabs(solidVolume(doc.state.defs[0].mesh) - v0) < 1e-12, "one undo takes the hollow away");
+        doc.reset();
+        w.clearRecentFiles();
+    }
+
+
+    // --- Delete on the edge between two faces in one plane joins them ----------
+    {
+        doc.reset();
+        d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}}, true);
+        d.mesh().drawPolyline({{2, 0, 0}, {4, 0, 0}, {4, 2, 0}, {2, 2, 0}}, true);
+        const Id shared = d.mesh().findEdge(d.mesh().findVertex({2, 0, 0}), d.mesh().findVertex({2, 2, 0}));
+        doc.selection.clear();
+        doc.selection.edges.insert(shared);
+        doc.notifySelection();
+        w.findChild<QAction*>(QStringLiteral("delete"))->trigger();
+        d.check(d.mesh().aliveFaceCount() == 1, "Delete on the edge between two faces in one plane joins them");
+        doc.reset();
+    }
+
+
+    // --- Scale: sizes shown and typed in Properties ------------------------------
+    {
+        doc.reset();
+        doc.units.unit = LengthUnit::Millimeters;
+        doc.units.precision = 0;
+        Mesh& m = d.mesh();
+        m.groundFacesDown = false;
+        m.drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 1, 0}, {0, 1, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) { m.pushPull(f, m.faces[f].normal.z < 0 ? -0.5 : 0.5); break; }
+        doc.selection.clear();
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) doc.selection.faces.insert(f);
+        doc.notifySelection();
+        vp->setTool(ToolId::Scale);
+        d.pump();
+        auto* props = w.findChild<PropertiesPanel*>();
+        auto* scale = props ? props->findChild<ScaleSettings*>() : nullptr;
+        auto* tool = dynamic_cast<ScaleTool*>(vp->tool());
+        d.check(scale && scale->isVisible() && tool, "the Scale tool shows the sizes in Properties");
+        auto field = [&](int k) { return scale->findChild<QLineEdit*>(QStringLiteral("ScaleSize%1").arg(k)); };
+        if (scale && tool) {
+            std::printf("    fields: %s / %s / %s\n", qPrintable(field(0)->text()), qPrintable(field(1)->text()), qPrintable(field(2)->text()));
+            d.check(field(0)->text() == QLatin1String("2000mm") && field(1)->text() == QLatin1String("1000mm") && field(2)->text() == QLatin1String("500mm"),
+                    "W, L and H of the box");
+            Vec3 l;
+            tool->boxLengths(l);
+            d.check(tool->dimensionText(l) == QLatin1String("W: 2000mm   L: 1000mm   H: 500mm"), "and the label on the box says the same");
+            auto bounds = [&] {
+                Vec3 mn, mx;
+                bool any;
+                d.mesh().bounds(mn, mx, any);
+                return std::make_pair(mn, mx);
+            };
+            scale->setProportional(true);
+            d.check(scale->enter(1, QStringLiteral("500")), "typing L = 500 rescales");
+            auto [mn, mx] = bounds();
+            std::printf("    now %.3f x %.3f x %.3f, from (%.3f %.3f %.3f)\n", mx.x - mn.x, mx.y - mn.y, mx.z - mn.z, mn.x, mn.y, mn.z);
+            d.check(std::fabs(mx.x - mn.x - 1) < 1e-9 && std::fabs(mx.y - mn.y - 0.5) < 1e-9 && std::fabs(mx.z - mn.z - 0.25) < 1e-9,
+                    "Keep proportions: W and H follow");
+            d.check(std::fabs(mn.z) < 1e-9 && std::fabs((mn.x + mx.x) / 2 - 1) < 1e-9 && std::fabs((mn.y + mx.y) / 2 - 0.5) < 1e-9,
+                    "the bottom centre stays where it was");
+            d.check(field(1)->text() == QLatin1String("500mm") && field(0)->text() == QLatin1String("1000mm"), "the fields show the new sizes");
+            scale->setProportional(false);
+            d.check(scale->enter(2, QStringLiteral("1m")), "typing H = 1m (any unit)");
+            std::tie(mn, mx) = bounds();
+            d.check(std::fabs(mx.z - mn.z - 1) < 1e-9 && std::fabs(mx.x - mn.x - 1) < 1e-9 && std::fabs(mx.y - mn.y - 0.5) < 1e-9,
+                    "without Keep proportions only H changes");
+            doc.undo();
+            std::tie(mn, mx) = bounds();
+            d.check(std::fabs(mx.z - mn.z - 0.25) < 1e-9, "one undo per typed size");
+            d.check(!scale->enter(0, QStringLiteral("nonsense")), "a size that is not a length is refused");
+        }
+        vp->setTool(ToolId::Select);
+        doc.reset();
+    }
+
+
+    // --- Length snapping and display precision ---------------------------------
+    {
+        doc.reset();
+        const Units savedUnits = doc.units;
+        doc.units.unit = LengthUnit::Millimeters;
+        doc.units.precision = 0;
+        doc.units.snap = Units::Snap::Step;
+        doc.units.snapStep = 0.25;
+        vp->camera().perspective = true;
+        vp->camera().eye = Vec3(1, -6, 5);
+        vp->camera().target = Vec3(1, 1, 0);
+        vp->update();
+        d.pump();
+        // A line along the red axis, the cursor at 1.13 m: it ends at 1.25 m.
+        vp->setTool(ToolId::Line);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.move(d.screen(Vec3(1.13, 0, 0)));
+        d.click(d.screen(Vec3(1.13, 0, 0)));
+        d.key(Qt::Key_Escape);
+        d.check(d.mesh().findVertex(Vec3(1.25, 0, 0), 1e-9) != kNone, "Line: the length snaps to the step (0.25 m)");
+        // A free line in some direction: its length is a whole number of steps.
+        d.click(d.screen(Vec3(0, 2, 0)));
+        d.click(d.screen(Vec3(1.07, 2.71, 0)));
+        d.key(Qt::Key_Escape);
+        bool whole = false;
+        for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e) {
+            if (!d.mesh().edges[e].alive) continue;
+            const double l = d.mesh().edgeLength(e);
+            if (d.mesh().pos(d.mesh().edges[e].v[0]).y > 1.5) {
+                std::printf("    free line %.6f m\n", l);
+                whole = std::fabs(l / 0.25 - std::round(l / 0.25)) < 1e-9;
+            }
+        }
+        d.check(whole, "a line in any direction too");
+        // Rectangle: both sides.
+        doc.reset();
+        vp->setTool(ToolId::Rectangle);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.click(d.screen(Vec3(1.62, 0.88, 0)));
+        Vec3 mn, mx;
+        bool any = false;
+        d.mesh().bounds(mn, mx, any);
+        std::printf("    rectangle %.4f x %.4f\n", mx.x - mn.x, mx.y - mn.y);
+        d.check(any && std::fabs(mx.x - mn.x - 1.5) < 1e-9 && std::fabs(mx.y - mn.y - 1.0) < 1e-9, "Rectangle: each side snaps");
+        // Push/Pull: the height.
+        vp->setTool(ToolId::PushPull);
+        const QPointF fc = d.screen(Vec3(0.75, 0.5, 0));
+        d.click(fc);
+        d.move(fc - QPointF(0, 47));
+        d.click(fc - QPointF(0, 47));
+        d.mesh().bounds(mn, mx, any);
+        std::printf("    pushed to %.4f\n", mx.z - mn.z);
+        d.check(std::fabs((mx.z - mn.z) / 0.25 - std::round((mx.z - mn.z) / 0.25)) < 1e-9 && mx.z - mn.z > 0.2, "Push/Pull: the distance snaps");
+        // Snapping to the display precision: 0.1 mm.
+        doc.reset();
+        doc.units.snap = Units::Snap::Precision;
+        doc.units.precision = 1;
+        vp->setTool(ToolId::Line);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.click(d.screen(Vec3(0.8, 0.6, 0)));
+        d.key(Qt::Key_Escape);
+        bool tenth = false;
+        for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e)
+            if (d.mesh().edges[e].alive) {
+                const double mm = d.mesh().edgeLength(e) * 1000;
+                std::printf("    line %.6f mm\n", mm);
+                tenth = std::fabs(mm * 10 - std::round(mm * 10)) < 1e-6;
+            }
+        d.check(tenth, "To display precision: lengths in whole 0.1 mm");
+        // Model Info and Properties show the settings.
+        vp->setTool(ToolId::Line);
+        d.pump();
+        auto* props = w.findChild<PropertiesPanel*>();
+        auto* unitsBox = props ? props->findChild<UnitsSettings*>() : nullptr;
+        d.check(unitsBox && unitsBox->isVisible(), "the Line tool shows snapping and precision in Properties");
+        if (unitsBox) {
+            auto* precision = unitsBox->findChild<QComboBox*>(QStringLiteral("PrecisionCombo"));
+            QStringList items;
+            for (int i = 0; precision && i < precision->count(); ++i) items << precision->itemText(i);
+            std::printf("    precision: %s\n", qPrintable(items.join(" | ")));
+            d.check(items.size() == 7 && items[0] == QLatin1String("0mm") && items[1] == QLatin1String("0.0mm") && items[2] == QLatin1String("0.00mm"),
+                    "display precision is chosen by example (0mm, 0.0mm, 0.00mm...)");
+            auto* snap = unitsBox->findChild<QComboBox*>(QStringLiteral("SnapCombo"));
+            auto* step = unitsBox->findChild<QLineEdit*>(QStringLiteral("SnapStep"));
+            if (snap && step) {
+                snap->setCurrentIndex(2);
+                step->setText(QStringLiteral("5cm"));
+                emit step->editingFinished();
+                d.check(doc.units.snap == Units::Snap::Step && std::fabs(doc.units.snapStep - 0.05) < 1e-12, "a step typed in any unit");
+            }
+        }
+        vp->setTool(ToolId::Select);
+        doc.units = savedUnits;
+        UnitsSettings::remember(savedUnits);
+        doc.reset();
         vp->zoomExtents();
     }
 
@@ -3333,6 +3710,29 @@ int runSelfTest(MainWindow& w) {
         if (exp)
             for (QAction* a : exp->actions()) expTexts << a->text();
         std::printf("    export: %s\n", qPrintable(expTexts.join(" | ")));
+        QStringList impTexts;
+        if (imp)
+            for (QAction* a : imp->actions()) impTexts << a->objectName();
+        d.check(impTexts.contains("import3mf") && impTexts.contains("importamf") && impTexts.contains("importstl") &&
+                    impTexts.contains("importply") && impTexts.contains("importoff"),
+                "File > Import lists the 3D printing formats");
+        {
+            QTemporaryDir pdir;
+            Document box;
+            box.mesh().drawPolyline({{0, 0, 0}, {0.03, 0, 0}, {0.03, 0.02, 0}, {0, 0.02, 0}}, true);
+            for (Id f = 0; f < (Id)box.mesh().faces.size(); ++f)
+                if (box.mesh().faces[f].alive) { box.mesh().pushPull(f, box.mesh().faces[f].normal.z < 0 ? -0.01 : 0.01); break; }
+            const QString stl = QDir(pdir.path()).filePath(QStringLiteral("part.stl"));
+            d.check(exportPrint(box, stl, PrintFormat::StlBinary, LengthUnit::Millimeters), "an STL to open");
+            d.check(w.openFile(stl), "File > Open reads an STL");
+            Vec3 mn, mx;
+            const bool one = doc.state.instances.size() == 1 && instanceBounds(doc.state, 0, mn, mx);
+            d.check(one && std::fabs(mx.x - mn.x - 0.03) < 1e-6 && std::fabs(mx.z - mn.z - 0.01) < 1e-6 &&
+                        doc.state.defs[0].name == "part" && doc.state.defs[0].mesh.aliveFaceCount() == 6,
+                    "as a component named after the file, in its unit, with n-gon faces");
+            doc.reset();
+            w.clearRecentFiles();
+        }
         d.check(exp && expTexts.join(' ').contains("3MF") && expTexts.join(' ').contains("AMF") && expTexts.join(' ').contains("STL") &&
                     expTexts.join(' ').contains("glTF") && expTexts.join(' ').contains("PLY"),
                 "File > Export lists the model and 3D printing formats");

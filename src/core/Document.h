@@ -4,6 +4,7 @@
 
 #include "Material.h"
 #include "Mesh.h"
+#include "Timeline.h"
 #include "Units.h"
 
 #include <functional>
@@ -120,6 +121,7 @@ struct ModelState {
     std::vector<ComponentDef> defs;
     std::vector<Instance> instances;
     std::vector<SceneObject> objects;
+    Timeline timeline; // the Animator's layers and keyframes
     // What a file format (a plugin) keeps with the whole model that GNUSketch has
     // no place for: JSON text, saved with it (see ComponentDef::extra).
     std::string extra;

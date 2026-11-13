@@ -346,10 +346,16 @@ void RectangleTool::mouseMove(const MouseEvent& e) {
     int axis = forcedAxis_ < 0 ? cursorAxis(e) : -1;
     plane_ = axis >= 0 ? Plane(kAxes[axis], p0_) : resolvePlane(e, p0_, startFace_);
     shapeBasis(plane_.n, u_, v_);
+    snapDistance_ = false; // each side snaps on its own
     InferenceResult r = inferPoint(e, p0_, plane_);
+    snapDistance_ = true;
     Vec3 d = r.p - p0_;
     w_ = d.dot(u_);
     h_ = d.dot(v_);
+    if (lengthSnappable(r)) {
+        w_ = snapLen(w_);
+        h_ = snapLen(h_);
+    }
     hint_.clear();
     double px = cam().pixelSize(r.p);
     if (!r.isSnap() && std::fabs(w_) > px * 10) {

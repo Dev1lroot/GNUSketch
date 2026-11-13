@@ -99,7 +99,40 @@ InferenceResult Tool::inferPoint(const MouseEvent& e, std::optional<Vec3> ref, s
     o.excludeVerts = exclude;
     o.axes = axes;
     inf_ = engine().infer(e.x, e.y, o);
+    // Length snapping: a free point moves along its direction from the
+    // reference to the nearest whole step.
+    if (ref && snapDistance_ && lengthSnappable(inf_)) {
+        bool keep = true;
+        if (inf_.type == InferenceResult::OnFace && inf_.face != kNone) // stays on the face only if ref is in its plane
+            keep = mesh().facePlane(inf_.face).contains(*ref, kTol * 10);
+        const Vec3 d = inf_.p - *ref;
+        const double len = d.length();
+        if (keep && len > kTol) {
+            const double s = snapLen(len);
+            if (s > kTol && std::fabs(s - len) > 1e-12) inf_.p = *ref + d * (s / len);
+        }
+    }
     return inf_;
+}
+
+double Tool::snapLen(double meters) { return doc().units.snapped(meters); }
+
+bool Tool::lengthSnappable(const InferenceResult& r) {
+    switch (r.type) {
+    case InferenceResult::Free:
+    case InferenceResult::Ground:
+    case InferenceResult::AxisX:
+    case InferenceResult::AxisY:
+    case InferenceResult::AxisZ:
+    case InferenceResult::Locked:
+    case InferenceResult::OnPlane:
+    case InferenceResult::OnFace:
+    case InferenceResult::AlongEdge:
+    case InferenceResult::Parallel:
+    case InferenceResult::Perpendicular:
+    case InferenceResult::FaceNormal: return true;
+    default: return false;
+    }
 }
 
 bool Tool::keyPress(QKeyEvent* e) {

@@ -2,6 +2,7 @@
 #include "Effects.h"
 
 #include "Components.h"
+#include "Solids.h"
 #include "Triangulate.h"
 
 #include <algorithm>
@@ -620,7 +621,7 @@ bool emptyError(std::string* error) {
     return false;
 }
 
-std::vector<int> faceAdjacencyFlat(const Surface& s) {
+std::vector<int> faceAdjacencyFlat(const Surface& s, double cosTol = 1 - 1e-9, double distTol = kTol) {
     // Groups connected coplanar triangles with the same materials.
     const int nt = (int)s.tris.size();
     std::unordered_map<uint64_t, std::vector<int>> edgeTris;
@@ -652,9 +653,9 @@ std::vector<int> faceAdjacencyFlat(const Surface& s) {
                 const Surface::Source& so = s.sources[s.tris[o].src];
                 if (!sameSide(src.front, so.front) || !sameSide(src.back, so.back)) continue;
                 Vec3 nO = s.triNormal(s.tris[o]);
-                if (nO.length2() < 1e-30 || nO.normalized().dot(n0) < 1 - 1e-9) continue;
+                if (nO.length2() < 1e-30 || nO.normalized().dot(n0) < cosTol) continue;
                 bool onPlane = true;
-                for (int v : s.tris[o].v) onPlane = onPlane && std::fabs(n0.dot(s.verts[v].p) - d0) <= kTol;
+                for (int v : s.tris[o].v) onPlane = onPlane && std::fabs(n0.dot(s.verts[v].p) - d0) <= distTol;
                 if (!onPlane) continue;
                 group[o] = groups;
                 stack.push_back(o);
@@ -1775,6 +1776,567 @@ bool applyEffect(ModelState& st, Selection& sel, const EffectFn& fn, bool* limit
     if (!any) {
         if (error) *error = "Select faces or components first.";
         return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// De-triangulate, Hollow, Solidify
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using Tri3 = std::array<Vec3, 3>;
+
+// Lines parallel to one axis through a set of triangles: where they cross them.
+class AxisRays {
+public:
+    AxisRays(const std::vector<Tri3>& tris, int axis, double bucket) : tris_(tris), a_(axis), b_((axis + 1) % 3), c_((axis + 2) % 3) {
+        bucket_ = std::max(bucket, 1e-9);
+        for (int t = 0; t < (int)tris.size(); ++t) {
+            double lo[2] = {1e300, 1e300}, hi[2] = {-1e300, -1e300};
+            for (const Vec3& p : tris[t]) {
+                lo[0] = std::min(lo[0], p[b_]), hi[0] = std::max(hi[0], p[b_]);
+                lo[1] = std::min(lo[1], p[c_]), hi[1] = std::max(hi[1], p[c_]);
+            }
+            for (int64_t i = cell(lo[0]); i <= cell(hi[0]); ++i)
+                for (int64_t j = cell(lo[1]); j <= cell(hi[1]); ++j) grid_[key(i, j)].push_back(t);
+        }
+    }
+    // Sorted positions along the axis where the line at (b, c) crosses a triangle.
+    std::vector<double> crossings(double b, double c) const {
+        std::vector<double> out;
+        auto it = grid_.find(key(cell(b), cell(c)));
+        if (it == grid_.end()) return out;
+        for (int t : it->second) {
+            const Tri3& T = tris_[t];
+            const double x0 = T[0][b_] - b, y0 = T[0][c_] - c, x1 = T[1][b_] - b, y1 = T[1][c_] - c, x2 = T[2][b_] - b, y2 = T[2][c_] - c;
+            const double w0 = x1 * y2 - x2 * y1, w1 = x2 * y0 - x0 * y2, w2 = x0 * y1 - x1 * y0;
+            if (!((w0 >= 0 && w1 >= 0 && w2 >= 0) || (w0 <= 0 && w1 <= 0 && w2 <= 0))) continue;
+            const double sum = w0 + w1 + w2;
+            if (std::fabs(sum) < 1e-30) continue; // seen edge-on
+            out.push_back((w0 * T[0][a_] + w1 * T[1][a_] + w2 * T[2][a_]) / sum);
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+    // Odd number of crossings on the positive side.
+    bool inside(const Vec3& p) const {
+        int n = 0;
+        for (double x : crossings(p[b_], p[c_])) n += x > p[a_];
+        return n % 2 == 1;
+    }
+
+private:
+    int64_t cell(double v) const { return (int64_t)std::floor(v / bucket_); }
+    static uint64_t key(int64_t i, int64_t j) { return (uint64_t(uint32_t(int32_t(i))) << 32) | uint32_t(int32_t(j)); }
+    const std::vector<Tri3>& tris_;
+    int a_, b_, c_;
+    double bucket_;
+    std::unordered_map<uint64_t, std::vector<int>> grid_;
+};
+
+// Inside by the majority of three axis rays (slightly off the grid, so they
+// do not run along edges).
+struct InsideTest {
+    explicit InsideTest(const std::vector<Tri3>& tris, double bucket)
+        : x(tris, 0, bucket), y(tris, 1, bucket), z(tris, 2, bucket) {}
+    bool operator()(Vec3 p) const {
+        p += Vec3(1.37e-7, 2.71e-7, 3.14e-7);
+        return int(x.inside(p)) + int(y.inside(p)) + int(z.inside(p)) >= 2;
+    }
+    AxisRays x, y, z;
+};
+
+Vec3 closestOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
+    // Ericson, Real-Time Collision Detection 5.1.5.
+    const Vec3 ab = b - a, ac = c - a, ap = p - a;
+    const double d1 = ab.dot(ap), d2 = ac.dot(ap);
+    if (d1 <= 0 && d2 <= 0) return a;
+    const Vec3 bp = p - b;
+    const double d3 = ab.dot(bp), d4 = ac.dot(bp);
+    if (d3 >= 0 && d4 <= d3) return b;
+    const double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+    const Vec3 cp = p - c;
+    const double d5 = ab.dot(cp), d6 = ac.dot(cp);
+    if (d6 >= 0 && d5 <= d6) return c;
+    const double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+    const double va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    const double den = 1.0 / (va + vb + vc);
+    return a + ab * (vb * den) + ac * (vc * den);
+}
+
+// Triangle / box overlap (Akenine-Moller's separating axes).
+bool triBoxOverlap(const Vec3& centre, const Vec3& half, const Tri3& tri) {
+    const Vec3 v0 = tri[0] - centre, v1 = tri[1] - centre, v2 = tri[2] - centre;
+    const Vec3 e[3] = {v1 - v0, v2 - v1, v0 - v2};
+    for (int i = 0; i < 3; ++i) {
+        const double lo = std::min({v0[i], v1[i], v2[i]}), hi = std::max({v0[i], v1[i], v2[i]});
+        if (lo > half[i] || hi < -half[i]) return false;
+    }
+    const Vec3 n = e[0].cross(e[1]);
+    const double r0 = half.x * std::fabs(n.x) + half.y * std::fabs(n.y) + half.z * std::fabs(n.z);
+    if (std::fabs(n.dot(v0)) > r0) return false;
+    for (const Vec3& ed : e)
+        for (int k = 0; k < 3; ++k) {
+            Vec3 axis;
+            axis[k] = 1;
+            axis = axis.cross(ed);
+            if (axis.length2() < 1e-30) continue;
+            const double p0 = axis.dot(v0), p1 = axis.dot(v1), p2 = axis.dot(v2);
+            const double r = half.x * std::fabs(axis.x) + half.y * std::fabs(axis.y) + half.z * std::fabs(axis.z);
+            if (std::min({p0, p1, p2}) > r || std::max({p0, p1, p2}) < -r) return false;
+        }
+    return true;
+}
+
+std::vector<Tri3> surfaceTriangles(const Surface& s) {
+    std::vector<Tri3> out;
+    out.reserve(s.tris.size());
+    for (const auto& t : s.tris) out.push_back({s.verts[t.v[0]].p, s.verts[t.v[1]].p, s.verts[t.v[2]].p});
+    return out;
+}
+
+void triBounds(const std::vector<Tri3>& tris, Vec3& mn, Vec3& mx) {
+    mn = Vec3(1e300, 1e300, 1e300);
+    mx = Vec3(-1e300, -1e300, -1e300);
+    for (const Tri3& t : tris)
+        for (const Vec3& p : t)
+            for (int k = 0; k < 3; ++k) mn[k] = std::min(mn[k], p[k]), mx[k] = std::max(mx[k], p[k]);
+}
+
+// Most used front material of the faces.
+Id commonMaterial(const Mesh& m, const std::set<Id>& faces) {
+    std::map<Id, int> count;
+    for (Id f : faces)
+        if (f >= 0 && f < (Id)m.faces.size() && m.faces[f].alive) count[m.faces[f].front.material]++;
+    Id best = kNone;
+    int n = 0;
+    for (const auto& [mat, c] : count)
+        if (c > n) n = c, best = mat;
+    return best;
+}
+
+} // namespace
+
+bool effectDetriangulate(Mesh& m, const std::set<Id>& faces, const DetriangulateParams& p, EffectResult* out, std::string* error) {
+    Surface s;
+    if (!s.extract(m, faces)) return emptyError(error);
+    Vec3 mn, mx;
+    triBounds(surfaceTriangles(s), mn, mx);
+    const double angle = std::clamp(p.angle, 0.0, 10.0) * kPi / 180;
+    // Flat within the angle, and on one plane within a hair of the model's size
+    // (STL coordinates are single precision).
+    const double distTol = std::max(kTol, (mx - mn).length() * 2e-6);
+    std::vector<int> group = faceAdjacencyFlat(s, std::cos(angle) - 1e-12, distTol);
+    int groups = 0;
+    for (int g : group) groups = std::max(groups, g + 1);
+
+    if (p.quads) {
+        // Pairs of the single triangles left: across their longest edge, bent
+        // less than the angle, making a convex quad. Flattest pairs first.
+        std::vector<int> size(groups, 0);
+        for (int g : group) size[g]++;
+        const int nt = (int)s.tris.size();
+        std::unordered_map<uint64_t, std::vector<int>> edgeTris;
+        for (int t = 0; t < nt; ++t)
+            for (int k = 0; k < 3; ++k) edgeTris[edgeKey(s.tris[t].v[k], s.tris[t].v[(k + 1) % 3])].push_back(t);
+        auto longest = [&](int t) {
+            int best = 0;
+            double len = -1;
+            for (int k = 0; k < 3; ++k) {
+                const double l = (s.verts[s.tris[t].v[(k + 1) % 3]].p - s.verts[s.tris[t].v[k]].p).length2();
+                if (l > len) len = l, best = k;
+            }
+            return edgeKey(s.tris[t].v[best], s.tris[t].v[(best + 1) % 3]);
+        };
+        const double cosQuad = std::cos(std::clamp(p.quadAngle, 0.0, 89.0) * kPi / 180);
+        std::vector<std::tuple<double, int, int>> pairs;
+        for (const auto& [key, list] : edgeTris) {
+            if (list.size() != 2) continue;
+            const int a = list[0], b = list[1];
+            if (size[group[a]] != 1 || size[group[b]] != 1 || longest(a) != key || longest(b) != key) continue;
+            if (s.tris[a].src != s.tris[b].src) {
+                const auto &fa = s.sources[s.tris[a].src].front, &fb = s.sources[s.tris[b].src].front;
+                if (fa.material != fb.material) continue;
+            }
+            const Vec3 na = s.triNormal(s.tris[a]).normalized(), nb = s.triNormal(s.tris[b]).normalized();
+            const double c = na.dot(nb);
+            if (c < cosQuad) continue;
+            // Convex: the far corners lie on opposite sides of the shared edge, and
+            // the edge's ends on opposite sides of the line between the far corners.
+            int ea = -1, eb = -1, oa = -1, ob = -1;
+            for (int k = 0; k < 3; ++k) {
+                const int v = s.tris[a].v[k];
+                if (v != s.tris[b].v[0] && v != s.tris[b].v[1] && v != s.tris[b].v[2]) oa = v;
+                else (ea < 0 ? ea : eb) = v;
+            }
+            for (int v : s.tris[b].v)
+                if (v != ea && v != eb) ob = v;
+            if (oa < 0 || ob < 0 || eb < 0) continue;
+            const Vec3 n = (na + nb).normalized();
+            const Vec3 P = s.verts[oa].p, Q = s.verts[ob].p, E0 = s.verts[ea].p, E1 = s.verts[eb].p;
+            const double s0 = (Q - P).cross(E0 - P).dot(n), s1 = (Q - P).cross(E1 - P).dot(n);
+            if (s0 * s1 >= 0) continue;
+            pairs.emplace_back(-c, a, b);
+        }
+        std::sort(pairs.begin(), pairs.end());
+        std::vector<char> used(nt, 0);
+        for (const auto& [neg, a, b] : pairs) {
+            if (used[a] || used[b]) continue;
+            used[a] = used[b] = 1;
+            group[b] = group[a];
+        }
+    }
+    // Renumber the groups (pairs left gaps) and build the polygons.
+    std::map<int, int> renum;
+    for (int& g : group) g = renum.emplace(g, (int)renum.size()).first->second;
+    std::vector<int> chart(renum.size());
+    std::iota(chart.begin(), chart.end(), 0);
+    return s.write(m, s.clusterPolys(group, chart, nullptr), false, true, true, out);
+}
+
+bool effectHollow(Mesh& m, const std::set<Id>& faces, const HollowParams& p, EffectResult* out, std::string* error) {
+    auto fail = [&](const char* msg) {
+        if (error) *error = msg;
+        return false;
+    };
+    if (!(p.thickness > 0)) return fail("The wall thickness must be above zero.");
+    Surface s;
+    if (!s.extract(m, faces)) return emptyError(error);
+    {
+        std::unordered_map<uint64_t, int> use;
+        for (const auto& t : s.tris)
+            for (int k = 0; k < 3; ++k) use[edgeKey(t.v[k], t.v[(k + 1) % 3])]++;
+        for (const auto& [k, n] : use)
+            if (n != 2) return fail("Hollow needs a closed solid: these faces have open edges or edges shared by more than two faces. Solidify can make one.");
+    }
+    const std::vector<Tri3> tris = surfaceTriangles(s);
+    Vec3 mn, mx;
+    triBounds(tris, mn, mx);
+    const Vec3 ext = mx - mn;
+    const double longest = std::max({ext.x, ext.y, ext.z});
+    const double t = p.thickness;
+    // Grid: `detail` cells along the longest side, and at least two per wall;
+    // at most about eight million points.
+    double cell = std::min(longest / std::clamp(p.detail, 8, 400), t / 2);
+    bool limited = false;
+    const double minCell = std::cbrt(std::max(ext.x, cell) * std::max(ext.y, cell) * std::max(ext.z, cell) / 8e6);
+    if (cell < minCell) {
+        cell = minCell;
+        limited = true;
+    }
+    const int nx = (int)std::ceil(ext.x / cell) + 1, ny = (int)std::ceil(ext.y / cell) + 1, nz = (int)std::ceil(ext.z / cell) + 1;
+    auto idx = [&](int i, int j, int k) { return (size_t)i + (size_t)nx * ((size_t)j + (size_t)ny * k); };
+    auto point = [&](int i, int j, int k) { return mn + Vec3(i * cell, j * cell, k * cell); };
+
+    // Inside: rows along x, crossing the surface toggles.
+    const AxisRays rays(tris, 0, cell * 4);
+    std::vector<char> inside((size_t)nx * ny * nz, 0);
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j) {
+            const Vec3 q = point(0, j, k) + Vec3(0, 1.37e-7, 2.71e-7);
+            const std::vector<double> xs = rays.crossings(q.y, q.z);
+            size_t c = 0;
+            for (int i = 0; i < nx; ++i) {
+                const double x = mn.x + i * cell;
+                while (c < xs.size() && xs[c] < x) ++c;
+                inside[idx(i, j, k)] = (xs.size() - c) % 2 == 1;
+            }
+        }
+
+    // Distance to the surface (only up to the wall and a little more matters).
+    const double R = t + 2 * cell;
+    std::unordered_map<uint64_t, std::vector<int>> bins;
+    auto bin = [&](double v) { return (int64_t)std::floor(v / R); };
+    auto binKey = [](int64_t a, int64_t b, int64_t c) { return (uint64_t(a & 0x1FFFFF) << 42) | (uint64_t(b & 0x1FFFFF) << 21) | uint64_t(c & 0x1FFFFF); };
+    for (int ti = 0; ti < (int)tris.size(); ++ti) {
+        Vec3 lo, hi;
+        triBounds({tris[ti]}, lo, hi);
+        for (int64_t a = bin(lo.x); a <= bin(hi.x); ++a)
+            for (int64_t b = bin(lo.y); b <= bin(hi.y); ++b)
+                for (int64_t c = bin(lo.z); c <= bin(hi.z); ++c) bins[binKey(a, b, c)].push_back(ti);
+    }
+    std::vector<float> f((size_t)nx * ny * nz, -1.0f);
+    bool anyCavity = false;
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                if (!inside[idx(i, j, k)]) continue;
+                const Vec3 q = point(i, j, k);
+                double best = R * R;
+                const int64_t a0 = bin(q.x), b0 = bin(q.y), c0 = bin(q.z);
+                for (int64_t a = a0 - 1; a <= a0 + 1; ++a)
+                    for (int64_t b = b0 - 1; b <= b0 + 1; ++b)
+                        for (int64_t c = c0 - 1; c <= c0 + 1; ++c) {
+                            auto it = bins.find(binKey(a, b, c));
+                            if (it == bins.end()) continue;
+                            for (int ti : it->second) best = std::min(best, (closestOnTriangle(q, tris[ti][0], tris[ti][1], tris[ti][2]) - q).length2());
+                        }
+                const double v = (std::sqrt(best) - t) / cell; // > 0 in the cavity
+                f[idx(i, j, k)] = (float)v;
+                anyCavity = anyCavity || v > 0;
+            }
+    if (!anyCavity) return fail("The walls would fill the whole object: make them thinner.");
+
+    // The cavity's surface: marching tetrahedra (six per cube, all along the
+    // cube's main diagonal, so neighbouring cubes agree).
+    static const int tets[6][4] = {{0, 1, 3, 7}, {0, 1, 5, 7}, {0, 2, 3, 7}, {0, 2, 6, 7}, {0, 4, 5, 7}, {0, 4, 6, 7}};
+    std::unordered_map<uint64_t, int> edgeVert;
+    std::vector<Vec3> verts;
+    std::vector<std::array<int, 3>> out3;
+    const size_t total = (size_t)nx * ny * nz;
+    auto edgePoint = [&](size_t a, size_t b, const Vec3& pa, const Vec3& pb) {
+        const uint64_t key = std::min(a, b) * total + std::max(a, b);
+        auto it = edgeVert.find(key);
+        if (it != edgeVert.end()) return it->second;
+        const double fa = f[a], fb = f[b];
+        const double w = std::clamp(fa / (fa - fb), 0.0, 1.0);
+        verts.push_back(pa + (pb - pa) * w);
+        edgeVert[key] = (int)verts.size() - 1;
+        return (int)verts.size() - 1;
+    };
+    for (int k = 0; k + 1 < nz; ++k)
+        for (int j = 0; j + 1 < ny; ++j)
+            for (int i = 0; i + 1 < nx; ++i) {
+                size_t id[8];
+                Vec3 pos[8];
+                bool anyPos = false, anyNeg = false;
+                for (int c = 0; c < 8; ++c) {
+                    id[c] = idx(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1));
+                    pos[c] = point(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1));
+                    (f[id[c]] > 0 ? anyPos : anyNeg) = true;
+                }
+                if (!anyPos || !anyNeg) continue;
+                for (const auto& tet : tets) {
+                    int posV[4], negV[4], np = 0, nn = 0;
+                    for (int c : tet) (f[id[c]] > 0 ? posV[np++] : negV[nn++]) = c;
+                    if (np == 0 || nn == 0) continue;
+                    Vec3 cp, cn;
+                    for (int q = 0; q < np; ++q) cp += pos[posV[q]];
+                    for (int q = 0; q < nn; ++q) cn += pos[negV[q]];
+                    const Vec3 toCavity = cp / double(np) - cn / double(nn);
+                    auto E = [&](int a, int b) { return edgePoint(id[a], id[b], pos[a], pos[b]); };
+                    auto emitTri = [&](int a, int b, int c) {
+                        if (a == b || b == c || a == c) return;
+                        const Vec3 n = (verts[b] - verts[a]).cross(verts[c] - verts[a]);
+                        if (n.dot(toCavity) < 0) std::swap(b, c);
+                        out3.push_back({a, b, c});
+                    };
+                    if (np == 1 || nn == 1) {
+                        const bool single = np == 1;
+                        const int lone = single ? posV[0] : negV[0];
+                        const int* others = single ? negV : posV;
+                        emitTri(E(lone, others[0]), E(lone, others[1]), E(lone, others[2]));
+                    } else {
+                        const int a = posV[0], b = posV[1], c = negV[0], d = negV[1];
+                        const int ac = E(a, c), bc = E(b, c), bd = E(b, d), ad = E(a, d);
+                        emitTri(ac, bc, bd);
+                        emitTri(ac, bd, ad);
+                    }
+                }
+            }
+    if (out3.empty()) return fail("The walls would fill the whole object: make them thinner.");
+
+    // Into the mesh, facing the cavity, in the faces' usual material.
+    const Id mat = commonMaterial(m, faces);
+    std::vector<Id> vid(verts.size(), kNone);
+    std::set<Id> inner;
+    for (const auto& tri : out3) {
+        Id ids[3];
+        for (int q = 0; q < 3; ++q) {
+            if (vid[tri[q]] == kNone) vid[tri[q]] = m.addVertex(verts[tri[q]]);
+            ids[q] = vid[tri[q]];
+        }
+        if (ids[0] == ids[1] || ids[1] == ids[2] || ids[0] == ids[2]) continue;
+        const Vec3 n = (m.pos(ids[1]) - m.pos(ids[0])).cross(m.pos(ids[2]) - m.pos(ids[0]));
+        if (n.length2() < 1e-30) continue;
+        const Id nf = m.addFaceRaw({ids[0], ids[1], ids[2]}, {}, n);
+        if (nf == kNone) continue;
+        m.faces[nf].front.material = m.faces[nf].back.material = mat;
+        inner.insert(nf);
+    }
+    // Flat parts of the wall as n-gons, curved ones smooth.
+    EffectResult flat;
+    if (!inner.empty() && effectDetriangulate(m, inner, DetriangulateParams{0.5, false, 30}, &flat)) inner = flat.faces;
+    for (Id fi : inner)
+        for (Id e : m.faceEdges(fi)) {
+            const auto& fs = m.edgeFaces(e);
+            if (fs.size() == 2 && m.faces[fs[0]].normal.dot(m.faces[fs[1]].normal) > 0.85) m.edges[e].soft = m.edges[e].smooth = true;
+        }
+    m.touch();
+    if (out) {
+        out->faces = inner;
+        for (Id fo : faces)
+            if (fo >= 0 && fo < (Id)m.faces.size() && m.faces[fo].alive) out->faces.insert(fo);
+        out->limited = limited;
+    }
+    return true;
+}
+
+bool effectSolidify(Mesh& m, const std::set<Id>& facesIn, const SolidifyParams& p, EffectResult* out, std::string* error) {
+    std::set<Id> faces;
+    for (Id f : facesIn)
+        if (f >= 0 && f < (Id)m.faces.size() && m.faces[f].alive) faces.insert(f);
+    if (faces.empty()) return emptyError(error);
+
+    // 1. Overlapping closed parts become one (their inner faces go).
+    if (p.mergeParts) {
+        // Parts: faces connected through vertices.
+        std::map<Id, int> partOf;
+        std::vector<std::set<Id>> parts;
+        for (Id f0 : faces) {
+            if (partOf.count(f0)) continue;
+            parts.emplace_back();
+            std::vector<Id> stack{f0};
+            partOf[f0] = (int)parts.size() - 1;
+            while (!stack.empty()) {
+                const Id f = stack.back();
+                stack.pop_back();
+                parts.back().insert(f);
+                for (Id v : m.faceVertices(f))
+                    for (Id e : m.vertexEdges(v))
+                        for (Id g : m.edgeFaces(e))
+                            if (faces.count(g) && !partOf.count(g)) {
+                                partOf[g] = (int)parts.size() - 1;
+                                stack.push_back(g);
+                            }
+            }
+        }
+        if (parts.size() > 1) {
+            Mesh merged;
+            bool have = false, changed = false;
+            std::set<Id> consumed;
+            for (const std::set<Id>& part : parts) {
+                Mesh pm;
+                appendMesh(pm, m, Mat4(), &part, nullptr, false, nullptr);
+                if (!isSolid(pm)) continue;
+                if (!have) {
+                    merged = std::move(pm);
+                    have = true;
+                    consumed.insert(part.begin(), part.end());
+                    continue;
+                }
+                Mesh u;
+                if (booleanMeshes(merged, pm, BoolOp::Union, u)) {
+                    merged = std::move(u);
+                    consumed.insert(part.begin(), part.end());
+                    changed = true;
+                }
+            }
+            if (changed) {
+                std::vector<Id> edges;
+                for (Id f : consumed) {
+                    for (Id e : m.faceEdges(f)) edges.push_back(e);
+                    m.eraseFace(f);
+                    faces.erase(f);
+                }
+                m.removeEdgesWithoutFaces(edges);
+                m.removeOrphanVertices();
+                Selection created;
+                appendMesh(m, merged, Mat4(), nullptr, nullptr, false, &created);
+                faces.insert(created.faces.begin(), created.faces.end());
+            }
+        }
+    }
+
+    // 2. Only what can be seen from outside stays.
+    Surface s;
+    if (!s.extract(m, faces)) return emptyError(error);
+    const std::vector<Tri3> tris = surfaceTriangles(s);
+    Vec3 mn, mx;
+    triBounds(tris, mn, mx);
+    const Vec3 ext = mx - mn;
+    const double longest = std::max({ext.x, ext.y, ext.z, 1e-6});
+    double cell = longest / std::clamp(p.detail, 16, 400);
+    // Pad by two cells so the outside goes all the way round.
+    const Vec3 origin = mn - Vec3(2 * cell, 2 * cell, 2 * cell);
+    const int nx = (int)std::ceil(ext.x / cell) + 5, ny = (int)std::ceil(ext.y / cell) + 5, nz = (int)std::ceil(ext.z / cell) + 5;
+    const size_t total = (size_t)nx * ny * nz;
+    auto idx = [&](int i, int j, int k) { return (size_t)i + (size_t)nx * ((size_t)j + (size_t)ny * k); };
+    std::vector<char> wall(total, 0), outside(total, 0);
+    const Vec3 half(cell * 0.5, cell * 0.5, cell * 0.5);
+    for (const Tri3& t : tris) {
+        Vec3 lo, hi;
+        triBounds({t}, lo, hi);
+        const int i0 = std::max(0, (int)std::floor((lo.x - origin.x) / cell)), i1 = std::min(nx - 1, (int)std::floor((hi.x - origin.x) / cell));
+        const int j0 = std::max(0, (int)std::floor((lo.y - origin.y) / cell)), j1 = std::min(ny - 1, (int)std::floor((hi.y - origin.y) / cell));
+        const int k0 = std::max(0, (int)std::floor((lo.z - origin.z) / cell)), k1 = std::min(nz - 1, (int)std::floor((hi.z - origin.z) / cell));
+        for (int k = k0; k <= k1; ++k)
+            for (int j = j0; j <= j1; ++j)
+                for (int i = i0; i <= i1; ++i) {
+                    const size_t c = idx(i, j, k);
+                    if (wall[c]) continue;
+                    if (triBoxOverlap(origin + Vec3((i + 0.5) * cell, (j + 0.5) * cell, (k + 0.5) * cell), half, t)) wall[c] = 1;
+                }
+    }
+    // Flood the outside from the border.
+    std::vector<size_t> queue;
+    auto seed = [&](int i, int j, int k) {
+        const size_t c = idx(i, j, k);
+        if (!wall[c] && !outside[c]) outside[c] = 1, queue.push_back(c);
+    };
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i)
+                if (i == 0 || j == 0 || k == 0 || i == nx - 1 || j == ny - 1 || k == nz - 1) seed(i, j, k);
+    for (size_t q = 0; q < queue.size(); ++q) {
+        const size_t c = queue[q];
+        const int i = int(c % nx), j = int((c / nx) % ny), k = int(c / ((size_t)nx * ny));
+        if (i > 0) seed(i - 1, j, k);
+        if (i + 1 < nx) seed(i + 1, j, k);
+        if (j > 0) seed(i, j - 1, k);
+        if (j + 1 < ny) seed(i, j + 1, k);
+        if (k > 0) seed(i, j, k - 1);
+        if (k + 1 < nz) seed(i, j, k + 1);
+    }
+    // From a point on a face, away along d: is the first open cell outside?
+    // (-1: only walls within reach.)
+    auto reachOutside = [&](const Vec3& pt, const Vec3& d) {
+        for (int step = 1; step <= 8; ++step) {
+            const Vec3 q = pt + d * (step * cell * 0.5);
+            const int i = (int)std::floor((q.x - origin.x) / cell), j = (int)std::floor((q.y - origin.y) / cell),
+                      k = (int)std::floor((q.z - origin.z) / cell);
+            if (i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz) return 1;
+            const size_t c = idx(i, j, k);
+            if (!wall[c]) return outside[c] ? 1 : 0;
+        }
+        return -1;
+    };
+    const InsideTest insideTest(tris, cell * 4);
+    const double eps = std::max(cell * 0.05, kTol * 10);
+    std::vector<Id> drop, flip, keep;
+    for (Id f : faces) {
+        const Vec3 pt = m.faceInteriorPoint(f), n = m.faces[f].normal;
+        const int fe = reachOutside(pt, n), be = reachOutside(pt, -n);
+        const bool fi = insideTest(pt + n * eps), bi = insideTest(pt - n * eps);
+        // Material behind: inside by the rays, or closed off from outside.
+        const bool keepIt = fe == 1 && (bi || be == 0);
+        const bool flipIt = !keepIt && be == 1 && (fi || fe == 0);
+        if (keepIt) keep.push_back(f);
+        else if (flipIt) flip.push_back(f);
+        else drop.push_back(f);
+    }
+    if (keep.empty() && flip.empty()) {
+        if (error) *error = "Nothing of this is a solid seen from outside.";
+        return false;
+    }
+    std::vector<Id> loose;
+    for (Id f : drop) {
+        for (Id e : m.faceEdges(f)) loose.push_back(e);
+        m.eraseFace(f);
+    }
+    for (Id f : flip) m.reverseFace(f);
+    m.removeEdgesWithoutFaces(loose);
+    m.removeOrphanVertices();
+    m.touch();
+    if (out) {
+        out->faces.clear();
+        out->faces.insert(keep.begin(), keep.end());
+        out->faces.insert(flip.begin(), flip.end());
     }
     return true;
 }

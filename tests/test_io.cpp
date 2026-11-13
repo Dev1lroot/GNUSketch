@@ -12,6 +12,8 @@
 #include "io/ObjIO.h"
 #include "io/StlExport.h"
 #include "io/PrintExport.h"
+#include "io/PrintImport.h"
+#include "core/Solids.h"
 
 #include <QCoreApplication>
 #include <cstring>
@@ -1032,6 +1034,101 @@ on("trigger", function (arg) {
         QString err;
         CHECK(!exportPrint(empty, dir.filePath("e.3mf"), PrintFormat::ThreeMF, LengthUnit::Millimeters, &err) && !err.isEmpty());
         std::printf("[ ok ] 3D printing exports keep units\n");
+    }
+
+    {
+        // 3D printing imports: what was exported comes back the same size.
+        Document d;
+        d.mesh().drawPolyline({{0, 0, 0}, {0.02, 0, 0}, {0.02, 0.01, 0}, {0, 0.01, 0}}, true);
+        Id f = kNone;
+        for (Id g = 0; g < (Id)d.mesh().faces.size(); ++g)
+            if (d.mesh().faces[g].alive) f = g;
+        d.mesh().pushPull(f, d.mesh().faces[f].normal.z < 0 ? -0.005 : 0.005);
+        Material red;
+        red.name = "Red";
+        red.color = Color(1, 0, 0);
+        d.materials().push_back(red);
+        for (Face& F : d.mesh().faces) F.front.material = 0;
+        struct Case { PrintFormat fmt; LengthUnit unit; const char* file; bool colours; };
+        const Case cases[] = {{PrintFormat::ThreeMF, LengthUnit::Inches, "r.3mf", true}, {PrintFormat::Amf, LengthUnit::Millimeters, "r.amf", true},
+                              {PrintFormat::StlBinary, LengthUnit::Centimeters, "r.stl", false}, {PrintFormat::StlAscii, LengthUnit::Millimeters, "ra.stl", false},
+                              {PrintFormat::Ply, LengthUnit::Millimeters, "r.ply", true}, {PrintFormat::Off, LengthUnit::Meters, "r.off", false}};
+        bool allOk = true;
+        for (const Case& c : cases) {
+            const QString path = dir.filePath(QString::fromLatin1(c.file));
+            CHECK(exportPrint(d, path, c.fmt, c.unit));
+            double unit = 0;
+            CHECK(printFileUnit(path, unit)); // they all say their unit (ours carry it)
+            PrintModel pm;
+            QString err;
+            const bool read = readPrintFile(path, 1.0, pm, &err);
+            if (!read) std::printf("  %s: %s\n", c.file, qPrintable(err));
+            CHECK(read && pm.tris.size() == 12);
+            Vec3 mn(1e9, 1e9, 1e9), mx(-1e9, -1e9, -1e9);
+            for (const Vec3& v : pm.verts)
+                for (int k = 0; k < 3; ++k) mn[k] = std::min(mn[k], v[k]), mx[k] = std::max(mx[k], v[k]);
+            const bool sized = std::fabs(mx.x - mn.x - 0.02) < 1e-6 && std::fabs(mx.y - mn.y - 0.01) < 1e-6 && std::fabs(mx.z - mn.z - 0.005) < 1e-6;
+            if (!sized) std::printf("  %s: size %g x %g x %g\n", c.file, mx.x - mn.x, mx.y - mn.y, mx.z - mn.z);
+            CHECK(sized);
+            if (c.colours) CHECK(pm.colors.size() == 1 && std::fabs(pm.colors[0].r - 1) < 1e-3 && pm.colors[0].g < 1e-3);
+            Document e;
+            e.beginOp("Import");
+            const Id inst = importPrintModel(e, pm, "Box");
+            e.commitOp();
+            CHECK(inst != kNone);
+            if (inst == kNone) { allOk = false; continue; }
+            const Mesh& m = e.state.defs[e.state.instances[inst].def].mesh;
+            // Welded and joined again: a box of six faces, closed.
+            if (m.aliveFaceCount() != 6) std::printf("  %s: %d faces\n", c.file, m.aliveFaceCount());
+            CHECK(m.aliveFaceCount() == 6);
+            CHECK(solidVolume(m) > 0 && std::fabs(solidVolume(m) - 0.02 * 0.01 * 0.005) < 1e-12);
+            if (c.colours) CHECK(e.state.materials.size() == 1 && m.faces[0].front.material == 0);
+            allOk = allOk && m.aliveFaceCount() == 6;
+        }
+        // A file without a unit is read in the unit given.
+        {
+            QFile off(dir.filePath("plain.off"));
+            CHECK(off.open(QIODevice::WriteOnly));
+            off.write("OFF 4 2 0\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n4 0 1 2 3\n3 0 2 1\n");
+            off.close();
+            double u;
+            CHECK(!printFileUnit(dir.filePath("plain.off"), u));
+            PrintModel pm;
+            CHECK(readPrintFile(dir.filePath("plain.off"), 0.0254, pm) && pm.tris.size() == 3);
+            double maxX = 0;
+            for (const Vec3& v : pm.verts) maxX = std::max(maxX, v.x);
+            CHECK(std::fabs(maxX - 0.254) < 1e-9);
+        }
+        // A 3MF as other programs write it: an object made of components with
+        // transforms, a colour group, centimeters.
+        {
+            const QByteArray model =
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                "<model unit=\"centimeter\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\" "
+                "xmlns:m=\"http://schemas.microsoft.com/3dmanufacturing/material/2015/02\"><resources>"
+                "<m:colorgroup id=\"5\"><m:color color=\"#00FF00\"/><m:color color=\"#0000FFFF\"/></m:colorgroup>"
+                "<object id=\"1\" type=\"model\" pid=\"5\" pindex=\"1\"><mesh><vertices>"
+                "<vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"1\" y=\"0\" z=\"0\"/><vertex x=\"0\" y=\"1\" z=\"0\"/><vertex x=\"0\" y=\"0\" z=\"1\"/>"
+                "</vertices><triangles><triangle v1=\"0\" v2=\"2\" v3=\"1\" pid=\"5\" p1=\"0\"/><triangle v1=\"0\" v2=\"1\" v3=\"3\"/>"
+                "<triangle v1=\"0\" v2=\"3\" v3=\"2\"/><triangle v1=\"1\" v2=\"2\" v3=\"3\"/></triangles></mesh></object>"
+                "<object id=\"2\" type=\"model\"><components><component objectid=\"1\"/>"
+                "<component objectid=\"1\" transform=\"1 0 0 0 1 0 0 0 1 5 0 0\"/></components></object>"
+                "</resources><build><item objectid=\"2\" transform=\"1 0 0 0 1 0 0 0 1 0 0 2\"/></build></model>";
+            const QByteArray zip = makeZip({{QStringLiteral("3D/3dmodel.model"), model}});
+            QFile z(dir.filePath("other.3mf"));
+            CHECK(z.open(QIODevice::WriteOnly));
+            z.write(zip);
+            z.close();
+            PrintModel pm;
+            QString err;
+            CHECK(readPrintFile(dir.filePath("other.3mf"), 1.0, pm, &err));
+            CHECK(pm.tris.size() == 8 && pm.verts.size() == 8);
+            double maxX = 0, minZ = 1e9;
+            for (const Vec3& v : pm.verts) maxX = std::max(maxX, v.x), minZ = std::min(minZ, v.z);
+            CHECK(std::fabs(maxX - 0.06) < 1e-9 && std::fabs(minZ - 0.02) < 1e-9); // 6 cm along, lifted 2 cm
+            CHECK(pm.colors.size() == 2); // the one green triangle and the blue default
+        }
+        std::printf("%s 3D printing imports read back what was exported\n", allOk ? "[ ok ]" : "[FAIL]");
     }
 
     return g_failed ? 1 : 0;

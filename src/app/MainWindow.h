@@ -41,7 +41,9 @@ class MaterialEditor;
 class MaterialBrowser;
 class PrefabBrowser;
 struct EffectDef;
-class TraySection;
+class PropertiesPanel;
+class PlacementSettings;
+class AnimatorPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -92,6 +94,9 @@ private:
     void exportStl();
     // 3D printing exports (io/PrintExport.h); asks for the unit, defaulting to the model's.
     void exportForPrint(int format);
+    // 3D printing files (io/PrintImport.h): asks for the unit when the file has none.
+    void importForPrint(const QString& ext);
+    bool importPrintFile(const QString& path, bool intoEmpty);
     void showSettings();
 public:
     // Open Recent: most recent first, missing files dropped.
@@ -152,16 +157,19 @@ private:
     EntityProperties* entityProps_ = nullptr;
     HierarchyPanel* hierarchy_ = nullptr;
     QDockWidget* hierarchyDock_ = nullptr;
-    QDockWidget* sceneDock_ = nullptr; // lights and cameras (ScenePanel)
-    QAction* sceneAct_ = nullptr;      // its button on the Scene toolbar
+    QAction* sceneAct_ = nullptr;      // Scene toolbar: shows the Properties panel
+    PropertiesPanel* properties_ = nullptr;
+    PlacementSettings* placement_ = nullptr;
+    AnimatorPanel* animator_ = nullptr;
+    QDockWidget *propertiesDock_ = nullptr, *materialsDock_ = nullptr, *instructorDock_ = nullptr, *environmentDock_ = nullptr,
+                *animatorDock_ = nullptr;
+    void applyUiSizes(); // icon size from Window > Settings
     MaterialEditor* materialEditor_ = nullptr;
     MaterialBrowser* materialBrowser_ = nullptr;
     PrefabBrowser* prefabBrowser_ = nullptr;
     const EffectDef* lastEffect_ = nullptr;
     QProcess* game_ = nullptr;
     std::unique_ptr<QTemporaryDir> gameDir_;
-    QDockWidget* trayDock_ = nullptr;
-    std::map<QString, TraySection*> sections_;
 
     QLabel* statusLabel_ = nullptr;
     QLabel* vcbLabel_ = nullptr;

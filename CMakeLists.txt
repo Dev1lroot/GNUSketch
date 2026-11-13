@@ -51,6 +51,7 @@ add_library(gs_io SHARED
   src/io/ObjIO.h src/io/ObjIO.cpp
   src/io/GltfExport.h src/io/GltfExport.cpp
   src/io/StlExport.h src/io/StlExport.cpp
+  src/io/PrintExport.h src/io/PrintExport.cpp
   src/io/ImageUtil.h src/io/ImageUtil.cpp
   src/io/AssetLibrary.h src/io/AssetLibrary.cpp
   src/io/ArchMaterials.h src/io/ArchMaterials.cpp
@@ -66,6 +67,7 @@ add_executable(gnusketch
   src/render/OffscreenRenderer.h src/render/OffscreenRenderer.cpp
   src/app/Inference.h src/app/Inference.cpp
   src/app/Tool.h src/app/Tool.cpp
+  src/app/Theme.h src/app/Theme.cpp
   src/app/DrawTools.h src/app/DrawTools.cpp
   src/app/ModifyTools.h src/app/ModifyTools.cpp
   src/app/TerrainTools.h src/app/TerrainTools.cpp

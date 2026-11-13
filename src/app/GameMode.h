@@ -49,6 +49,8 @@ public:
     Walker& walker() { return walker_; }
     const CollisionWorld& world() const { return world_; }
     bool renderOk() const { return glOk_; }
+    const Camera& camera() const { return camera_; } // as of the last frame
+    const Renderer& renderer() const { return renderer_; }
     bool mouseCaptured() const { return captured_; }
     // Runs the simulation with the keys currently held.
     void simulate(double seconds);
@@ -81,6 +83,7 @@ private:
     double spawnYaw_ = 0;
     Camera camera_;
     Renderer renderer_;
+    double shadowRadius_ = 40.0;
     bool glOk_ = false;
     QString glError_;
     std::set<int> held_;

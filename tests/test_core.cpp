@@ -3364,5 +3364,92 @@ int main() {
     });
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
+
+    // ---- push/pull leaves no ghost faces -----------------------------------
+    {
+        auto faceAt = [](const Mesh& m, Vec3 p, Vec3 n) {
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && m.faces[f].normal.dot(n) > 0.99 && std::fabs(m.facePlane(f).distance(p)) < 1e-6 &&
+                    m.pointInFace(f, p, false))
+                    return f;
+            return kNone;
+        };
+        // Coplanar faces overlapping each other (double faces).
+        auto overlaps = [](const Mesh& m) {
+            int n = 0;
+            for (Id a = 0; a < (Id)m.faces.size(); ++a)
+                for (Id b = a + 1; b < (Id)m.faces.size(); ++b) {
+                    if (!m.faces[a].alive || !m.faces[b].alive) continue;
+                    if (std::fabs(m.faces[a].normal.dot(m.faces[b].normal)) < 1 - 1e-6) continue;
+                    if (!m.facePlane(a).coincident(m.facePlane(b), 1e-5)) continue;
+                    if (m.pointInFace(b, m.faceInteriorPoint(a), false) || m.pointInFace(a, m.faceInteriorPoint(b), false)) ++n;
+                }
+            return n;
+        };
+        // Every face of a closed box points away from its centre.
+        auto outward = [](const Mesh& m, Vec3 c) {
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && (m.faceInteriorPoint(f) - c).dot(m.faces[f].normal) <= 0) return false;
+            return true;
+        };
+        test("push/pull: a pocket pushed in two steps onto the back wall cuts a clean hole", [&] {
+            Mesh m;
+            rect(m, 0, 0, 2, 2);
+            m.pushPull(faceAt(m, {1, 1, 0}, {0, 0, -1}), -2);
+            m.drawPolyline({{0.5, 0, 0.5}, {1.5, 0, 0.5}, {1.5, 0, 1.5}, {0.5, 0, 1.5}}, true);
+            m.pushPull(faceAt(m, {1, 0, 1}, {0, -1, 0}), -1);
+            m.pushPull(faceAt(m, {1, 1, 1}, {0, -1, 0}), -1); // the floor lands on the back wall
+            CHECK_EQ(overlaps(m), 0);
+            CHECK(faceAt(m, {1, 2, 1}, {0, 1, 0}) == kNone);  // no face left across the hole
+            CHECK(faceAt(m, {0.2, 2, 0.2}, {0, 1, 0}) != kNone); // the back wall around it stays
+            CHECK_EQ(m.aliveFaceCount(), 10);
+        });
+        test("push/pull: two boxes side by side share no hidden wall, flush tops merge", [&] {
+            Mesh m;
+            rect(m, 0, 0, 4, 2);
+            m.drawLine({2, 0, 0}, {2, 2, 0});
+            m.pushPull(faceAt(m, {1, 1, 0}, {0, 0, -1}), -1);
+            m.pushPull(faceAt(m, {3, 1, 0}, {0, 0, -1}), -2);
+            CHECK(outward(m, {2.5, 1, 0.75}));
+            CHECK_EQ(overlaps(m), 0);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) CHECK(m.faceArea(f) > 1e-6);
+            Id upper = faceAt(m, {2, 1, 1.5}, {-1, 0, 0}); // the taller box's wall above the step
+            CHECK(upper != kNone && std::fabs(m.faceArea(upper) - 2) < 1e-9);
+            CHECK(faceAt(m, {2, 1, 0.5}, {1, 0, 0}) == kNone && faceAt(m, {2, 1, 0.5}, {-1, 0, 0}) == kNone);
+            // Push the tall one down flush with the low one: one box.
+            m.pushPull(faceAt(m, {3, 1, 2}, {0, 0, 1}), -1);
+            CHECK_EQ(overlaps(m), 0);
+            Id top = faceAt(m, {2, 1, 1}, {0, 0, 1});
+            CHECK(top != kNone && std::fabs(m.faceArea(top) - 8) < 1e-9);
+            CHECK_EQ(m.aliveFaceCount(), 5); // 4 walls and the top (the bottoms were used up)
+        });
+        test("push/pull: a rectangle next to another on the ground grows an outward box", [&] {
+            Mesh m;
+            rect(m, 0, 0, 2, 2);
+            rect(m, 2, 0, 4, 2);
+            m.pushPull(faceAt(m, {1, 1, 0}, {0, 0, -1}), -1);
+            Id top = faceAt(m, {1, 1, 1}, {0, 0, 1});
+            CHECK(top != kNone);
+            CHECK(faceAt(m, {1, 0, 0.5}, {0, -1, 0}) != kNone);
+            CHECK(faceAt(m, {0, 1, 0.5}, {-1, 0, 0}) != kNone);
+        });
+        test("cleanup: zero-area faces, self-cancelling holes and duplicates go", [&] {
+            Mesh m;
+            rect(m, 0, 0, 1, 1);
+            Id f = onlyFace(m);
+            std::vector<Id> loop = m.faces[f].outer;
+            // A ghost copy of the face and a "face with itself as a hole".
+            m.faces.push_back(m.faces[f]);
+            Face h = m.faces[f];
+            h.holes = {std::vector<Id>(loop.rbegin(), loop.rend())};
+            m.faces.push_back(h);
+            m.touch();
+            CHECK(m.removeDegenerateFaces() >= 2);
+            CHECK_EQ(m.aliveFaceCount(), 1);
+            CHECK(std::fabs(totalArea(m) - 1) < 1e-9);
+        });
+    }
+
     return g_failed ? 1 : 0;
 }

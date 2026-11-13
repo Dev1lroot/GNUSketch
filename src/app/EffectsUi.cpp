@@ -235,7 +235,7 @@ EffectDialog::EffectDialog(const EffectDef& def, const QVariantMap& values, Prev
     if (!def.tip.isEmpty()) {
         auto* tip = new QLabel(def.tip, this);
         tip->setWordWrap(true);
-        tip->setStyleSheet(QStringLiteral("color: #555;"));
+        tip->setProperty("hint", true);
         top->addWidget(tip);
     }
     auto* form = new QFormLayout();

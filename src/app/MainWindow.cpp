@@ -26,6 +26,8 @@
 #include "io/NativeFormat.h"
 #include "io/ObjIO.h"
 #include "io/StlExport.h"
+#include "io/PrintExport.h"
+#include "Theme.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -231,16 +233,25 @@ void MainWindow::buildActions() {
     act("open", "open", QStringLiteral("&Open…"), QKeySequence::Open, [this] { open(); });
     act("save", "save", QStringLiteral("&Save"), QKeySequence::Save, [this] { save(); });
     act("saveas", "", QStringLiteral("Save &As…"), QKeySequence::SaveAs, [this] { saveAs(); });
-    act("importobj", "import", QStringLiteral("Import OBJ…"), QKeySequence(), [this] { importObj(); });
-    act("exportobj", "export", QStringLiteral("Export OBJ (n-gons)…"), QKeySequence(), [this] { exportObj(); });
+    act("importobj", "import", QStringLiteral("Wavefront OBJ (*.obj)…"), QKeySequence(), [this] { importObj(); });
+    act("exportobj", "export", QStringLiteral("Wavefront OBJ, n-gons (*.obj)…"), QKeySequence(), [this] { exportObj(); });
     act("roundcorners", "roundcorners", QStringLiteral("&Round Corners…"), QKeySequence(), [this] { roundCorners(); })
         ->setStatusTip(QStringLiteral("Round the selected edges or corners with a radius and number of segments."));
     act("primitive", "", QStringLiteral("&Primitive…"), QKeySequence(), [this] { insertPrimitive(); })
         ->setStatusTip(QStringLiteral("Make a sphere, cylinder, torus, dodecahedron or other solid and place it with a click."));
     act("traceimage", "traceimage", QStringLiteral("&Trace Image…"), QKeySequence(), [this] { traceImage(); })
         ->setStatusTip(QStringLiteral("Turn the alpha cutout or the dark/light shapes of a face's image into outline geometry."));
-    act("exportgltf", "", QStringLiteral("Export glTF 2.0…"), QKeySequence(), [this] { exportGltf(); });
-    act("exportstl", "", QStringLiteral("Export STL…"), QKeySequence(), [this] { exportStl(); });
+    act("exportgltf", "", QStringLiteral("glTF 2.0 (*.gltf)…"), QKeySequence(), [this] { exportGltf(); });
+    act("export3mf", "", QStringLiteral("3MF (*.3mf)…"), QKeySequence(), [this] { exportForPrint((int)PrintFormat::ThreeMF); })
+        ->setStatusTip(QStringLiteral("3D Manufacturing Format: keeps the unit and the colours; preferred by most slicers."));
+    act("exportamf", "", QStringLiteral("AMF (*.amf)…"), QKeySequence(), [this] { exportForPrint((int)PrintFormat::Amf); })
+        ->setStatusTip(QStringLiteral("Additive Manufacturing File: keeps the unit and the colours."));
+    act("exportstl", "", QStringLiteral("STL, binary (*.stl)…"), QKeySequence(), [this] { exportStl(); })
+        ->setStatusTip(QStringLiteral("STL has no units: it is written in the unit you choose (the model's by default)."));
+    act("exportstlascii", "", QStringLiteral("STL, ASCII (*.stl)…"), QKeySequence(), [this] { exportForPrint((int)PrintFormat::StlAscii); });
+    act("exportply", "", QStringLiteral("PLY (*.ply)…"), QKeySequence(), [this] { exportForPrint((int)PrintFormat::Ply); });
+    act("exportoff", "", QStringLiteral("OFF (*.off)…"), QKeySequence(), [this] { exportForPrint((int)PrintFormat::Off); });
+    act("settings", "", QStringLiteral("&Settings…"), QKeySequence::Preferences, [this] { showSettings(); });
     act("quit", "", QStringLiteral("E&xit"), QKeySequence::Quit, [this] { close(); });
 
     undoAct_ = act("undo", "undo", QStringLiteral("&Undo"), QKeySequence::Undo, [this] {
@@ -414,20 +425,34 @@ void MainWindow::buildMenus() {
     QMenu* file = menuBar()->addMenu(QStringLiteral("&File"));
     file->addAction(acts_["new"]);
     file->addAction(acts_["open"]);
+    recentMenu_ = file->addMenu(QStringLiteral("Open &Recent"));
+    recentMenu_->setObjectName(QStringLiteral("RecentMenu"));
+    connect(recentMenu_, &QMenu::aboutToShow, this, [this] { rebuildRecentMenu(); });
+    rebuildRecentMenu();
     file->addAction(acts_["save"]);
     file->addAction(acts_["saveas"]);
     file->addSeparator();
-    file->addAction(acts_["importobj"]);
+    QMenu* imp = file->addMenu(Icons::get("import"), QStringLiteral("&Import"));
+    imp->setObjectName(QStringLiteral("ImportMenu"));
+    imp->addAction(acts_["importobj"]);
     for (const LoadedPlugin& p : Plugins::all())   // (formats from plugins)
         if (FormatPlugin* f = p.format; f->canImport())
-            file->addAction(QStringLiteral("Import %1…").arg(f->formatName()), this, [this, f] { importPlugin(f); });
-    QMenu* exp = file->addMenu(QStringLiteral("&Export"));
+            imp->addAction(QStringLiteral("%1 (*.%2)…").arg(f->formatName(), f->extensions().join(", *.")), this, [this, f] { importPlugin(f); });
+    QMenu* exp = file->addMenu(Icons::get("export"), QStringLiteral("&Export"));
+    exp->setObjectName(QStringLiteral("ExportMenu"));
+    exp->addSection(QStringLiteral("3D Model"));
     exp->addAction(acts_["exportobj"]);
     exp->addAction(acts_["exportgltf"]);
-    exp->addAction(acts_["exportstl"]);
     for (const LoadedPlugin& p : Plugins::all())
         if (FormatPlugin* f = p.format; f->canExport())
-            exp->addAction(QStringLiteral("Export %1…").arg(f->formatName()), this, [this, f] { exportPlugin(f); });
+            exp->addAction(QStringLiteral("%1 (*.%2)…").arg(f->formatName(), f->extensions().join(", *.")), this, [this, f] { exportPlugin(f); });
+    exp->addSection(QStringLiteral("3D Printing"));
+    exp->addAction(acts_["export3mf"]);
+    exp->addAction(acts_["exportamf"]);
+    exp->addAction(acts_["exportstl"]);
+    exp->addAction(acts_["exportstlascii"]);
+    exp->addAction(acts_["exportply"]);
+    exp->addAction(acts_["exportoff"]);
     file->addSeparator();
     file->addAction(acts_["quit"]);
 
@@ -558,6 +583,8 @@ void MainWindow::buildMenus() {
     }
 
     QMenu* win = menuBar()->addMenu(QStringLiteral("&Window"));
+    win->addAction(acts_["settings"]);
+    win->addSeparator();
     win->addAction(acts_["modelinfo"]);
     win->addAction(acts_["materialbrowser"]);
     win->addAction(acts_["materialeditor"]);
@@ -875,7 +902,11 @@ void MainWindow::open() {
 bool MainWindow::openFile(const QString& path) {
     viewport_->cancelTool();
     QString err;
-    if (FormatPlugin* f = Plugins::forFile(path, false)) return importWithPlugin(f, path, true);
+    if (FormatPlugin* f = Plugins::forFile(path, false)) {
+        const bool ok = importWithPlugin(f, path, true);
+        if (ok) addRecentFile(path);
+        return ok;
+    }
     if (path.endsWith(".obj", Qt::CaseInsensitive)) {
         doc_.reset();
         if (gs::importObj(doc_, path, true, 1.0, &err) < 0) {
@@ -885,6 +916,7 @@ bool MainWindow::openFile(const QString& path) {
         doc_.modified = true;
         viewport_->zoomExtents();
         onDocChanged();
+        addRecentFile(path);
         return true;
     }
     QJsonObject view;
@@ -897,6 +929,7 @@ bool MainWindow::openFile(const QString& path) {
     syncStyleActions();
     onDocChanged();
     onSelectionChanged();
+    addRecentFile(path);
     return true;
 }
 
@@ -909,6 +942,7 @@ bool MainWindow::save() {
     }
     doc_.modified = false;
     updateTitle();
+    addRecentFile(QString::fromStdString(doc_.filePath));
     statusLabel_->setText(QStringLiteral("Saved %1").arg(QString::fromStdString(doc_.filePath)));
     return true;
 }
@@ -1039,15 +1073,111 @@ void MainWindow::exportGltf() {
     else statusLabel_->setText(QStringLiteral("Exported %1").arg(path));
 }
 
-void MainWindow::exportStl() {
+void MainWindow::exportStl() { exportForPrint((int)PrintFormat::StlBinary); }
+
+void MainWindow::exportForPrint(int format) {
+    const auto fmt = (PrintFormat)format;
+    // Unit: the model's own by default (that is what "keeping units" means for
+    // the formats without a unit field).
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Export %1").arg(QString::fromLatin1(printFormatName(fmt))));
+    auto* form = new QFormLayout(&dlg);
+    auto* unitBox = new QComboBox(&dlg);
+    unitBox->setObjectName(QStringLiteral("PrintUnit"));
+    unitBox->addItems({QStringLiteral("Millimeters"), QStringLiteral("Centimeters"), QStringLiteral("Meters"), QStringLiteral("Inches"), QStringLiteral("Feet")});
+    unitBox->setCurrentIndex((int)doc_.units.unit);
+    form->addRow(QStringLiteral("Unit:"), unitBox);
+    auto* note = new QLabel(&dlg);
+    note->setProperty("hint", true);
+    note->setWordWrap(true);
+    auto updateNote = [&] {
+        const auto u = (LengthUnit)unitBox->currentIndex();
+        const bool declared = fmt == PrintFormat::ThreeMF || fmt == PrintFormat::Amf;
+        QString t = declared ? QStringLiteral("The unit is stored in the file (%1); slicers scale it correctly.").arg(QString::fromLatin1(printUnitName(fmt, u)))
+                             : QStringLiteral("This format has no unit field: numbers are written in %1. Most slicers assume millimeters.")
+                                   .arg(unitBox->currentText().toLower());
+        if (printUnitFor(fmt, u) != u) t += QStringLiteral(" AMF has no centimeters, millimeters are used.");
+        Vec3 mn, mx;
+        bool any = false;
+        flattenModel(doc_.state).bounds(mn, mx, any);
+        if (any) {
+            const double k = 1.0 / Units::toMeters(printUnitFor(fmt, u));
+            const Vec3 d = (mx - mn) * k;
+            t += QStringLiteral("\nSize: %1 × %2 × %3").arg(d.x, 0, 'g', 6).arg(d.y, 0, 'g', 6).arg(d.z, 0, 'g', 6);
+        }
+        note->setText(t);
+    };
+    updateNote();
+    connect(unitBox, &QComboBox::currentIndexChanged, &dlg, updateNote);
+    form->addRow(note);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    form->addRow(box);
+    connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    if (dlg.exec() != QDialog::Accepted) return;
+    const auto unit = (LengthUnit)unitBox->currentIndex();
+
     QSettings s;
-    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export STL"), s.value("files/lastDir").toString(),
-                                                QStringLiteral("STL (*.stl)"));
+    const QString ext = QString::fromLatin1(printFormatExtension(fmt));
+    QString path = QFileDialog::getSaveFileName(this, dlg.windowTitle(), s.value("files/lastDir").toString(),
+                                                QStringLiteral("%1 (*.%2)").arg(QString::fromLatin1(printFormatName(fmt)), ext));
     if (path.isEmpty()) return;
-    if (!path.endsWith(".stl", Qt::CaseInsensitive)) path += ".stl";
+    if (!path.endsWith("." + ext, Qt::CaseInsensitive)) path += "." + ext;
+    s.setValue("files/lastDir", QFileInfo(path).absolutePath());
     QString err;
-    if (!gs::exportStl(doc_, path, 1000.0, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
-    else statusLabel_->setText(QStringLiteral("Exported %1 (millimeters)").arg(path));
+    if (!exportPrint(doc_, path, fmt, unit, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
+    else statusLabel_->setText(QStringLiteral("Exported %1 (%2)").arg(path, QString::fromLatin1(printUnitName(fmt, unit))));
+}
+
+void MainWindow::showSettings() {
+    SettingsDialog dlg(this);
+    dlg.exec();
+    viewport_->update();
+}
+
+QStringList MainWindow::recentFiles() const {
+    QStringList out;
+    for (const QString& p : QSettings().value("files/recent").toStringList())
+        if (QFileInfo::exists(p) && !out.contains(p)) out << p;
+    return out;
+}
+
+void MainWindow::addRecentFile(const QString& path) {
+    const QString abs = QFileInfo(path).absoluteFilePath();
+    QStringList list = QSettings().value("files/recent").toStringList();
+    list.removeAll(abs);
+    list.prepend(abs);
+    while (list.size() > 12) list.removeLast();
+    QSettings().setValue("files/recent", list);
+    rebuildRecentMenu();
+}
+
+void MainWindow::clearRecentFiles() {
+    QSettings().remove("files/recent");
+    rebuildRecentMenu();
+}
+
+void MainWindow::rebuildRecentMenu() {
+    if (!recentMenu_) return;
+    recentMenu_->clear();
+    const QStringList list = recentFiles();
+    for (int i = 0; i < list.size(); ++i) {
+        const QString path = list[i];
+        QString label = QFileInfo(path).fileName();
+        if (i < 9) label = QStringLiteral("&%1  %2").arg(i + 1).arg(label);
+        QAction* a = recentMenu_->addAction(label, this, [this, path] {
+            if (!maybeSave()) return;
+            openFile(path);
+        });
+        a->setToolTip(path);
+        a->setStatusTip(path);
+    }
+    if (list.isEmpty()) recentMenu_->addAction(QStringLiteral("No recent files"))->setEnabled(false);
+    else {
+        recentMenu_->addSeparator();
+        recentMenu_->addAction(QStringLiteral("Clear Recent Files"), this, [this] { clearRecentFiles(); });
+    }
+    recentMenu_->setEnabled(true);
 }
 
 QJsonObject MainWindow::viewState() const {

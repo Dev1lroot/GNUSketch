@@ -659,6 +659,67 @@ void PushPullTool::mouseMove(const MouseEvent& e) {
     o.excludeVerts = &faceVerts_;
     inf_ = engine().infer(e.x, e.y, o);
     dist_ = (inf_.p - start_).dot(normal_);
+    // Face snaps (point snaps, drawn with an inference line, and edges under
+    // the cursor win):
+    //  1. hovering a face parallel to the pushed one (loose or of a component)
+    //     pushes exactly to its plane;
+    //  2. a parallel face straight ahead of or behind the pushed one pulls it
+    //     in when it comes within a few pixels, e.g. a pocket's floor onto the
+    //     back wall to cut a hole, or a box top flush with a neighbour's top.
+    if (!inf_.hasLine && engine().pickEdge(e.x, e.y, 6.0, &faceVerts_) == kNone) {
+        bool snapped = false;
+        auto snapTo = [&](double d, const Vec3& from) {
+            dist_ = d;
+            const Vec3 q = start_ + normal_ * d;
+            inf_.type = InferenceResult::OnFace;
+            inf_.p = q;
+            inf_.hasLine = true;
+            inf_.lineA = from;
+            inf_.lineB = q;
+            inf_.lineColor = Color::rgb8(220, 0, 220);
+            snapped = true;
+        };
+        const Mesh& m = mesh();
+        const Ray ray = cam().ray(e.x, e.y);
+        Vec3 hit, n;
+        if (engine().faceUnder(e.x, e.y, &faceVerts_, hit, n) && std::fabs(n.dot(normal_)) > 1 - 1e-6) {
+            // Not through the face being pushed: the cursor is on it at the
+            // start, and the face behind it (the box's bottom) is no target.
+            const double tHit = (hit - ray.origin).dot(ray.dir);
+            bool through = false;
+            for (Id g : faces_.empty() ? std::set<Id>{face_} : faces_) {
+                double t;
+                if (g >= 0 && g < (Id)m.faces.size() && m.faces[g].alive && m.rayFace(g, ray, t) && t < tHit) through = true;
+            }
+            const double d = (hit - start_).dot(normal_);
+            if (!through && std::fabs(d) > kTol) snapTo(d, hit);
+        }
+        if (!snapped) {
+            double sx0, sy0;
+            const bool onScreen = cam().project(start_ + normal_ * dist_, sx0, sy0);
+            double bestPx = 10.0;
+            for (Id g = 0; g < (Id)m.faces.size() && onScreen; ++g) {
+                const Face& G = m.faces[g];
+                if (!G.alive || G.hidden || faces_.count(g) || g == face_) continue;
+                if (std::fabs(G.normal.dot(normal_)) < 1 - 1e-6) continue;
+                // Straight ahead or behind: the push line through the picked
+                // point pierces it.
+                const Plane P = m.facePlane(g);
+                const double den = P.n.dot(normal_);
+                const double s = (P.d - P.n.dot(start_)) / den;
+                if (std::fabs(s) < kTol) continue;
+                const Vec3 pierce = start_ + normal_ * s;
+                if (!m.pointInFace(g, pierce, true)) continue;
+                double sx1, sy1;
+                if (!cam().project(pierce, sx1, sy1)) continue;
+                const double px = std::hypot(sx1 - sx0, sy1 - sy0);
+                if (px < bestPx) {
+                    bestPx = px;
+                    snapTo(s, pierce);
+                }
+            }
+        }
+    }
     setVcb(fmtLen(dist_));
     update();
 }
@@ -1098,7 +1159,8 @@ QString RotateTool::status() const {
     switch (stage_) {
     case 0: return QStringLiteral("Pick the rotation center; the protractor sticks to the face under the cursor (hold Shift to keep it). Arrow keys lock the plane (Right=red, Left=green, Up=blue). Ctrl = copy.");
     case 1: return QStringLiteral("Pick the start of the rotation angle.");
-    default: return QStringLiteral("Pick the end angle or type degrees. Snaps every 15°.");
+    default: return QStringLiteral("Pick the end angle or type degrees. Snaps every 15°, to the red/green/blue axes and to the edge or face under the cursor; hold Shift for 5° steps.") +
+                    (snapLabel_.isEmpty() ? QString() : QStringLiteral("  [%1]").arg(snapLabel_));
     }
 }
 
@@ -1114,6 +1176,16 @@ bool RotateTool::keyPress(QKeyEvent* e) {
     case Qt::Key_Right: axis = 0; break;
     case Qt::Key_Left: axis = 1; break;
     case Qt::Key_Up: axis = 2; break;
+    case Qt::Key_Shift:
+        // While turning, Shift means 5° steps (not a direction lock).
+        if (stage_ >= 2) {
+            if (!e->isAutoRepeat()) {
+                lastMouse_.mods |= Qt::ShiftModifier;
+                mouseMove(lastMouse_);
+            }
+            return true;
+        }
+        return TransformTool::keyPress(e);
     default: return TransformTool::keyPress(e);
     }
     if (stage_ >= 2) return true;
@@ -1180,16 +1252,95 @@ void RotateTool::mouseMove(const MouseEvent& e) {
         d = d - normal_ * d.dot(normal_);
         if (d.length() > kTol) {
             Vec3 v = d.normalized();
-            angle_ = std::atan2(normal_.dot(refDir_.cross(v)), refDir_.dot(v));
-            double deg = angle_ * 180 / kPi;
-            double snap = std::round(deg / 15.0) * 15.0;
-            snapped_ = std::fabs(deg - snap) < 2.5 && !r.isSnap();
-            if (snapped_) angle_ = snap * kPi / 180;
+            angle_ = snapAngle(e, r, std::atan2(normal_.dot(refDir_.cross(v)), refDir_.dot(v)));
         }
         applyLive(currentTransform());
         setVcb(QString::number(angle_ * 180 / kPi, 'f', 1) + QStringLiteral("°"));
     }
     update();
+}
+
+bool RotateTool::keyRelease(QKeyEvent* e) {
+    if (e->key() == Qt::Key_Shift && stage_ >= 2) {
+        if (!e->isAutoRepeat()) {
+            lastMouse_.mods &= ~Qt::ShiftModifier;
+            mouseMove(lastMouse_);
+        }
+        return true;
+    }
+    return TransformTool::keyRelease(e);
+}
+
+double RotateTool::snapAngle(const MouseEvent& e, const InferenceResult& r, double raw) {
+    snapped_ = false;
+    snapLabel_.clear();
+    const double deg = raw * 180 / kPi;
+    // Angle that turns the start direction onto the in-plane direction c.
+    auto angleTo = [&](const Vec3& c) { return std::atan2(normal_.dot(refDir_.cross(c)), refDir_.dot(c)); };
+    auto wrapDiff = [](double a, double b) {
+        double x = std::fmod(a - b, 2 * kPi);
+        if (x > kPi) x -= 2 * kPi;
+        if (x < -kPi) x += 2 * kPi;
+        return std::fabs(x);
+    };
+    // Unwraps a target angle to the turn closest to the raw one (keeps ±180°+ turns continuous).
+    auto nearTurn = [&](double a) {
+        while (a - raw > kPi) a -= 2 * kPi;
+        while (raw - a > kPi) a += 2 * kPi;
+        return a;
+    };
+    if (e.shift()) {
+        snapped_ = true;
+        snapColor_ = Color::rgb8(220, 0, 220);
+        snapLabel_ = QStringLiteral("5° steps");
+        refreshStatus();
+        return std::round(deg / 5.0) * 5.0 * kPi / 180;
+    }
+    if (r.isSnap()) { refreshStatus(); return raw; } // exactly through the hovered point
+    auto inPlane = [&](const Vec3& dir) {
+        Vec3 c = dir - normal_ * dir.dot(normal_);
+        return c.length() > 0.1 * dir.length() ? c.normalized() : Vec3();
+    };
+    double best = 1e9, bestAngle = raw;
+    auto consider = [&](const Vec3& c, double tolDeg, const Color& col, const QString& label) {
+        if (c.length2() < 0.5) return;
+        for (double sgn : {1.0, -1.0}) {
+            const double a = nearTurn(angleTo(c * sgn));
+            const double diff = wrapDiff(a, raw);
+            if (diff < tolDeg * kPi / 180 && diff < best) {
+                best = diff;
+                bestAngle = a;
+                snapColor_ = col;
+                snapLabel_ = label;
+                snapped_ = true;
+            }
+        }
+    };
+    // The hovered edge: turn parallel to it.
+    if (r.hasEdge) consider(inPlane(r.edgeB - r.edgeA), 10.0, Color::rgb8(220, 0, 220), QStringLiteral("Parallel to Edge"));
+    else if (r.edge != kNone) consider(inPlane(mesh().pos(mesh().edges[r.edge].v[1]) - mesh().pos(mesh().edges[r.edge].v[0])), 10.0,
+                                       Color::rgb8(220, 0, 220), QStringLiteral("Parallel to Edge"));
+    // The hovered face: turn into its plane (or square to it).
+    Vec3 hit, fn;
+    if (!snapped_ && engine().faceUnder(e.x, e.y, &verts_, hit, fn)) {
+        consider(inPlane(normal_.cross(fn)), 10.0, Color::rgb8(220, 0, 220), QStringLiteral("In Face Plane"));
+        consider(inPlane(fn), 6.0, Color::rgb8(220, 0, 220), QStringLiteral("Perpendicular to Face"));
+    }
+    // World axes.
+    for (int i = 0; i < 3; ++i)
+        consider(inPlane(kAxes[i]), 4.0, Renderer::axisColor(i),
+                 i == 0 ? QStringLiteral("On Red Axis") : i == 1 ? QStringLiteral("On Green Axis") : QStringLiteral("On Blue Axis"));
+    if (!snapped_) {
+        const double step = std::round(deg / 15.0) * 15.0;
+        if (std::fabs(deg - step) < 2.5) {
+            snapped_ = true;
+            bestAngle = step * kPi / 180;
+            snapColor_ = Color::rgb8(220, 0, 220);
+            snapLabel_ = QStringLiteral("%1°").arg(step);
+        }
+    }
+    refreshStatus();
+    return bestAngle;
 }
 
 bool RotateTool::vcbEnter(const QString& text) {
@@ -1236,7 +1387,9 @@ void RotateTool::buildPreview(Preview& pv) {
     if (stage_ == 2) {
         Vec3 d = cur_ - center_;
         d = d - normal_ * d.dot(normal_);
-        pv.line(center_, center_ + d.normalized() * std::max(d.length(), r * 1.3), snapped_ ? Color::rgb8(220, 0, 220) : Color::rgb8(0, 0, 0), 1.2f, Dash::Dashed);
+        // The line shows the snapped angle (colour of the axis/edge it snapped to).
+        const Vec3 shown = Mat4::rotation(normal_, angle_).transformDir(refDir_).normalized();
+        pv.line(center_, center_ + shown * std::max(d.length(), r * 1.3), snapped_ ? snapColor_ : Color::rgb8(0, 0, 0), snapped_ ? 1.6f : 1.2f, Dash::Dashed);
     }
     engine().addPreview(inf_, pv);
 }

@@ -90,6 +90,17 @@ private:
     void exportObj();
     void exportGltf();
     void exportStl();
+    // 3D printing exports (io/PrintExport.h); asks for the unit, defaulting to the model's.
+    void exportForPrint(int format);
+    void showSettings();
+public:
+    // Open Recent: most recent first, missing files dropped.
+    QStringList recentFiles() const;
+    void addRecentFile(const QString& path);
+    void clearRecentFiles();
+private:
+    void rebuildRecentMenu();
+    class QMenu* recentMenu_ = nullptr;
     // file format plugins (Plugins.h): File > Import / Export entries, Help > Plugins
     bool importWithPlugin(FormatPlugin* f, const QString& path, bool intoEmpty);
     void importPlugin(FormatPlugin* f);

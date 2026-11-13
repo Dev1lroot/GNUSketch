@@ -180,7 +180,7 @@ MaterialEditor::MaterialEditor(Document* doc, Viewport* vp, Mode mode, QWidget* 
     name_ = new QLineEdit(this);
     message_ = new QLabel(this);
     message_->setWordWrap(true);
-    message_->setStyleSheet(QStringLiteral("color: #555;"));
+    message_->setProperty("hint", true);
     auto* addMapsBtn = new QPushButton(QStringLiteral("Add Maps…"), this);
     addMapsBtn->setToolTip(QStringLiteral("Pick all the images of a material at once; each goes to the right map by its file name. You can also drop images here."));
     auto* saveBtn = new QPushButton(QStringLiteral("To Library"), this);
@@ -227,7 +227,7 @@ MaterialEditor::MaterialEditor(Document* doc, Viewport* vp, Mode mode, QWidget* 
     lay->setSpacing(3);
     auto section = [&](const QString& text) {
         auto* l = new QLabel(text, content_);
-        l->setStyleSheet(QStringLiteral("font-weight: 600; color: #3a4a5c; border-bottom: 1px solid #d4d9df; padding: 6px 0 2px 0;"));
+        l->setObjectName(QStringLiteral("SectionHeader"));
         lay->addWidget(l);
     };
     auto* colors = new QFormLayout();

@@ -36,14 +36,34 @@ void main() {
 }
 )";
 
-// Shadow map lookup with a 3x3 PCF kernel (1 = lit, 0 = in shadow). The point
-// is pushed along its normal by uShadowBias to avoid self-shadowing acne.
+// Sun shadows (1 = lit, 0 = in shadow). The point is pushed along its normal
+// by the bias to avoid self-shadowing acne.
+//  * uShadowMap: the whole model, 3x3 PCF (the editor's shadows).
+//  * uNearMap (Game Mode, "real" shadows): a sharp map of the area around the
+//    camera, filtered with percentage-closer soft shadows: a blocker search
+//    finds how far the caster is from the receiver, and the filter widens
+//    with it, so shadows are crisp where objects touch the ground and soften
+//    with distance like the sun's (contact hardening). A per-pixel rotated
+//    Poisson disc hides the sampling pattern. It blends into the whole-model
+//    map at its border.
 #define GS_SHADOW_GLSL R"(
 uniform bool uShadows;
 uniform mat4 uLightVP;
 uniform float uShadowBias;
 uniform sampler2DShadow uShadowMap;
-float shadowAt(vec3 p, vec3 n) {
+uniform bool uNearOn;
+uniform mat4 uNearVP;
+uniform float uNearBias;
+uniform float uPenumbra;     // filter radius (map uv) per unit of depth between caster and receiver
+uniform float uShadowSearch; // blocker search radius (map uv)
+uniform sampler2DShadow uNearMap;
+uniform sampler2D uNearDepth; // the same map, raw depths for the blocker search
+const vec2 kPoisson[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725), vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
+    vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464), vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
+    vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420), vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+    vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590), vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
+float shadowFar(vec3 p, vec3 n) {
     vec4 c = uLightVP * vec4(p + n * uShadowBias, 1.0);
     vec3 s = c.xyz / c.w * 0.5 + 0.5;
     if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || s.z >= 1.0) return 1.0;
@@ -52,6 +72,34 @@ float shadowAt(vec3 p, vec3 n) {
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x) sum += texture(uShadowMap, vec3(s.xy + vec2(x, y) * texel, s.z));
     return sum / 9.0;
+}
+float shadowSoft(vec3 s) {
+    float texel = 1.0 / float(textureSize(uNearMap, 0).x);
+    float a = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    mat2 R = mat2(cos(a), sin(a), -sin(a), cos(a));
+    // Blocker search over the widest penumbra this map allows.
+    float search = clamp(uShadowSearch, 3.0 * texel, 40.0 * texel);
+    float blockers = 0.0, sumDepth = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        float d = texture(uNearDepth, s.xy + R * kPoisson[i] * search).r;
+        if (d < s.z - 1e-4) { sumDepth += d; blockers += 1.0; }
+    }
+    if (blockers < 0.5) return 1.0;
+    float gap = s.z - sumDepth / blockers;
+    float radius = clamp(gap * uPenumbra, 1.2 * texel, 40.0 * texel);
+    float lit = 0.0;
+    for (int i = 0; i < 16; ++i) lit += texture(uNearMap, vec3(s.xy + R * kPoisson[i] * radius, s.z));
+    return lit / 16.0;
+}
+float shadowAt(vec3 p, vec3 n) {
+    if (!uNearOn) return shadowFar(p, n);
+    vec4 c = uNearVP * vec4(p + n * uNearBias, 1.0);
+    vec3 s = c.xyz / c.w * 0.5 + 0.5;
+    float edge = min(min(s.x, 1.0 - s.x), min(s.y, 1.0 - s.y));
+    if (edge <= 0.0 || s.z >= 1.0) return shadowFar(p, n);
+    float w = smoothstep(0.0, 0.08, edge);
+    float near = shadowSoft(s);
+    return w >= 1.0 ? near : mix(shadowFar(p, n), near, w);
 }
 )"
 
@@ -304,16 +352,21 @@ layout(lines) in;
 layout(triangle_strip, max_vertices = 4) out;
 in vec4 vCol[];
 out vec4 gCol;
-out float gDist;
+// Screen distance along the line for dashes: linear on screen (not
+// perspective-corrected), so a long line into the distance keeps an even
+// dash pattern instead of smearing into a solid one.
+noperspective out float gDist;
 uniform vec2 uViewport;
 uniform float uWidth;
 void main() {
     vec4 p0 = gl_in[0].gl_Position, p1 = gl_in[1].gl_Position;
-    float e = 1e-5;
-    // Clip against the near plane (w > 0).
-    if (p0.w < e && p1.w < e) return;
-    if (p0.w < e) { float t = (e - p0.w) / (p1.w - p0.w); p0 = mix(p0, p1, t); }
-    if (p1.w < e) { float t = (e - p1.w) / (p0.w - p1.w); p1 = mix(p1, p0, t); }
+    // Clip against the near plane (z >= -w); a point behind it would project
+    // to huge or mirrored screen coordinates.
+    float d0 = p0.z + p0.w, d1 = p1.z + p1.w;
+    if (d0 < 0.0 && d1 < 0.0) return;
+    bool clip0 = d0 < 0.0, clip1 = d1 < 0.0;
+    if (clip0) p0 = mix(p0, p1, d0 / (d0 - d1));
+    if (clip1) p1 = mix(p1, p0, d1 / (d1 - d0));
     vec2 s0 = (p0.xy / p0.w) * 0.5 * uViewport;
     vec2 s1 = (p1.xy / p1.w) * 0.5 * uViewport;
     vec2 d = s1 - s0;
@@ -323,13 +376,16 @@ void main() {
     vec2 ext = dir * (uWidth * 0.25);
     vec2 o0 = (nrm - ext) / (0.5 * uViewport), o1 = (nrm + ext) / (0.5 * uViewport);
     vec2 o0n = (-nrm - ext) / (0.5 * uViewport), o1n = (-nrm + ext) / (0.5 * uViewport);
-    gCol = vCol[0]; gDist = 0.0;
+    // The dash pattern starts at the end that was not clipped, so it stays
+    // put while the camera moves.
+    float g0 = clip0 ? len : 0.0, g1 = clip0 ? 0.0 : len;
+    gCol = vCol[0]; gDist = g0;
     gl_Position = vec4(p0.xy + o0 * p0.w, p0.z, p0.w); EmitVertex();
-    gCol = vCol[0]; gDist = 0.0;
+    gCol = vCol[0]; gDist = g0;
     gl_Position = vec4(p0.xy + o0n * p0.w, p0.z, p0.w); EmitVertex();
-    gCol = vCol[1]; gDist = len;
+    gCol = vCol[1]; gDist = g1;
     gl_Position = vec4(p1.xy + o1 * p1.w, p1.z, p1.w); EmitVertex();
-    gCol = vCol[1]; gDist = len;
+    gCol = vCol[1]; gDist = g1;
     gl_Position = vec4(p1.xy + o1n * p1.w, p1.z, p1.w); EmitVertex();
     EndPrimitive();
 }
@@ -337,13 +393,13 @@ void main() {
 
 const char* kLineFS = R"(#version 330 core
 in vec4 gCol;
-in float gDist;
+noperspective in float gDist;
 uniform int uDash;
 uniform float uDpr;
 out vec4 fragColor;
 void main() {
     if (uDash == 1 && mod(gDist, 10.0 * uDpr) > 6.0 * uDpr) discard;
-    if (uDash == 2 && mod(gDist, 5.0 * uDpr) > 2.0 * uDpr) discard;
+    if (uDash == 2 && mod(gDist, 6.0 * uDpr) > 2.5 * uDpr) discard;
     fragColor = gCol;
 }
 )";
@@ -519,6 +575,8 @@ void main() {
 )";
 
 constexpr int kShadowSize = 4096;
+constexpr int kNearShadowSize = 4096;
+constexpr int kNearUnit = 14; // and 15: the near shadow map (compare and raw depth)
 const Vec3 kLightDir = Vec3(-0.3, -0.6, 0.75).normalized(); // the plain modelling light
 
 void setColor(QOpenGLShaderProgram* p, const char* name, const Color& c) { p->setUniformValue(name, c.r, c.g, c.b, c.a); }
@@ -580,6 +638,12 @@ bool Renderer::initialize(QString* log) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
     glBindTexture(GL_TEXTURE_2D, 0);
+    glGenSamplers(1, &rawSampler_);
+    glSamplerParameteri(rawSampler_, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glSamplerParameteri(rawSampler_, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glSamplerParameteri(rawSampler_, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glSamplerParameteri(rawSampler_, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glSamplerParameteri(rawSampler_, GL_TEXTURE_COMPARE_MODE, GL_NONE);
     glGenFramebuffers(1, &shadowFbo_);
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTex_, 0);
@@ -623,6 +687,11 @@ void Renderer::cleanup() {
     glDeleteVertexArrays(1, &dynVao_);
     glDeleteVertexArrays(1, &flatVao_);
     glDeleteVertexArrays(1, &skyVao_);
+    if (nearFbo_) glDeleteFramebuffers(1, &nearFbo_);
+    if (nearTex_) glDeleteTextures(1, &nearTex_);
+    nearFbo_ = nearTex_ = 0;
+    if (rawSampler_) glDeleteSamplers(1, &rawSampler_);
+    rawSampler_ = 0;
     glDeleteFramebuffers(1, &shadowFbo_);
     glDeleteTextures(1, &shadowTex_);
     shadowFbo_ = shadowTex_ = 0;
@@ -1330,7 +1399,114 @@ void Renderer::setShadowUniforms(QOpenGLShaderProgram* p) {
     p->setUniformValue("uShadowMap", 2);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, shadowTex_);
+    // Near map (Game Mode): always on units of their own so the shadow and
+    // plain samplers never share a unit, even when it is off.
+    p->setUniformValue("uNearOn", nearOn_);
+    setMat(p, "uNearVP", nearVP_);
+    p->setUniformValue("uNearBias", (float)nearBias_);
+    p->setUniformValue("uPenumbra", (float)penumbra_);
+    p->setUniformValue("uShadowSearch", (float)shadowSearch_);
+    p->setUniformValue("uNearMap", kNearUnit);
+    p->setUniformValue("uNearDepth", kNearUnit + 1);
+    glActiveTexture(GL_TEXTURE0 + kNearUnit);
+    glBindTexture(GL_TEXTURE_2D, nearTex_ ? nearTex_ : shadowTex_);
+    glActiveTexture(GL_TEXTURE0 + kNearUnit + 1);
+    glBindTexture(GL_TEXTURE_2D, nearTex_ ? nearTex_ : shadowTex_);
+    glBindSampler(kNearUnit + 1, rawSampler_);
     glActiveTexture(GL_TEXTURE0);
+}
+
+bool Renderer::ensureNearShadowMap() {
+    if (nearFbo_) return true;
+    // Made in the middle of a frame: leave the frame's own target bound.
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGenTextures(1, &nearTex_);
+    glBindTexture(GL_TEXTURE_2D, nearTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, kNearShadowSize, kNearShadowSize, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glGenFramebuffers(1, &nearFbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, nearFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, nearTex_, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+    if (!ok) {
+        glDeleteFramebuffers(1, &nearFbo_);
+        glDeleteTextures(1, &nearTex_);
+        nearFbo_ = nearTex_ = 0;
+    }
+    return ok;
+}
+
+void Renderer::drawShadowCasters(unsigned fbo, int size, const Mat4& vp, const std::vector<std::pair<const MeshGpu*, Mat4>>& casters) {
+    GLint prevFbo = 0, prevVp[4];
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glViewport(0, 0, size, size);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(2.0f, 4.0f);
+    depthProg_->bind();
+    for (const auto& [g, xf] : casters) {
+        setMat(depthProg_.get(), "uMVP", vp * xf);
+        glBindVertexArray(g->vao);
+        for (const Batch& b : g->batches)
+            if (!b.transparent && !b.paint) glDrawArrays(GL_TRIANGLES, b.first, b.count);
+    }
+    glBindVertexArray(0);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+}
+
+void Renderer::renderNearShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Camera& cam, const Vec3& mn, const Vec3& mx) {
+    nearOn_ = false;
+    if (!ensureNearShadowMap()) return;
+    // The area around the camera, a little ahead of it, in the sun's view.
+    const double R = std::clamp(nearShadowRadius_, 2.0, 500.0);
+    const Vec3 focus = cam.eye + cam.forward() * (R * 0.45);
+    Mat4 view = Mat4::lookAt(Vec3(), -lightDir_, std::fabs(lightDir_.z) > 0.99 ? Vec3(0, 1, 0) : Vec3(0, 0, 1));
+    // Snap the centre to whole map texels so the shadows do not shimmer as
+    // the camera moves.
+    Vec3 lc = view.transformPoint(focus);
+    const double texel = 2 * R / kNearShadowSize;
+    lc.x = std::floor(lc.x / texel) * texel;
+    lc.y = std::floor(lc.y / texel) * texel;
+    // Depth range: everything of the model (and the ground) that can cast
+    // onto the area, along the light.
+    double zmin = 1e300, zmax = -1e300;
+    for (int i = 0; i < 8; ++i) {
+        const Vec3 corner((i & 1) ? mx.x : mn.x, (i & 2) ? mx.y : mn.y, (i & 4) ? mx.z : std::min(mn.z, 0.0));
+        const double z = view.transformPoint(corner).z;
+        zmin = std::min(zmin, z);
+        zmax = std::max(zmax, z);
+    }
+    const double groundZ = view.transformPoint(Vec3(focus.x, focus.y, 0)).z;
+    zmin = std::min({zmin, lc.z - R, groundZ - R});
+    zmax = std::max({zmax, lc.z + R, groundZ + R});
+    // View looks down -z: near/far are the negated z range.
+    const Mat4 proj = Mat4::ortho(lc.x - R, lc.x + R, lc.y - R, lc.y + R, -zmax - 1.0, -zmin + 1.0);
+    nearVP_ = proj * view;
+    nearBias_ = texel * 1.5;
+    // Penumbra: the sun's disc (about 0.53°, a little wider looks natural)
+    // widens the shadow edge by tan(angle) per meter between caster and
+    // receiver; in map uv per unit of stored depth.
+    const double depthRange = (-zmin + 1.0) - (-zmax - 1.0);
+    penumbra_ = depthRange * std::tan(0.75 * kPi / 180) / (2 * R);
+    // Look for casters up to 12 m above the receiver.
+    shadowSearch_ = 12.0 * std::tan(0.75 * kPi / 180) / (2 * R);
+    drawShadowCasters(nearFbo_, kNearShadowSize, nearVP_, casters);
+    nearOn_ = true;
 }
 
 void Renderer::freeAoTargets() {
@@ -1447,27 +1623,7 @@ void Renderer::renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>
     Mat4 view = Mat4::lookAt(c + lightDir_ * (r * 2), c, Vec3(0, 0, 1));
     lightVP_ = Mat4::ortho(-r, r, -r, r, r * 0.5, r * 3 + below) * view;
     shadowBias_ = 2 * r / kShadowSize * 1.5;
-
-    GLint prevFbo = 0, prevVp[4];
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFbo);
-    glGetIntegerv(GL_VIEWPORT, prevVp);
-    glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
-    glViewport(0, 0, kShadowSize, kShadowSize);
-    glClear(GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(2.0f, 4.0f);
-    depthProg_->bind();
-    for (const auto& [g, xf] : casters) {
-        setMat(depthProg_.get(), "uMVP", lightVP_ * xf);
-        glBindVertexArray(g->vao);
-        for (const Batch& b : g->batches)
-            if (!b.transparent && !b.paint) glDrawArrays(GL_TRIANGLES, b.first, b.count);
-    }
-    glBindVertexArray(0);
-    glDisable(GL_POLYGON_OFFSET_FILL);
-    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
-    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+    drawShadowCasters(shadowFbo_, kShadowSize, lightVP_, casters);
 }
 
 void Renderer::collectEdges(const Mesh& m, const Mat4& model, const Document& doc, const Camera& cam,
@@ -1587,6 +1743,7 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     updateLights(ms);
     culling_ = st.backfaceCulling && !st.xray && st.faceStyle != RenderStyle::Wireframe;
     shadowsOn_ = false;
+    nearOn_ = false;
     if (st.shadows && lightDir_.z > 0.02 && st.faceStyle != RenderStyle::Wireframe && st.faceStyle != RenderStyle::HiddenLine) {
         Vec3 mn, mx, amn, amx;
         bool any = false, anyActive = false;
@@ -1603,6 +1760,7 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
             for (const Placed& p : placed) casters.push_back({&meshGpu(doc, p.def), p.xf});
             renderShadowMap(casters, mn, mx);
             shadowsOn_ = true;
+            if (softShadows_) renderNearShadowMap(casters, cam, mn, mx);
         }
     }
 
@@ -1712,8 +1870,9 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
             pushLine(pos, Vec3(), d * L, axisColor(i));
             pushLine(neg, Vec3(), d * -L, axisColor(i));
         }
-        drawLines(pos, cam, 1.2f, Dash::None, dpr);
-        drawLines(neg, cam, 1.0f, Dash::Dotted, dpr);
+        // Positive halves solid, negative halves dotted.
+        drawLines(pos, cam, 1.4f, Dash::None, dpr);
+        drawLines(neg, cam, 1.4f, Dash::Dotted, dpr);
     }
 
     if (st.showObjects && !ms.objects.empty()) drawObjects(doc, cam, dpr);

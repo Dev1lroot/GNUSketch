@@ -10,6 +10,9 @@ bottom. Screenshots help.
 - [ ] Status bar hint text, Measurements box on the right
 - [ ] Sky/ground background, red/green/blue axes, edges/profiles, face colours
 - [ ] Tool cursors and icons
+- [ ] Dark interface everywhere (menus, docks, tray, dialogs, browsers, tooltips); hint texts readable
+- [ ] Window > Settings: Dark/Light, Duotone/Full colour icons, primary and secondary colours, strength, presets; every icon changes live; Cancel/Esc puts it all back; OK keeps it after a restart
+- [ ] Axes: red/green/blue solid on the positive side, dotted on the negative side, also looking along them and from below the ground
 
 ## Drawing
 - [ ] Line: chains, closes faces, splits faces, typed length, arrow-key axis locks
@@ -23,6 +26,9 @@ bottom. Screenshots help.
 ## Modifying
 - [ ] Push/Pull: box from rectangle, taller/shorter box, pocket, push through (hole), Ctrl = new start face, double-click repeat, several selected faces (separate and adjacent) move together
 - [ ] Move / Ctrl copy / `5x` array; Rotate with 15° snaps; Offset
+- [ ] Rotate snaps onto the red/green/blue axes, parallel to a hovered edge, into the plane of (or square to) a hovered face; the dashed line takes the colour of what it snapped to; hold Shift for 5° steps
+- [ ] Push/Pull: hover a face parallel to the one pushed (also of a component): it goes exactly to that plane; push a pocket's floor near the back wall: it snaps on and leaves a clean hole; push a step flush with its neighbour: the tops and walls become single faces
+- [ ] Faces that used to stay as "ghosts" after push/pull (two boxes side by side, a pocket pushed in two steps) are gone; nothing is left that cannot be erased
 - [ ] Rotate sticks to the face under the cursor, loose or of a component (tilted/rotated ones too); hold Shift to keep that plane while picking a centre elsewhere; arrow keys still lock axes
 - [ ] Inside an open component: endpoints, midpoints, edges and faces of the loose geometry and of other components around it still snap (and hide snaps behind them); draw a line from the component to an outside corner; Rotate sticks to an outside face
 - [ ] Intersections: push one component (or loose box) halfway into another; hover where their faces cut through each other ("On Intersection", magenta dashed seam), its ends ("Intersection"); draw a line from end to end, and a line along an axis that stops on the seam
@@ -69,6 +75,7 @@ bottom. Screenshots help.
 - [ ] WASD (also with a non-Latin keyboard layout), Shift, Space, arrow keys, R, Tab, F11, Esc then Esc
 - [ ] Walk into walls and slide along them; up stairs and slopes; off a ledge; under a low ceiling; on Noise terrain
 - [ ] Textures, sun, shadows and culling as set in the editor; closing the editor closes the game
+- [ ] Shadows are always on: crisp where things touch the ground, softer further from the caster; no flicker or stripes while walking; far away shadows still there (coarser)
 
 ## Materials and textures
 - [ ] Drag an image onto a face (fit), Ctrl+drop (tile), drop onto Materials panel
@@ -126,6 +133,9 @@ bottom. Screenshots help.
 
 ## Files
 - [ ] Save/Open `.gsketch`; Export OBJ/glTF/STL and open them in Blender; Import OBJ
+- [ ] File > Import > formats and File > Export > formats (3D Model, 3D Printing sections), plugin formats included
+- [ ] File > Open Recent: files opened and saved appear newest first, numbered; a deleted file disappears; Clear Recent Files
+- [ ] Export 3MF/AMF/STL/PLY/OFF of a 20 mm box in mm and in inches; open them in a slicer (PrusaSlicer, Cura, OrcaSlicer): right size, closed solid, 3MF/AMF colours
 - [ ] Ctrl+V of geometry/components: it follows the cursor at once (grabbed by its bottom corner, snaps to points/axes), click places it, typed distance works, Esc or Ctrl+Z cancels the whole paste, one Undo removes a placed paste
 - [ ] Clipboard: copy geometry (with a textured face) in one GNUSketch window and paste it into a second instance; paste a screenshot, a browser image and image files copied in Dolphin as planes
 

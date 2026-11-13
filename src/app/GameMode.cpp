@@ -124,6 +124,9 @@ bool GameWindow::load(const QString& path, const Vec3& feet, double yaw, QString
     s.xray = s.backEdges = false;
     s.edges = false;
     if (s.faceStyle == RenderStyle::Wireframe || s.faceStyle == RenderStyle::HiddenLine) s.faceStyle = RenderStyle::ShadedTextures;
+    // Real sun shadows: always on here, sharp near the player with soft,
+    // contact-hardening edges (Renderer::setSoftShadows).
+    s.shadows = true;
     doc_.selection.clear();
 
     // Entities first: their parts leave the static collision world.
@@ -139,11 +142,16 @@ bool GameWindow::load(const QString& path, const Vec3& feet, double yaw, QString
     bool any;
     modelBounds(doc_.state, mn, mx, any);
     if (any) camera_.setSceneRadius((mn + mx) * 0.5, (mx - mn).length() * 0.5);
+    // The sharp shadow area: the whole of a small model, 40 m around the
+    // player in a large one (the rest uses the coarser whole-model map).
+    shadowRadius_ = any ? std::clamp((mx - mn).length() * 0.6, 6.0, 40.0) : 40.0;
+    renderer_.setSoftShadows(true, shadowRadius_);
     return true;
 }
 
 void GameWindow::initializeGL() {
     glOk_ = renderer_.initialize(&glError_);
+    renderer_.setSoftShadows(true, shadowRadius_);
     clock_.start();
 }
 

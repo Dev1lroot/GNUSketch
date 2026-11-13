@@ -454,7 +454,12 @@ the image is traced, so on a tiled texture fit the image to the face first.
   Y-up on disk.
 * **glTF 2.0** (export) produces a single self-contained `.gltf`, Y-up, with PBR
   materials, their maps and textures, lights (`KHR_lights_punctual`) and cameras.
-* **STL** (export) is binary, in millimetres.
+* **3D printing** (File → Export → 3D Printing), all in the model's unit by
+  default (another can be picked when exporting), solids welded so slicers see them
+  closed:
+  * **3MF** and **AMF** store the unit in the file, and the materials' colours;
+  * **STL** (binary or ASCII), **PLY** and **OFF** have no unit field: the numbers are
+    in the chosen unit and the header/comment says which.
 
 **To get FBX:** export OBJ or glTF, then convert with Blender (File → Import, then
 File → Export → FBX) or with assimp (`assimp export model.gltf model.fbx`).
@@ -466,9 +471,9 @@ src/core    Math, Mesh (B-rep kernel + face inference), Triangulate, Units, Docu
             FollowMe (profile sweeps), RoundCorners (fillets), ImageTrace (image outlines),
             Terrain (sculpting brushes), Solids (boolean solid tools),
             Effects (noise, blur, decimate, remesh), Walker (Game Mode physics)
-src/io      NativeFormat, ObjIO, GltfExport, StlExport, ImageUtil
+src/io      NativeFormat, ObjIO, GltfExport, StlExport, PrintExport (3MF/AMF/STL/PLY/OFF), ImageUtil
 src/render  Camera, Renderer (GL 3.3: faces, geometry-shader wide/dashed lines, sky/ground)
-src/app     Viewport, Inference, tools (Draw/Modify/Camera/Terrain/Solid), Panels (tray), MainWindow, Icons,
+src/app     Viewport, Inference, tools (Draw/Modify/Camera/Terrain/Solid), Panels (tray), MainWindow, Icons, Theme (dark UI, duotone icons, Settings),
             EffectsUi (Effects menu and dialog), GameMode (placement tool and game window)
 tests       kernel and I/O tests
 ```

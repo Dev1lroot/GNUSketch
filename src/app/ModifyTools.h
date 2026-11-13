@@ -184,11 +184,17 @@ protected:
 
 private:
     Vec3 planeNormalAt(const MouseEvent& e, const InferenceResult& r);
+    // Angle snaps while rotating: world axes, the hovered edge and face, 15°
+    // steps; Shift = 5° steps. Returns the snapped angle (or `raw`).
+    double snapAngle(const MouseEvent& e, const InferenceResult& r, double raw);
+    bool keyRelease(QKeyEvent* e) override;
     int stage_ = 0;
     int forcedAxis_ = -1;
     Vec3 center_, normal_ = Vec3(0, 0, 1), refDir_, cur_;
     double angle_ = 0;
     bool snapped_ = false;
+    Color snapColor_ = Color::rgb8(220, 0, 220);
+    QString snapLabel_;
 };
 
 // SketchUp-style scaling with grips on the selection's bounding box: corners

@@ -74,6 +74,12 @@ public:
     // The last frame drew a custom shader that uses _Time: keep repainting.
     bool animated() const { return animated_; }
 
+    // "Real" sun shadows (Game Mode): a sharp map around the camera with soft,
+    // contact-hardening edges on top of the whole-model one. radius: meters
+    // around the camera it covers.
+    void setSoftShadows(bool on, double radius = 40.0) { softShadows_ = on; nearShadowRadius_ = radius; }
+    bool softShadows() const { return softShadows_; }
+
     static Color axisColor(int axis);
     static constexpr int kMaxLights = 16;
 
@@ -129,6 +135,9 @@ private:
     // Sun shadow map from the given meshes (with their world transforms).
     void renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Vec3& mn, const Vec3& mx);
     void setShadowUniforms(QOpenGLShaderProgram* p);
+    void drawShadowCasters(unsigned fbo, int size, const Mat4& vp, const std::vector<std::pair<const MeshGpu*, Mat4>>& casters);
+    bool ensureNearShadowMap();
+    void renderNearShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>>& casters, const Camera& cam, const Vec3& mn, const Vec3& mx);
     void updateSun(const RenderStyle& st);
     // Screen-space ambient occlusion multiplied over the faces drawn so far.
     void drawAmbientOcclusion(const std::vector<std::pair<const MeshGpu*, Mat4>>& meshes, const Camera& cam);
@@ -147,6 +156,10 @@ private:
     double daylight_ = 1;               // brightness of the sky, 0..1
     bool culling_ = false;              // back faces are not drawn this frame
     double shadowBias_ = 0;
+    bool softShadows_ = false, nearOn_ = false;
+    double nearShadowRadius_ = 40.0, nearBias_ = 0, penumbra_ = 0, shadowSearch_ = 0;
+    Mat4 nearVP_;
+    unsigned nearFbo_ = 0, nearTex_ = 0, rawSampler_ = 0;
     unsigned dynVao_ = 0, dynVbo_ = 0;    // lines (pos3 + color4)
     unsigned flatVao_ = 0, flatVbo_ = 0;  // overlay triangles (pos3)
     unsigned skyVao_ = 0;

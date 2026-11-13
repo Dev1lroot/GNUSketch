@@ -11,8 +11,11 @@
 #include "io/NativeFormat.h"
 #include "io/ObjIO.h"
 #include "io/StlExport.h"
+#include "io/PrintExport.h"
 
 #include <QCoreApplication>
+#include <cstring>
+#include <map>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -962,5 +965,74 @@ on("trigger", function (arg) {
         std::printf("[ ok ] physics in the game world\n");
     }
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
+
+    {
+        // 3D printing exports keep the model's unit.
+        Document d;
+        d.mesh().drawPolyline({{0, 0, 0}, {0.02, 0, 0}, {0.02, 0.01, 0}, {0, 0.01, 0}}, true); // 20 x 10 mm
+        Id f = kNone;
+        for (Id g = 0; g < (Id)d.mesh().faces.size(); ++g)
+            if (d.mesh().faces[g].alive) f = g;
+        d.mesh().pushPull(f, d.mesh().faces[f].normal.z < 0 ? -0.005 : 0.005); // 5 mm tall
+        Material red;
+        red.name = "Red & Hot";
+        red.color = Color(1, 0, 0);
+        d.materials().push_back(red);
+        for (Face& F : d.mesh().faces) F.front.material = 0;
+        const PrintMesh pm = buildPrintMesh(d, LengthUnit::Millimeters);
+        CHECK(pm.verts.size() == 8 && pm.tris.size() == 12); // welded: a closed solid
+        // Each edge is used by exactly two triangles, in opposite directions.
+        std::map<std::pair<int, int>, int> uses;
+        for (const auto& t : pm.tris)
+            for (int k = 0; k < 3; ++k) uses[{t[k], t[(k + 1) % 3]}]++;
+        bool manifold = true;
+        for (const auto& [e, n] : uses) manifold = manifold && n == 1 && uses.count({e.second, e.first}) == 1;
+        CHECK(manifold);
+        double maxX = 0;
+        for (const Vec3& v : pm.verts) maxX = std::max(maxX, v.x);
+        CHECK(std::fabs(maxX - 20) < 1e-6);
+
+        CHECK(exportPrint(d, dir.filePath("p.3mf"), PrintFormat::ThreeMF, LengthUnit::Millimeters));
+        QFile z(dir.filePath("p.3mf"));
+        CHECK(z.open(QIODevice::ReadOnly));
+        const QByteArray zip = z.readAll();
+        CHECK(zip.startsWith("PK\x03\x04"));
+        CHECK(zip.contains("3D/3dmodel.model") && zip.contains("[Content_Types].xml") && zip.contains("_rels/.rels"));
+        // An uncompressed copy says what the model says.
+        CHECK(exportPrint(d, dir.filePath("p.amf"), PrintFormat::Amf, LengthUnit::Inches));
+        QFile a(dir.filePath("p.amf"));
+        CHECK(a.open(QIODevice::ReadOnly));
+        const QByteArray amf = a.readAll();
+        CHECK(amf.contains("unit=\"inch\"") && amf.contains("Red &amp; Hot"));
+        CHECK(amf.contains("<x>0.787401575</x>")); // 20 mm in inches
+        CHECK(exportPrint(d, dir.filePath("cm.amf"), PrintFormat::Amf, LengthUnit::Centimeters));
+        QFile acm(dir.filePath("cm.amf"));
+        CHECK(acm.open(QIODevice::ReadOnly) && acm.readAll().contains("unit=\"millimeter\"")); // AMF has no cm
+
+        CHECK(exportPrint(d, dir.filePath("p.stl"), PrintFormat::StlBinary, LengthUnit::Centimeters));
+        QFile st(dir.filePath("p.stl"));
+        CHECK(st.open(QIODevice::ReadOnly));
+        const QByteArray stl = st.readAll();
+        CHECK(stl.size() == 84 + 50 * 12);
+        CHECK(stl.left(80).contains("units=cm"));
+        float far = 0;
+        for (int i = 0; i < 12; ++i)
+            for (int k = 0; k < 3; ++k) {
+                float x;
+                std::memcpy(&x, stl.constData() + 84 + i * 50 + 12 + k * 12, 4);
+                far = std::max(far, x);
+            }
+        CHECK(std::fabs(far - 2.0f) < 1e-5); // 20 mm = 2 cm
+        CHECK(exportPrint(d, dir.filePath("a.stl"), PrintFormat::StlAscii, LengthUnit::Millimeters));
+        CHECK(exportPrint(d, dir.filePath("p.ply"), PrintFormat::Ply, LengthUnit::Millimeters));
+        CHECK(exportPrint(d, dir.filePath("p.off"), PrintFormat::Off, LengthUnit::Millimeters));
+        QFile off(dir.filePath("p.off"));
+        CHECK(off.open(QIODevice::ReadOnly) && off.readAll().contains("\n8 12 0\n"));
+        Document empty;
+        QString err;
+        CHECK(!exportPrint(empty, dir.filePath("e.3mf"), PrintFormat::ThreeMF, LengthUnit::Millimeters, &err) && !err.isEmpty());
+        std::printf("[ ok ] 3D printing exports keep units\n");
+    }
+
     return g_failed ? 1 : 0;
 }

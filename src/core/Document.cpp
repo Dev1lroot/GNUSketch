@@ -16,6 +16,14 @@ void Document::beginOp(const std::string& name) {
 void Document::commitOp() {
     if (opDepth_ == 0) return;
     if (--opDepth_ > 0) return;
+    // Clean up faces an edit left behind that cannot be seen or picked
+    // (zero-area, duplicates): they would otherwise never go away.
+    if (!undo_.empty()) {
+        const ModelState& before = undo_.back().second;
+        Mesh& m = state.activeMesh();
+        const Mesh& old = before.editing == state.editing ? before.activeMesh() : m;
+        if (&old == &m || old.revision != m.revision) m.removeDegenerateFaces();
+    }
     redo_.clear();
     modified = true;
     validateSelection();

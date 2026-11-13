@@ -273,6 +273,17 @@ Vec3 InferenceEngine::faceNormalAt(double px, double py, const std::set<Id>* ex)
     return f >= 0 ? faces[f].plane.n : Vec3();
 }
 
+bool InferenceEngine::faceUnder(double px, double py, const std::set<Id>* ex, Vec3& point, Vec3& normal) const {
+    const std::vector<FaceRef> faces = worldFaces(ex);
+    const Ray r = cam_.ray(px, py);
+    double t;
+    const int f = frontFace(faces, r, t);
+    if (f < 0) return false;
+    point = r.at(t);
+    normal = faces[f].plane.n;
+    return true;
+}
+
 bool InferenceEngine::pickIntersection(double px, double py, double tolPx, const std::vector<FaceRef>& faces, EdgeHit& hit) const {
     const Ray r = cam_.ray(px, py);
     double tFront;

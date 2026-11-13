@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Icons.h"
+#include "Theme.h"
 
 #include <QGuiApplication>
 #include <QHash>
+#include <QIconEngine>
 #include <QPainter>
 #include <QScreen>
 #include <QSvgRenderer>
@@ -96,14 +98,17 @@ const char* svgFor(const QString& n) {
 
 } // namespace
 
-QPixmap pixmap(const QString& name, int size) {
+namespace {
+
+QPixmap render(const QString& name, int size, qreal dpr, bool themed) {
     const char* body = svgFor(name);
-    qreal dpr = qApp ? qApp->devicePixelRatio() : 1.0;
     QPixmap pm(QSize(size, size) * dpr);
     pm.setDevicePixelRatio(dpr);
     pm.fill(Qt::transparent);
     if (!body) return pm;
-    QByteArray svg = QByteArray("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>") + body + "</svg>";
+    QByteArray inner(body);
+    if (themed) inner = Theme::recolorSvg(inner, Theme::current());
+    QByteArray svg = QByteArray("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>") + inner + "</svg>";
     QSvgRenderer r(svg);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
@@ -111,15 +116,56 @@ QPixmap pixmap(const QString& name, int size) {
     return pm;
 }
 
-QIcon get(const QString& name) {
-    static QHash<QString, QIcon> cache;
-    auto it = cache.find(name);
-    if (it != cache.end()) return it.value();
-    QIcon icon;
-    for (int s : {16, 20, 24, 32, 48}) icon.addPixmap(pixmap(name, s));
-    cache.insert(name, icon);
-    return icon;
+// Draws the named icon in the colours of the current theme each time it is
+// asked for, so a change in Window -> Settings repaints every icon in place.
+class ThemedIconEngine : public QIconEngine {
+public:
+    explicit ThemedIconEngine(QString name) : name_(std::move(name)) {}
+    QIconEngine* clone() const override { return new ThemedIconEngine(name_); }
+    QString key() const override { return QStringLiteral("gs-themed"); }
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override { return scaledPixmap(size, mode, state, 1.0); }
+    QPixmap scaledPixmap(const QSize& size, QIcon::Mode mode, QIcon::State, qreal scale) override {
+        const int s = std::max(1, std::min(size.width(), size.height()));
+        const QString k = QStringLiteral("%1|%2|%3|%4").arg(s).arg(scale).arg(int(mode)).arg(Theme::revision());
+        if (auto it = cache_.find(k); it != cache_.end()) return it.value();
+        if (cacheRev_ != Theme::revision()) { cache_.clear(); cacheRev_ = Theme::revision(); }
+        QPixmap pm = render(name_, s, scale, true);
+        if (mode == QIcon::Disabled) {
+            QPixmap faded(pm.size());
+            faded.setDevicePixelRatio(pm.devicePixelRatio());
+            faded.fill(Qt::transparent);
+            QPainter p(&faded);
+            p.setOpacity(0.35);
+            p.drawPixmap(0, 0, pm);
+            p.end();
+            pm = faded;
+        }
+        cache_.insert(k, pm);
+        return pm;
+    }
+    void paint(QPainter* p, const QRect& rect, QIcon::Mode mode, QIcon::State state) override {
+        const qreal dpr = p->device() ? p->device()->devicePixelRatioF() : 1.0;
+        p->drawPixmap(rect, scaledPixmap(rect.size(), mode, state, dpr));
+    }
+    QSize actualSize(const QSize& size, QIcon::Mode, QIcon::State) override {
+        const int s = std::min(size.width(), size.height());
+        return QSize(s, s);
+    }
+    QList<QSize> availableSizes(QIcon::Mode, QIcon::State) override { return {{16, 16}, {20, 20}, {24, 24}, {32, 32}, {48, 48}}; }
+
+private:
+    QString name_;
+    QHash<QString, QPixmap> cache_;
+    int cacheRev_ = -1;
+};
+
+} // namespace
+
+QPixmap pixmap(const QString& name, int size) {
+    return render(name, size, qApp ? qApp->devicePixelRatio() : 1.0, true);
 }
+
+QIcon get(const QString& name) { return QIcon(new ThemedIconEngine(name)); }
 
 QString toolIconName(ToolId id) {
     switch (id) {
@@ -173,7 +219,7 @@ QCursor toolCursor(ToolId id) {
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
-    auto icon = [&](const QString& n, int x, int y, int s) { p.drawPixmap(x, y, pixmap(n, s)); };
+    auto icon = [&](const QString& n, int x, int y, int s) { p.drawPixmap(x, y, render(n, s, dpr, false)); };
     int hx = 0, hy = 0;
     switch (id) {
     case ToolId::Select:

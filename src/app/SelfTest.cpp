@@ -38,6 +38,10 @@
 #include "ModifyTools.h"
 #include "TerrainTools.h"
 #include "Viewport.h"
+#include "Icons.h"
+#include "Theme.h"
+#include <QMenu>
+#include <QFileInfo>
 #include "core/Components.h"
 #include "core/Primitives.h"
 #include "core/Solids.h"
@@ -2026,8 +2030,15 @@ int runSelfTest(MainWindow& w) {
         white.color = Color(1, 1, 1);
         setMat(white);
         doc.style.sunAltitude = -30; // night: only the lamps
-        const QPointF near_ = d.screen(Vec3(0, 0, 0)), far_ = d.screen(Vec3(-2.5, 2.5, 0));
         QImage dark = frame();
+        // A point on the plane well outside the lamp's range that is on screen
+        // (the viewport's size depends on the window layout).
+        const QPointF near_ = d.screen(Vec3(0, 0, 0));
+        QPointF far_ = d.screen(Vec3(-2.5, 2.5, 0));
+        for (const Vec3& cand : {Vec3(-2.5, 2.5, 0), Vec3(2.5, -2.5, 0), Vec3(2.5, 2.5, 0), Vec3(-2.5, -2.5, 0), Vec3(0, 2.7, 0), Vec3(0, -2.7, 0)}) {
+            const QPointF q = d.screen(cand);
+            if (q.x() >= 4 && q.y() >= 4 && q.x() * dpr < dark.width() - 4 && q.y() * dpr < dark.height() - 4) { far_ = q; break; }
+        }
         const int base = qGray(pixel(dark, near_).rgb());
         doc.beginOp("light");
         SceneObject lamp;
@@ -2965,6 +2976,192 @@ int runSelfTest(MainWindow& w) {
         doc.reset();
     }
 
+
+    // --- Push/Pull face snap, rotation snaps --------------------------------
+    {
+        doc.reset();
+        auto box = [&](double x0, double x1, double h) {
+            d.mesh().drawPolyline({{x0, 0, 0}, {x1, 0, 0}, {x1, 2, 0}, {x0, 2, 0}}, true);
+            for (Id f = (Id)d.mesh().faces.size() - 1; f >= 0; --f)
+                if (d.mesh().faces[f].alive && d.mesh().faceInteriorPoint(f).x > x0 && d.mesh().faceInteriorPoint(f).x < x1 &&
+                    std::fabs(d.mesh().faces[f].normal.z) > 0.99) {
+                    d.mesh().pushPull(f, d.mesh().faces[f].normal.z < 0 ? -h : h);
+                    break;
+                }
+        };
+        box(0, 2, 1);
+        box(3, 5, 2);
+        doc.notifyChanged();
+        vp->zoomExtents();
+        d.pump();
+        vp->setTool(ToolId::PushPull);
+        d.click(d.screen(Vec3(1, 1, 1)));
+        d.move(d.screen(Vec3(4.2, 1.1, 2)));
+        d.click(d.screen(Vec3(4.2, 1.1, 2)));
+        Vec3 mn, mx;
+        bool any = false;
+        double shortTop = 0;
+        for (Id v = 0; v < (Id)d.mesh().vertices.size(); ++v)
+            if (d.mesh().vertices[v].alive && d.mesh().pos(v).x < 2.5) shortTop = std::max(shortTop, d.mesh().pos(v).z);
+        std::printf("    pushed to %.6f\n", shortTop);
+        d.check(std::fabs(shortTop - 2) < 1e-9, "push/pull snaps to the plane of a parallel face under the cursor");
+        d.mesh().bounds(mn, mx, any);
+        d.check(any && std::fabs(mx.z - 2) < 1e-9, "and no further");
+
+        // Rotate: Shift turns in 5° steps; near an axis it snaps onto it.
+        doc.reset();
+        d.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        doc.notifyChanged();
+        vp->zoomExtents();
+        d.pump();
+        auto rotateTo = [&](double deg, Qt::KeyboardModifiers m) {
+            doc.selection.clear();
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) doc.selection.faces.insert(f);
+            doc.notifySelection();
+            vp->setTool(ToolId::Rotate);
+            d.click(d.screen(Vec3(0, 0, 0)));
+            d.click(d.screen(Vec3(1, 0, 0)));
+            const double a = deg * kPi / 180;
+            const QPointF end = d.screen(Vec3(2.5 * std::cos(a), 2.5 * std::sin(a), 0));
+            d.move(end, Qt::NoButton, m);
+            d.click(end, m);
+            // Where the corner that was at (1, 0, 0) went.
+            // (The corner from (0, 1, 0) is also 1 m out, 90° further on.)
+            double best = 1e9;
+            for (Id v = 0; v < (Id)d.mesh().vertices.size(); ++v) {
+                if (!d.mesh().vertices[v].alive) continue;
+                const Vec3 p = d.mesh().pos(v);
+                if (std::fabs(p.length() - 1) < 1e-6) best = std::min(best, std::atan2(p.y, p.x) * 180 / kPi);
+            }
+            doc.undo();
+            return best;
+        };
+        const double shifted = rotateTo(33, Qt::ShiftModifier);
+        std::printf("    rotated with Shift to %.4f°\n", shifted);
+        d.check(std::fabs(shifted - 35) < 1e-6, "Shift rotates in 5° steps");
+        const double free = rotateTo(33, Qt::NoModifier);
+        d.check(std::fabs(free - 35) > 0.5 && std::fabs(free - 30) > 0.5, "without Shift the angle follows the cursor");
+        const double axis = rotateTo(86.5, Qt::NoModifier);
+        std::printf("    near the green axis: %.4f°\n", axis);
+        d.check(std::fabs(axis - 90) < 1e-6, "near an axis the rotation snaps onto it");
+        vp->setTool(ToolId::Select);
+        doc.reset();
+    }
+
+    // --- Game Mode: soft sun shadows ------------------------------------------
+    {
+        QTemporaryDir dir;
+        doc.reset();
+        d.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) { d.mesh().pushPull(f, d.mesh().faces[f].normal.z < 0 ? -2 : 2); break; }
+        doc.style.sun = true;
+        doc.style.shadows = false; // Game Mode turns them on by itself
+        const QString path = QDir(dir.path()).filePath(QStringLiteral("shadow.gsketch"));
+        QString err;
+        d.check(saveNative(doc, path, {}, &err), "a box to cast a shadow saves");
+        const Vec3 sun = doc.style.sunDirection();
+        const Vec3 h = Vec3(sun.x, sun.y, 0).normalized();
+        const Vec3 side = Vec3(-h.y, h.x, 0);
+        GameWindow game;
+        // Stand to the side of the shadow and look at the box.
+        const Vec3 feet = Vec3(0.5, 0.5, 0) - h * 1.0 + side * 9.0;
+        d.check(game.load(path, feet, 0.0, &err), "Game Mode loads it");
+        double bestYaw = 0, bestDot = -2;
+        for (int i = 0; i < 360; ++i) {
+            game.walker().setYaw(i * kPi / 180);
+            const Vec3 to = (Vec3(0.5, 0.5, 0.3) - game.walker().eye()).normalized();
+            const double dd = game.walker().lookDirection().dot(to);
+            if (dd > bestDot) { bestDot = dd; bestYaw = i * kPi / 180; }
+        }
+        game.walker().setYaw(bestYaw);
+        game.resize(640, 480);
+        game.show();
+        d.pump();
+        const QImage img = game.grabFramebuffer();
+        d.check(game.renderOk() && !img.isNull(), "it renders with soft shadows");
+        d.check(game.renderer().softShadows(), "soft shadows are on in Game Mode");
+        auto gray = [&](const Vec3& p) {
+            double x, y;
+            if (!game.camera().project(p, x, y)) return -1;
+            const double k = img.width() / double(game.width());
+            const int ix = int(x * k), iy = int(y * k);
+            if (ix < 0 || iy < 0 || ix >= img.width() || iy >= img.height()) return -1;
+            return qGray(img.pixel(ix, iy));
+        };
+        const int shaded = gray(Vec3(0.5, 0.5, 0) - h * 1.3), lit = gray(Vec3(0.5, 0.5, 0) + h * 2.5);
+        std::printf("    ground in the shadow %d, in the sun %d\n", shaded, lit);
+        d.check(shaded >= 0 && lit >= 0 && shaded + 15 < lit, "the box's shadow falls on the ground away from the sun");
+        game.hide();
+        doc.reset();
+    }
+
+    // --- Dark theme, duotone icons and Settings --------------------------------
+    {
+        d.check(QApplication::palette().color(QPalette::Window).lightness() < 90, "the interface is dark by default");
+        auto iconColours = [](const char* name) {
+            const QImage im = Icons::get(QString::fromLatin1(name)).pixmap(48, 48).toImage().convertToFormat(QImage::Format_ARGB32);
+            int reddish = 0, greenish = 0, other = 0;
+            for (int y = 0; y < im.height(); ++y)
+                for (int x = 0; x < im.width(); ++x) {
+                    const QColor c = QColor::fromRgba(im.pixel(x, y));
+                    if (c.alpha() < 200) continue;
+                    if (c.red() > 150 && c.green() < 60 && c.blue() < 60) ++reddish;
+                    else if (c.green() > 150 && c.red() < 60 && c.blue() < 60) ++greenish;
+                    else ++other;
+                }
+            return std::array<int, 3>{reddish, greenish, other};
+        };
+        const ThemeSettings before = Theme::current();
+        {
+            SettingsDialog dlg(&w);
+            dlg.setDuotone(true);
+            dlg.setPrimary(QColor(0, 255, 0));
+            dlg.setSecondary(QColor(255, 0, 0));
+            const auto c = iconColours("pushpull");
+            std::printf("    duotone pushpull icon: %d red, %d green, %d other\n", c[0], c[1], c[2]);
+            d.check(c[0] > 0 && c[1] > 0 && c[2] < (c[0] + c[1]) / 4, "duotone icons are drawn in the two chosen colours");
+            dlg.setDuotone(false);
+            const auto full = iconColours("materials");
+            d.check(full[2] > full[0] + full[1], "Full colour brings the original colours back");
+            dlg.setDark(false);
+            d.check(QApplication::palette().color(QPalette::Window).lightness() > 200, "the light interface is still there");
+            dlg.reject();
+        }
+        d.check(Theme::current() == before && QApplication::palette().color(QPalette::Window).lightness() < 90,
+                "Cancel restores the theme");
+
+        // File > Import / Export submenus, Open Recent.
+        QMenu* imp = w.findChild<QMenu*>(QStringLiteral("ImportMenu"));
+        QMenu* exp = w.findChild<QMenu*>(QStringLiteral("ExportMenu"));
+        d.check(imp && !imp->actions().isEmpty(), "File > Import is a submenu of formats");
+        QStringList expTexts;
+        if (exp)
+            for (QAction* a : exp->actions()) expTexts << a->text();
+        std::printf("    export: %s\n", qPrintable(expTexts.join(" | ")));
+        d.check(exp && expTexts.join(' ').contains("3MF") && expTexts.join(' ').contains("AMF") && expTexts.join(' ').contains("STL") &&
+                    expTexts.join(' ').contains("glTF") && expTexts.join(' ').contains("PLY"),
+                "File > Export lists the model and 3D printing formats");
+        QTemporaryDir dir;
+        doc.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        const QString path = QDir(dir.path()).filePath(QStringLiteral("recent.gsketch"));
+        d.check(saveNative(doc, path, {}), "a model to reopen saves");
+        w.openFile(path);
+        d.check(!w.recentFiles().isEmpty() && w.recentFiles().first() == QFileInfo(path).absoluteFilePath(), "an opened file goes to the top of Open Recent");
+        QMenu* recent = w.findChild<QMenu*>(QStringLiteral("RecentMenu"));
+        bool listed = false;
+        if (recent) {
+            emit recent->aboutToShow();
+            for (QAction* a : recent->actions()) listed = listed || a->text().contains(QStringLiteral("recent.gsketch"));
+        }
+        d.check(listed, "and is listed in File > Open Recent");
+        w.clearRecentFiles();
+        d.check(w.recentFiles().isEmpty(), "Clear Recent Files empties it");
+        doc.reset();
+        doc.modified = false;
+    }
+
     std::printf("selftest: %d faces, %d edges, %zu materials, %d failures\n", d.mesh().aliveFaceCount(),
                 d.mesh().aliveEdgeCount(), doc.state.materials.size(), d.failures);
     doc.modified = false;
@@ -3011,6 +3208,11 @@ int runGlProbe() {
         doc.style.faceStyle = (RenderStyle::FaceStyle)s;
         r.render(doc, cam, pv, 1.0);
     }
+    // Sun shadows, then the Game Mode's soft ones (near map, PCSS).
+    doc.style.shadows = true;
+    r.render(doc, cam, pv, 1.0);
+    r.setSoftShadows(true, 10.0);
+    r.render(doc, cam, pv, 1.0);
     GLenum err = f->glGetError();
     QImage img = fbo.toImage();
     QSet<QRgb> colors;

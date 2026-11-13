@@ -110,6 +110,8 @@ target_compile_definitions(gnusketch PRIVATE GNUSKETCH_SOURCE_DIR="${CMAKE_SOURC
 target_compile_options(gnusketch PRIVATE -Wall -Wextra)
 
 install(TARGETS gnusketch RUNTIME DESTINATION bin)
+# The libraries find each other beside themselves (the program finds them in ../lib).
+set_target_properties(gs_core gs_io PROPERTIES INSTALL_RPATH "$ORIGIN")
 install(TARGETS gs_core gs_io LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES src/plugin/FormatPlugin.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gnusketch/plugin)
 

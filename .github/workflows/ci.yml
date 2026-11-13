@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib
 
       - name: Build
         run: cmake --build build
@@ -50,7 +50,7 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: 1
           QMAKE: /usr/lib/qt6/bin/qmake
           EXTRA_QT_MODULES: svg
-          EXTRA_PLATFORM_PLUGINS: libqwayland-egl.so;libqwayland-generic.so
+          EXTRA_PLATFORM_PLUGINS: libqwayland.so
         run: |
           DESTDIR=$PWD/AppDir cmake --install build
           cp packaging/gnusketch.png AppDir/gnusketch.png
@@ -58,6 +58,7 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy*.AppImage
           export VERSION=${GITHUB_REF_NAME#v}
+          export LD_LIBRARY_PATH="$PWD/AppDir/usr/lib"
           ./linuxdeploy-x86_64.AppImage --appdir AppDir \
             --desktop-file packaging/gnusketch.desktop --icon-file packaging/gnusketch.svg \
             --plugin qt --output appimage

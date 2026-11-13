@@ -26,7 +26,7 @@ jobs:
           apt-get install -y --no-install-recommends ca-certificates git wget file xvfb xauth \
             build-essential cmake ninja-build zlib1g-dev pkg-config \
             qt6-base-dev qt6-base-dev-tools qt6-declarative-dev libqt6opengl6-dev \
-            qt6-image-formats-plugins qt6-wayland libgl1-mesa-dev libegl1-mesa-dev libgl1-mesa-dri
+            qt6-image-formats-plugins qt6-svg-plugins qt6-wayland libgl1-mesa-dev libegl1-mesa-dev libgl1-mesa-dri
           # (the Svg module's package name changed between releases)
           apt-get install -y --no-install-recommends qt6-svg-dev || apt-get install -y --no-install-recommends libqt6svg6-dev
 

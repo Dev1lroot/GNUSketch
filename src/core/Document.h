@@ -4,6 +4,7 @@
 
 #include "Material.h"
 #include "Mesh.h"
+#include "Timeline.h"
 #include "Units.h"
 
 #include <functional>
@@ -120,6 +121,7 @@ struct ModelState {
     std::vector<ComponentDef> defs;
     std::vector<Instance> instances;
     std::vector<SceneObject> objects;
+    Timeline timeline; // the Animator's layers and keyframes
     // What a file format (a plugin) keeps with the whole model that GNUSketch has
     // no place for: JSON text, saved with it (see ComponentDef::extra).
     std::string extra;
@@ -151,6 +153,10 @@ struct RenderStyle {
     bool sky = true;
     bool ground = true;
     bool shadows = false;      // sun shadows on faces and the ground
+    // Cinematic lighting: ray traced soft shadows from the sun and every light,
+    // and light rays (volumetric shafts) of the given strength 0..1.
+    bool cinematic = false;
+    double lightRays = 0.5;
     bool ambientOcclusion = false; // darkening in creases and corners (screen space)
     bool antialiasing = true;  // multisampling
     bool backfaceCulling = false; // the back of a face is not drawn or picked

@@ -61,6 +61,10 @@ protected:
     Plane resolvePlane(const MouseEvent& e, const Vec3& p0, Id startFace);
     void shapeBasis(const Vec3& n, Vec3& u, Vec3& v) const;
     int forcedAxis_ = -1;
+    int heldSaved_ = -1; // forcedAxis_ before X/Y/Z was held
+public:
+    void holdAxis(int axis) override;
+protected:
 };
 
 class RectangleTool : public PlanarShapeTool {

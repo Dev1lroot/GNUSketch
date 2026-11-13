@@ -112,6 +112,8 @@ public:
     // +1 if face f traverses a->b, -1 if b->a, 0 if not at all.
     int faceEdgeDirection(Id f, Id a, Id b) const;
     bool isFreeFace(Id f) const; // no boundary edge shared with another face
+    // A ray from the face into its back side leaves a closed solid (odd hits).
+    bool solidBehind(Id f) const;
     int aliveVertexCount() const;
     int aliveEdgeCount() const;
     int aliveFaceCount() const;
@@ -133,17 +135,29 @@ public:
     // then finds/splits faces. Returns ids of the edges that make up the line.
     std::vector<Id> drawLine(const Vec3& a, const Vec3& b, Id curve = kNone);
     // Draws several segments with a single face-inference pass at the end.
+    // Edges drawn over hidden ones show them again.
     std::vector<Id> drawSegments(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve = kNone);
+    std::vector<Id> drawSegmentsKeepHidden(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve = kNone);
     std::vector<Id> drawPolyline(const std::vector<Vec3>& pts, bool closed, Id curve = kNone);
 
     // Inserts vertex v into edge e. `inFaces` (all faces using e) limits the
     // loop fix-up to those faces instead of scanning the whole mesh.
     void splitEdge(Id e, Id v, const std::vector<Id>* inFaces = nullptr);
+    // Splits edge e at every vertex lying on it (inside its length).
+    void splitEdgeAtVertices(Id e);
     void eraseFace(Id f);
     // Erases an edge and the faces it bounds. With heal=true, two coplanar faces
     // sharing the edge are merged into one instead (SketchUp eraser behaviour).
     void eraseEdge(Id e, bool heal = true);
     void removeOrphanVertices();
+    // Removes faces that are not real: zero area, fewer than 3 corners, a hole
+    // that is the outline itself, or a second copy of a face facing the same
+    // way. Returns how many went. Run after every committed edit.
+    int removeDegenerateFaces();
+    // Edges lying on a face without being part of it (moved, pasted or
+    // exploded onto it) are joined to it: they split its outline where they
+    // touch it and the face where they cross it, as if drawn there.
+    void attachLyingEdges(const std::vector<Id>& candidates);
     // Removes those of the given edges that no longer bound any face (one
     // adjacency pass, for bulk edits).
     void removeEdgesWithoutFaces(const std::vector<Id>& candidates);
@@ -152,6 +166,10 @@ public:
     // Push/pull a face along its normal by dist. keepOriginal leaves the starting
     // face in place (Ctrl modifier). Returns the moved face id (or kNone).
     Id pushPull(Id f, double dist, bool keepOriginal = false);
+    // Push/pull several faces at once, each along its own normal by dist.
+    // Neighbouring coplanar faces in the set move together as one region (no
+    // walls between them); their shared edges are kept. Returns the moved faces.
+    std::vector<Id> pushPullFaces(const std::set<Id>& fs, double dist, bool keepOriginal = false);
 
     // Applies a transform to a set of vertices, keeps texture mappings of fully
     // transformed faces attached, refreshes normals and welds coincident vertices.
@@ -187,6 +205,8 @@ public:
 private:
     void insertSegment(const Vec3& a, const Vec3& b, Id curve, std::vector<Id>& created, std::vector<Id>& touched);
     void splitEdgesThrough(Id v);
+    void cancelCoincident(const std::vector<Id>& created);
+    void healCoplanar(Id f);
     void rebuildPlane(const Plane& P, const std::set<Id>& newEdges, std::vector<FaceSnapshot> extraDirty);
     Vec3 chooseNormal(const std::vector<Id>& outerCCW, const Plane& P) const;
     Vec3 regionInteriorPoint(const Plane& P, const Region& r) const;

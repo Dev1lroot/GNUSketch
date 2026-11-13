@@ -179,7 +179,7 @@ bool InferenceEngine::pickAnyEdge(double px, double py, double tolPx, const std:
             double d = pixelDistance(q, px, py);
             if (d >= bestD) continue;
             double depth = (q - r.origin).dot(r.dir);
-            if (depth > tFace + std::max(cam_.pixelSize(q) * 3.0, 1e-4)) continue;
+            if (!seeThrough() && depth > tFace + std::max(cam_.pixelSize(q) * 3.0, 1e-4)) continue;
             if (cam_.perspective && depth < 0) continue;
             bestD = d;
             hit.seg = s;
@@ -273,6 +273,17 @@ Vec3 InferenceEngine::faceNormalAt(double px, double py, const std::set<Id>* ex)
     return f >= 0 ? faces[f].plane.n : Vec3();
 }
 
+bool InferenceEngine::faceUnder(double px, double py, const std::set<Id>* ex, Vec3& point, Vec3& normal) const {
+    const std::vector<FaceRef> faces = worldFaces(ex);
+    const Ray r = cam_.ray(px, py);
+    double t;
+    const int f = frontFace(faces, r, t);
+    if (f < 0) return false;
+    point = r.at(t);
+    normal = faces[f].plane.n;
+    return true;
+}
+
 bool InferenceEngine::pickIntersection(double px, double py, double tolPx, const std::vector<FaceRef>& faces, EdgeHit& hit) const {
     const Ray r = cam_.ray(px, py);
     double tFront;
@@ -362,7 +373,7 @@ Id InferenceEngine::pickEdgeT(double px, double py, double tolPx, const std::set
         if (d > bestD) continue;
         // Occlusion: must not be behind the hit face.
         double depth = (q - r.origin).dot(r.dir);
-        if (depth > tFace + std::max(cam_.pixelSize(q) * 3.0, 1e-4)) continue;
+        if (!seeThrough() && depth > tFace + std::max(cam_.pixelSize(q) * 3.0, 1e-4)) continue;
         if (cam_.perspective && depth < 0) continue;
         bestD = d;
         best = e;
@@ -496,7 +507,8 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     auto visible = [&](const Vec3& p) {
         double depth = (p - r.origin).dot(r.dir);
         if (cam_.perspective && depth < 0) return false;
-        return depth <= tFace + std::max(cam_.pixelSize(p) * 3.0, 1e-4);
+        // X-ray or back edges shown: what is behind the faces snaps too.
+        return seeThrough() || depth <= tFace + std::max(cam_.pixelSize(p) * 3.0, 1e-4);
     };
 
     // Where the line ref + s*d pierces the hovered face, if that is near the

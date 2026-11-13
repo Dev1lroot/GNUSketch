@@ -9,6 +9,7 @@
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPainter>
@@ -81,11 +82,30 @@ void PlaceObjectTool::mousePress(const MouseEvent& e) {
     place(inf_.p);
 }
 
+SceneObject& placementDefaults(SceneObject::Kind kind) {
+    static SceneObject defs[4] = {};
+    static bool init = false;
+    if (!init) {
+        for (int k = 0; k < 4; ++k) defs[k].kind = (SceneObject::Kind)k;
+        defs[SceneObject::DirectionalLight].intensity = 0.5;
+        init = true;
+    }
+    return defs[std::clamp((int)kind, 0, 3)];
+}
+
 void PlaceObjectTool::place(const Vec3& target) {
     SceneObject o = vp_->objectFromView(kind());
     o.pos = pos_;
     o.target = target;
-    if (kind() == SceneObject::DirectionalLight) o.intensity = 0.5;
+    if (o.isLight()) {
+        // The settings shown in Properties while the tool is equipped.
+        const SceneObject& d = placementDefaults(kind());
+        o.color = d.color;
+        o.intensity = d.intensity;
+        o.range = d.range;
+        o.coneAngle = d.coneAngle;
+        o.softness = d.softness;
+    }
     doc().beginOp(std::string("Add ") + sceneObjectTypeName(kind()));
     const Id id = doc().addObject(std::move(o));
     doc().selection.clear();
@@ -160,16 +180,92 @@ template <class Fn> void ScenePanel::edit(const char* op, Fn fn) {
 }
 
 Id ScenePanel::current() const {
-    const auto* it = list_->currentItem();
-    if (!it) return kNone;
-    const Id id = it->data(Qt::UserRole).toInt();
+    // The light or camera selected alone (the list follows the selection).
+    const Selection& s = doc_->selection;
+    if (s.objects.size() != 1 || !s.faces.empty() || !s.edges.empty() || !s.instances.empty()) return kNone;
+    const Id id = *s.objects.begin();
     return id >= 0 && id < (Id)doc_->state.objects.size() && doc_->state.objects[id].alive ? id : kNone;
+}
+
+void ScenePanel::setListVisible(bool on) {
+    list_->setVisible(on);
+    if (addRow_) addRow_->setVisible(on);
+}
+
+PlacementSettings::PlacementSettings(QWidget* parent) : QWidget(parent) {
+    form_ = new QFormLayout(this);
+    form_->setContentsMargins(8, 6, 8, 8);
+    color_ = new QPushButton(QStringLiteral("Color…"), this);
+    auto number = [&](double lo, double hi, double step, const QString& suffix) {
+        auto* sp = new QDoubleSpinBox(this);
+        sp->setRange(lo, hi);
+        sp->setSingleStep(step);
+        sp->setDecimals(2);
+        sp->setSuffix(suffix);
+        return sp;
+    };
+    intensity_ = number(0, 10000, 0.5, {});
+    range_ = number(0.1, 100000, 1, QStringLiteral(" m"));
+    cone_ = number(1, 170, 5, QStringLiteral("°"));
+    softness_ = number(0, 1, 0.05, {});
+    auto* note = new QLabel(QStringLiteral("For the next light placed. Click to place it, then click where it aims."), this);
+    note->setWordWrap(true);
+    note->setProperty("hint", true);
+    form_->addRow(note);
+    form_->addRow(QStringLiteral("Color:"), color_);
+    form_->addRow(QStringLiteral("Brightness:"), intensity_);
+    form_->addRow(QStringLiteral("Range:"), range_);
+    form_->addRow(QStringLiteral("Cone angle:"), cone_);
+    form_->addRow(QStringLiteral("Softness:"), softness_);
+    connect(color_, &QPushButton::clicked, this, [this] {
+        SceneObject& d = placementDefaults(kind_);
+        const QColor c = QColorDialog::getColor(QColor::fromRgbF(d.color.r, d.color.g, d.color.b), this, QStringLiteral("Light Color"));
+        if (!c.isValid()) return;
+        d.color = Color((float)c.redF(), (float)c.greenF(), (float)c.blueF());
+        refresh();
+    });
+    auto bind = [this](QDoubleSpinBox* sp, double SceneObject::*field) {
+        connect(sp, &QDoubleSpinBox::valueChanged, this, [this, field](double v) {
+            if (!updating_) placementDefaults(kind_).*field = v;
+        });
+    };
+    bind(intensity_, &SceneObject::intensity);
+    bind(range_, &SceneObject::range);
+    bind(cone_, &SceneObject::coneAngle);
+    bind(softness_, &SceneObject::softness);
+    refresh();
+}
+
+void PlacementSettings::setKind(SceneObject::Kind kind) {
+    kind_ = kind;
+    refresh();
+}
+
+void PlacementSettings::refresh() {
+    updating_ = true;
+    const SceneObject& d = placementDefaults(kind_);
+    setButtonColor(color_, d.color);
+    intensity_->setValue(d.intensity);
+    range_->setValue(d.range);
+    cone_->setValue(d.coneAngle);
+    softness_->setValue(d.softness);
+    auto show = [&](QWidget* w, bool on) {
+        w->setVisible(on);
+        if (QWidget* label = form_->labelForField(w)) label->setVisible(on);
+    };
+    const bool distance = kind_ == SceneObject::PointLight || kind_ == SceneObject::SpotLight;
+    show(range_, distance);
+    show(cone_, kind_ == SceneObject::SpotLight);
+    show(softness_, kind_ == SceneObject::SpotLight);
+    updating_ = false;
 }
 
 ScenePanel::ScenePanel(Document* doc, Viewport* vp, QWidget* parent) : QWidget(parent), doc_(doc), vp_(vp) {
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(6, 6, 6, 6);
-    auto* addRow = new QHBoxLayout();
+    addRow_ = new QWidget(this);
+    auto* addRow = new QHBoxLayout(addRow_);
+    addRow->setContentsMargins(0, 0, 0, 0);
     struct Add { ToolId id; const char* tip; };
     for (const Add& a : {Add{ToolId::PlacePointLight, "Add a point light"}, Add{ToolId::PlaceSpotLight, "Add a spot light"},
                          Add{ToolId::PlaceDirectionalLight, "Add a directional light"}, Add{ToolId::PlaceCamera, "Place a camera"}}) {
@@ -182,7 +278,7 @@ ScenePanel::ScenePanel(Document* doc, Viewport* vp, QWidget* parent) : QWidget(p
         addRow->addWidget(b);
     }
     addRow->addStretch(1);
-    lay->addLayout(addRow);
+    lay->addWidget(addRow_);
 
     list_ = new QListWidget(this);
     list_->setMaximumHeight(120);

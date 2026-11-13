@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Icons.h"
+#include "Theme.h"
 
 #include <QGuiApplication>
 #include <QHash>
+#include <QIconEngine>
 #include <QPainter>
 #include <QScreen>
 #include <QSvgRenderer>
@@ -17,6 +19,25 @@ const char* svgFor(const QString& n) {
         {"light_point", R"svg(<circle cx="12" cy="12" r="5" fill="#f7cd46" stroke="#7d5e0c" stroke-width="1"/><path d="M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 M5 5 L7 7 M17 17 L19 19 M19 5 L17 7 M7 17 L5 19" stroke="#b78a10" stroke-width="1.6" stroke-linecap="round"/>)svg"},
         {"light_spot", R"svg(<path d="M8 2.5 L16 2.5 L14.5 8 L9.5 8 Z" fill="#556" stroke="#223" stroke-width="1"/><path d="M9.5 8 L14.5 8 L21 21.5 L3 21.5 Z" fill="#f7e08a" stroke="#b78a10" stroke-width="1" stroke-linejoin="round"/>)svg"},
         {"light_directional", R"svg(<circle cx="5.5" cy="5.5" r="3.5" fill="#f7cd46" stroke="#7d5e0c" stroke-width="1"/><path d="M9 11 L19 21 M13 7 L21 15 M7 13 L15 21" stroke="#b78a10" stroke-width="1.5" stroke-linecap="round"/>)svg"},
+        {"look_through", R"svg(<path d="M2 12 C5.5 6 18.5 6 22 12 C18.5 18 5.5 18 2 12 Z" fill="#dfe6ee" stroke="#222" stroke-width="1.2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.6" fill="#2f7de1" stroke="#1d3b66" stroke-width="1"/><circle cx="12" cy="12" r="1.4" fill="#222"/>)svg"},
+        {"component", R"svg(<path d="M12 3 L20.5 7.5 L12 12 L3.5 7.5 Z" fill="#dfe6ee" stroke="#222" stroke-width="1.1" stroke-linejoin="round"/><path d="M3.5 7.5 L12 12 L12 21 L3.5 16.5 Z" fill="#b9c4d1" stroke="#222" stroke-width="1.1" stroke-linejoin="round"/><path d="M12 12 L20.5 7.5 L20.5 16.5 L12 21 Z" fill="#8ea0b5" stroke="#222" stroke-width="1.1" stroke-linejoin="round"/>)svg"},
+        {"eye", R"svg(<path d="M2 12 C5.5 6 18.5 6 22 12 C18.5 18 5.5 18 2 12 Z" fill="#fff" stroke="#222" stroke-width="1.4" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.3" fill="#222"/>)svg"},
+        {"lock", R"svg(<path d="M7.5 11 L7.5 8 A4.5 4.5 0 0 1 16.5 8 L16.5 11" fill="none" stroke="#222" stroke-width="1.8"/><rect x="5" y="11" width="14" height="10" rx="1.5" fill="#f2c230" stroke="#222" stroke-width="1.2"/>)svg"},
+        {"layer_add", R"svg(<path d="M3 15 L12 19.5 L21 15 M3 11 L12 15.5 L21 11 L12 6.5 Z" fill="#dfe6ee" stroke="#222" stroke-width="1.1" stroke-linejoin="round"/><path d="M18 2 L18 9 M14.5 5.5 L21.5 5.5" stroke="#2fae3a" stroke-width="2.2" stroke-linecap="round"/>)svg"},
+        {"layer_delete", R"svg(<path d="M3 15 L12 19.5 L21 15 M3 11 L12 15.5 L21 11 L12 6.5 Z" fill="#dfe6ee" stroke="#222" stroke-width="1.1" stroke-linejoin="round"/><path d="M15 3 L21 9 M21 3 L15 9" stroke="#d6262e" stroke-width="2.2" stroke-linecap="round"/>)svg"},
+        {"anim_first", R"svg(<path d="M6 5 L6 19" stroke="#222" stroke-width="2.2" stroke-linecap="round"/><path d="M19 5 L8.5 12 L19 19 Z" fill="#2f7de1" stroke="#222" stroke-width="1" stroke-linejoin="round"/>)svg"},
+        {"anim_prevkey", R"svg(<path d="M15 5 L5 12 L15 19 Z" fill="#2f7de1" stroke="#222" stroke-width="1" stroke-linejoin="round"/><circle cx="19" cy="12" r="2.5" fill="#222"/>)svg"},
+        {"anim_nextkey", R"svg(<path d="M9 5 L19 12 L9 19 Z" fill="#2f7de1" stroke="#222" stroke-width="1" stroke-linejoin="round"/><circle cx="5" cy="12" r="2.5" fill="#222"/>)svg"},
+        {"anim_play", R"svg(<path d="M7 4 L20 12 L7 20 Z" fill="#2fae3a" stroke="#222" stroke-width="1.2" stroke-linejoin="round"/>)svg"},
+        {"anim_pause", R"svg(<rect x="6" y="5" width="4.5" height="14" fill="#2f7de1" stroke="#222" stroke-width="1"/><rect x="13.5" y="5" width="4.5" height="14" fill="#2f7de1" stroke="#222" stroke-width="1"/>)svg"},
+        {"anim_loop", R"svg(<path d="M5 13 A7 6 0 0 1 17.5 8.2" fill="none" stroke="#222" stroke-width="1.8" stroke-linecap="round"/><path d="M19 11 A7 6 0 0 1 6.5 15.8" fill="none" stroke="#222" stroke-width="1.8" stroke-linecap="round"/><path d="M15 5.5 L19.5 8.5 L15 11 Z" fill="#2f7de1"/><path d="M9 13 L4.5 15.5 L9 18.5 Z" fill="#2f7de1"/>)svg"},
+        {"anim_key", R"svg(<rect x="3" y="4" width="18" height="16" fill="#dfe6ee" stroke="#222" stroke-width="1.1"/><circle cx="12" cy="14" r="3.5" fill="#222"/><path d="M12 2 L12 8 M9 5 L15 5" stroke="#2fae3a" stroke-width="2" stroke-linecap="round"/>)svg"},
+        {"anim_unkey", R"svg(<rect x="3" y="4" width="18" height="16" fill="#dfe6ee" stroke="#222" stroke-width="1.1"/><circle cx="12" cy="14" r="3.5" fill="none" stroke="#222" stroke-width="1.4"/><path d="M9 5 L15 5" stroke="#d6262e" stroke-width="2" stroke-linecap="round"/>)svg"},
+        {"anim_tween", R"svg(<rect x="2.5" y="7" width="19" height="10" fill="#9fc7f5" stroke="#222" stroke-width="1"/><circle cx="5" cy="14" r="1.8" fill="#222"/><path d="M7.5 12 L18.5 12 M15.5 9.5 L18.5 12 L15.5 14.5" fill="none" stroke="#222" stroke-width="1.3"/>)svg"},
+        {"anim_autokey", R"svg(<circle cx="12" cy="12" r="8.5" fill="#d6262e" stroke="#222" stroke-width="1.1"/><circle cx="12" cy="12" r="3.2" fill="#fff"/>)svg"},
+        {"fx_detriangulate", R"svg(<path d="M3 20 L12 4 L21 20 Z" fill="#dfe6ee" stroke="#222" stroke-width="1.2" stroke-linejoin="round"/><path d="M12 4 L9 20 M12 4 L15 20" stroke="#d6262e" stroke-width="1" stroke-dasharray="1.6 1.4"/>)svg"},
+        {"fx_hollow", R"svg(<rect x="3" y="4" width="18" height="16" rx="1.5" fill="#8ea0b5" stroke="#222" stroke-width="1.2"/><rect x="7" y="8" width="10" height="8" rx="1" fill="#fff" stroke="#222" stroke-width="1"/>)svg"},
+        {"fx_solidify", R"svg(<path d="M12 3 L20.5 7.5 L12 12 L3.5 7.5 Z" fill="#dfe6ee" stroke="#222" stroke-width="1.1" stroke-linejoin="round"/><path d="M3.5 7.5 L12 12 L12 21 L3.5 16.5 Z" fill="#8ea0b5" stroke="#222" stroke-width="1.1" stroke-linejoin="round"/><path d="M12 12 L20.5 7.5 L20.5 16.5 L12 21 Z" fill="#5f7590" stroke="#222" stroke-width="1.1" stroke-linejoin="round"/><path d="M14.5 13 L18.5 11 M14.5 16 L18.5 14" stroke="#fff" stroke-width="1"/>)svg"},
         {"camera_place", R"svg(<rect x="2.5" y="7" width="13" height="10" rx="1.5" fill="#6d7c8e" stroke="#223" stroke-width="1"/><path d="M15.5 10.5 L21.5 7.5 L21.5 16.5 L15.5 13.5 Z" fill="#b9c4d1" stroke="#223" stroke-width="1" stroke-linejoin="round"/><circle cx="6" cy="4.5" r="2.2" fill="none" stroke="#223" stroke-width="1"/><circle cx="11.5" cy="4.5" r="2.2" fill="none" stroke="#223" stroke-width="1"/>)svg"},
         {"select", R"svg(<path d="M6 2.5 L6 19 L10 15.2 L12.8 21.5 L15.6 20.3 L12.9 14.2 L18.2 14.2 Z" fill="#111" stroke="#fff" stroke-width="1.1" stroke-linejoin="round"/>)svg"},
         {"eraser", R"svg(<g transform="rotate(-38 12 12)"><rect x="3" y="8" width="18" height="8.5" rx="1.6" fill="#f08a96" stroke="#7a2a33" stroke-width="1"/><rect x="3" y="8" width="6.5" height="8.5" rx="1.4" fill="#f4f1ec" stroke="#7a2a33" stroke-width="1"/><path d="M11 9.2 L19.5 9.2" stroke="#fbd0d6" stroke-width="1.2"/></g>)svg"},
@@ -29,7 +50,7 @@ const char* svgFor(const QString& n) {
         {"arc", R"svg(<path d="M3.5 18 A9 9 0 0 1 20.5 18" fill="none" stroke="#222" stroke-width="1.6"/><path d="M3.5 18 L20.5 18" stroke="#d6262e" stroke-width="1" stroke-dasharray="2 1.5"/><circle cx="3.5" cy="18" r="1.8" fill="#d6262e"/><circle cx="20.5" cy="18" r="1.8" fill="#d6262e"/><circle cx="12" cy="9.5" r="1.4" fill="#2f7de1"/>)svg"},
         {"pushpull", R"svg(<path d="M3 13 L12 9 L21 13 L12 17 Z" fill="#f3f3f3" stroke="#222" stroke-width="1"/><path d="M3 13 L3 18 L12 22 L12 17 Z" fill="#b9c4d1" stroke="#222" stroke-width="1"/><path d="M12 17 L12 22 L21 18 L21 13 Z" fill="#8ea0b5" stroke="#222" stroke-width="1"/><path d="M12 13 L12 3.5" stroke="#d6262e" stroke-width="2.2"/><path d="M8.3 6.5 L12 2 L15.7 6.5 Z" fill="#d6262e"/>)svg"},
         {"move", R"svg(<g fill="#d6262e" stroke="#7d1015" stroke-width=".7" stroke-linejoin="round"><path d="M12 1.5 L15.5 5.5 L13.3 5.5 L13.3 10.7 L18.5 10.7 L18.5 8.5 L22.5 12 L18.5 15.5 L18.5 13.3 L13.3 13.3 L13.3 18.5 L15.5 18.5 L12 22.5 L8.5 18.5 L10.7 18.5 L10.7 13.3 L5.5 13.3 L5.5 15.5 L1.5 12 L5.5 8.5 L5.5 10.7 L10.7 10.7 L10.7 5.5 L8.5 5.5 Z"/></g>)svg"},
-        {"rotate", R"svg(<path d="M19 12 A7 7 0 1 1 15.5 5.9" fill="none" stroke="#d6262e" stroke-width="2.6" stroke-linecap="round"/><path d="M13.2 2.2 L20 4.5 L15.4 9.8 Z" fill="#d6262e"/><circle cx="12" cy="12" r="1.6" fill="#222"/>)svg"},
+        {"rotate", R"svg(<path d="M2.5 18.0 L2.5 16.5 A9.5 9.5 0 0 1 21.5 16.5 L21.5 18.0 Z" fill="#f2c230" fill-opacity=".55" stroke="#222" stroke-width="1.1" stroke-linejoin="round"/><path d="M21.50 16.50 L18.90 16.50 M21.18 14.04 L19.73 14.43 M20.23 11.75 L18.93 12.50 M18.72 9.78 L16.88 11.62 M16.75 8.27 L16.00 9.57 M14.46 7.32 L14.07 8.77 M12.00 7.00 L12.00 9.60 M9.54 7.32 L9.93 8.77 M7.25 8.27 L8.00 9.57 M5.28 9.78 L7.12 11.62 M3.77 11.75 L5.07 12.50 M2.82 14.04 L4.27 14.43 M2.50 16.50 L5.10 16.50" stroke="#222" stroke-width=".8"/><path d="M17.20 16.50 A5.2 5.2 0 0 0 14.76 12.09" fill="none" stroke="#2f7de1" stroke-width="1.2"/><path d="M12.00 16.50 L18.09 6.75" stroke="#d6262e" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="16.5" r="1.5" fill="#fff" stroke="#222" stroke-width="1"/>)svg"}, // a protractor
         {"scale", R"svg(<rect x="3" y="9" width="12" height="12" fill="#dfe6ee" stroke="#222" stroke-width="1.2"/><rect x="3" y="3" width="18" height="18" fill="none" stroke="#222" stroke-width="1" stroke-dasharray="2 1.5"/><path d="M10 14 L19 5" stroke="#d6262e" stroke-width="2"/><path d="M14.5 4 L20.5 3.5 L20 9.5 Z" fill="#d6262e"/><rect x="1.8" y="19.8" width="2.6" height="2.6" fill="#2fae3a"/><rect x="19.6" y="1.6" width="2.6" height="2.6" fill="#2fae3a"/>)svg"},
         {"roundcorners", R"svg(<path d="M3 21 L3 11 A8 8 0 0 1 11 3 L21 3" fill="none" stroke="#222" stroke-width="1.6"/><path d="M3 21 L3 3 L21 3" fill="none" stroke="#d6262e" stroke-width="1" stroke-dasharray="2 1.5"/><path d="M5.3 5.3 L8.4 8.4" stroke="#2f7de1" stroke-width="1.4"/><circle cx="11" cy="11" r="1.5" fill="#2f7de1"/><circle cx="3" cy="11" r="1.6" fill="#d6262e"/><circle cx="11" cy="3" r="1.6" fill="#d6262e"/>)svg"},
         {"traceimage", R"svg(<rect x="2.5" y="3.5" width="19" height="17" fill="#e8f1fb" stroke="#556" stroke-width="1"/><path d="M5 18 L9.5 10 L12.5 14.5 L15 11.5 L19 18 Z" fill="#9fb4c9"/><path d="M5 18 L9.5 10 L12.5 14.5 L15 11.5 L19 18 Z" fill="none" stroke="#d6262e" stroke-width="1.5" stroke-linejoin="round"/><circle cx="16.5" cy="7.5" r="1.8" fill="#f2c230"/>)svg"},
@@ -96,14 +117,17 @@ const char* svgFor(const QString& n) {
 
 } // namespace
 
-QPixmap pixmap(const QString& name, int size) {
+namespace {
+
+QPixmap render(const QString& name, int size, qreal dpr, bool themed) {
     const char* body = svgFor(name);
-    qreal dpr = qApp ? qApp->devicePixelRatio() : 1.0;
     QPixmap pm(QSize(size, size) * dpr);
     pm.setDevicePixelRatio(dpr);
     pm.fill(Qt::transparent);
     if (!body) return pm;
-    QByteArray svg = QByteArray("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>") + body + "</svg>";
+    QByteArray inner(body);
+    if (themed) inner = Theme::recolorSvg(inner, Theme::current());
+    QByteArray svg = QByteArray("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>") + inner + "</svg>";
     QSvgRenderer r(svg);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
@@ -111,15 +135,56 @@ QPixmap pixmap(const QString& name, int size) {
     return pm;
 }
 
-QIcon get(const QString& name) {
-    static QHash<QString, QIcon> cache;
-    auto it = cache.find(name);
-    if (it != cache.end()) return it.value();
-    QIcon icon;
-    for (int s : {16, 20, 24, 32, 48}) icon.addPixmap(pixmap(name, s));
-    cache.insert(name, icon);
-    return icon;
+// Draws the named icon in the colours of the current theme each time it is
+// asked for, so a change in Window -> Settings repaints every icon in place.
+class ThemedIconEngine : public QIconEngine {
+public:
+    explicit ThemedIconEngine(QString name) : name_(std::move(name)) {}
+    QIconEngine* clone() const override { return new ThemedIconEngine(name_); }
+    QString key() const override { return QStringLiteral("gs-themed"); }
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override { return scaledPixmap(size, mode, state, 1.0); }
+    QPixmap scaledPixmap(const QSize& size, QIcon::Mode mode, QIcon::State, qreal scale) override {
+        const int s = std::max(1, std::min(size.width(), size.height()));
+        const QString k = QStringLiteral("%1|%2|%3|%4").arg(s).arg(scale).arg(int(mode)).arg(Theme::revision());
+        if (auto it = cache_.find(k); it != cache_.end()) return it.value();
+        if (cacheRev_ != Theme::revision()) { cache_.clear(); cacheRev_ = Theme::revision(); }
+        QPixmap pm = render(name_, s, scale, true);
+        if (mode == QIcon::Disabled) {
+            QPixmap faded(pm.size());
+            faded.setDevicePixelRatio(pm.devicePixelRatio());
+            faded.fill(Qt::transparent);
+            QPainter p(&faded);
+            p.setOpacity(0.35);
+            p.drawPixmap(0, 0, pm);
+            p.end();
+            pm = faded;
+        }
+        cache_.insert(k, pm);
+        return pm;
+    }
+    void paint(QPainter* p, const QRect& rect, QIcon::Mode mode, QIcon::State state) override {
+        const qreal dpr = p->device() ? p->device()->devicePixelRatioF() : 1.0;
+        p->drawPixmap(rect, scaledPixmap(rect.size(), mode, state, dpr));
+    }
+    QSize actualSize(const QSize& size, QIcon::Mode, QIcon::State) override {
+        const int s = std::min(size.width(), size.height());
+        return QSize(s, s);
+    }
+    QList<QSize> availableSizes(QIcon::Mode, QIcon::State) override { return {{16, 16}, {20, 20}, {24, 24}, {32, 32}, {48, 48}}; }
+
+private:
+    QString name_;
+    QHash<QString, QPixmap> cache_;
+    int cacheRev_ = -1;
+};
+
+} // namespace
+
+QPixmap pixmap(const QString& name, int size) {
+    return render(name, size, qApp ? qApp->devicePixelRatio() : 1.0, true);
 }
+
+QIcon get(const QString& name) { return QIcon(new ThemedIconEngine(name)); }
 
 QString toolIconName(ToolId id) {
     switch (id) {
@@ -173,7 +238,7 @@ QCursor toolCursor(ToolId id) {
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
-    auto icon = [&](const QString& n, int x, int y, int s) { p.drawPixmap(x, y, pixmap(n, s)); };
+    auto icon = [&](const QString& n, int x, int y, int s) { p.drawPixmap(x, y, render(n, s, dpr, false)); };
     int hx = 0, hy = 0;
     switch (id) {
     case ToolId::Select:

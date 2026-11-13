@@ -41,7 +41,9 @@ class MaterialEditor;
 class MaterialBrowser;
 class PrefabBrowser;
 struct EffectDef;
-class TraySection;
+class PropertiesPanel;
+class PlacementSettings;
+class AnimatorPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -90,6 +92,20 @@ private:
     void exportObj();
     void exportGltf();
     void exportStl();
+    // 3D printing exports (io/PrintExport.h); asks for the unit, defaulting to the model's.
+    void exportForPrint(int format);
+    // 3D printing files (io/PrintImport.h): asks for the unit when the file has none.
+    void importForPrint(const QString& ext);
+    bool importPrintFile(const QString& path, bool intoEmpty);
+    void showSettings();
+public:
+    // Open Recent: most recent first, missing files dropped.
+    QStringList recentFiles() const;
+    void addRecentFile(const QString& path);
+    void clearRecentFiles();
+private:
+    void rebuildRecentMenu();
+    class QMenu* recentMenu_ = nullptr;
     // file format plugins (Plugins.h): File > Import / Export entries, Help > Plugins
     bool importWithPlugin(FormatPlugin* f, const QString& path, bool intoEmpty);
     void importPlugin(FormatPlugin* f);
@@ -141,14 +157,19 @@ private:
     EntityProperties* entityProps_ = nullptr;
     HierarchyPanel* hierarchy_ = nullptr;
     QDockWidget* hierarchyDock_ = nullptr;
+    QAction* sceneAct_ = nullptr;      // Scene toolbar: shows the Properties panel
+    PropertiesPanel* properties_ = nullptr;
+    PlacementSettings* placement_ = nullptr;
+    AnimatorPanel* animator_ = nullptr;
+    QDockWidget *propertiesDock_ = nullptr, *materialsDock_ = nullptr, *instructorDock_ = nullptr, *environmentDock_ = nullptr,
+                *animatorDock_ = nullptr;
+    void applyUiSizes(); // icon size from Window > Settings
     MaterialEditor* materialEditor_ = nullptr;
     MaterialBrowser* materialBrowser_ = nullptr;
     PrefabBrowser* prefabBrowser_ = nullptr;
     const EffectDef* lastEffect_ = nullptr;
     QProcess* game_ = nullptr;
     std::unique_ptr<QTemporaryDir> gameDir_;
-    QDockWidget* trayDock_ = nullptr;
-    std::map<QString, TraySection*> sections_;
 
     QLabel* statusLabel_ = nullptr;
     QLabel* vcbLabel_ = nullptr;
@@ -159,7 +180,7 @@ private:
     QAction *undoAct_ = nullptr, *redoAct_ = nullptr;
     QAction *perspectiveAct_ = nullptr, *parallelAct_ = nullptr;
     QAction *xrayAct_ = nullptr, *backEdgesAct_ = nullptr, *axesAct_ = nullptr, *guidesAct_ = nullptr,
-            *hiddenAct_ = nullptr, *edgesAct_ = nullptr, *profilesAct_ = nullptr, *shadowsAct_ = nullptr, *aoAct_ = nullptr,
+            *hiddenAct_ = nullptr, *edgesAct_ = nullptr, *profilesAct_ = nullptr, *shadowsAct_ = nullptr, *cinematicAct_ = nullptr, *aoAct_ = nullptr,
             *antialiasAct_ = nullptr, *sunAct_ = nullptr, *cullAct_ = nullptr, *objectsAct_ = nullptr;
     std::map<int, QAction*> faceStyleActs_;
     std::map<QString, QAction*> acts_;

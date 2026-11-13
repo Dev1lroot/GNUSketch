@@ -3,61 +3,13 @@
 #include "app/GameMode.h"
 #include "app/MainWindow.h"
 #include "app/SelfTest.h"
+#include "app/Theme.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
-#include <QPalette>
-#include <QStyleFactory>
 #include <QSurfaceFormat>
 #include <QTimer>
 
-namespace {
-
-void applyLightTheme(QApplication& app) {
-    // A light, classic desktop look regardless of the system theme.
-    app.setStyle(QStyleFactory::create("Fusion"));
-    QPalette p;
-    p.setColor(QPalette::Window, QColor(240, 240, 240));
-    p.setColor(QPalette::WindowText, Qt::black);
-    p.setColor(QPalette::Base, Qt::white);
-    p.setColor(QPalette::AlternateBase, QColor(246, 246, 246));
-    p.setColor(QPalette::ToolTipBase, QColor(255, 255, 225));
-    p.setColor(QPalette::ToolTipText, Qt::black);
-    p.setColor(QPalette::Text, Qt::black);
-    p.setColor(QPalette::Button, QColor(240, 240, 240));
-    p.setColor(QPalette::ButtonText, Qt::black);
-    p.setColor(QPalette::BrightText, Qt::red);
-    p.setColor(QPalette::Highlight, QColor(0, 120, 215));
-    p.setColor(QPalette::HighlightedText, Qt::white);
-    p.setColor(QPalette::Link, QColor(0, 102, 204));
-    p.setColor(QPalette::PlaceholderText, QColor(120, 120, 120));
-    p.setColor(QPalette::Disabled, QPalette::Text, QColor(150, 150, 150));
-    p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(150, 150, 150));
-    p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(150, 150, 150));
-    app.setPalette(p);
-    app.setStyleSheet(R"(
-        QMainWindow::separator { background: #d8d8d8; width: 4px; height: 4px; }
-        QToolBar { background: #f0f0f0; border: none; spacing: 1px; padding: 2px; }
-        QToolBar::separator { background: #c8c8c8; width: 1px; height: 1px; margin: 4px; }
-        QToolButton { border: 1px solid transparent; border-radius: 2px; padding: 2px; }
-        QToolButton:hover { border: 1px solid #9cc4ea; background: #e5f1fb; }
-        QToolButton:checked { border: 1px solid #569de5; background: #cce4f7; }
-        QToolButton#TrayHeader { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fafafa, stop:1 #e6e6e6);
-                                 border: 1px solid #cfcfcf; border-radius: 0; text-align: left; padding: 3px 4px; font-weight: 600; }
-        QToolButton#TrayHeader:hover { background: #e9f2fb; }
-        QToolButton#FlatTab { border: none; border-bottom: 2px solid transparent; padding: 2px 8px; }
-        QToolButton#FlatTab:checked { background: transparent; border-bottom: 2px solid #3b6fb6; }
-        QDockWidget::title { background: #e9e9e9; padding: 4px; border-bottom: 1px solid #d0d0d0; }
-        QStatusBar { background: #f0f0f0; border-top: 1px solid #d0d0d0; }
-        QStatusBar::item { border: none; }
-        QToolButton#MapThumb { border: 1px dashed #a9b3bd; background: #f7f8f9; color: #8a95a0; font-size: 16px; }
-        QToolButton#MapThumb:hover { border: 1px solid #569de5; background: #e5f1fb; }
-        QPushButton#CreateMaterial { font-weight: 600; padding: 5px; }
-        QLineEdit#Measurements { border: 1px solid #a8a8a8; padding: 1px 4px; background: white; }
-    )");
-}
-
-} // namespace
 
 int main(int argc, char** argv) {
     QSurfaceFormat fmt;
@@ -75,7 +27,7 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName("GNUSketch");
     QApplication::setOrganizationName("GNUSketch");
     QApplication::setApplicationVersion("0.1.0");
-    applyLightTheme(app);
+    gs::Theme::applyStored();
 
     QCommandLineParser parser;
     parser.setApplicationDescription("Native 3D sketching tool");
@@ -85,6 +37,8 @@ int main(int argc, char** argv) {
     parser.addOption(selfTest);
     QCommandLineOption glProbe("gl-probe", "Create an offscreen OpenGL context, render one frame with the real renderer and exit (no window).");
     parser.addOption(glProbe);
+    QCommandLineOption shots("screenshots", "Render the README pictures into a folder and exit (use tools/readme-media.sh).", "dir");
+    parser.addOption(shots);
     QCommandLineOption game("game", "Walk around a saved model in the Game Mode window.", "model");
     parser.addOption(game);
     QCommandLineOption spawn("spawn", "Game Mode: where the character stands (x,y,z in meters).", "point", "0,0,0");
@@ -106,6 +60,10 @@ int main(int argc, char** argv) {
     if (!parser.positionalArguments().isEmpty()) w.openFile(parser.positionalArguments().first());
     w.show();
 
+    if (parser.isSet(shots)) {
+        const QString dir = parser.value(shots);
+        QTimer::singleShot(300, &w, [&w, dir] { QApplication::exit(gs::runScreenshots(w, dir)); });
+    }
     if (parser.isSet(selfTest)) {
         QTimer::singleShot(300, &w, [&w] { QApplication::exit(gs::runSelfTest(w)); });
     }

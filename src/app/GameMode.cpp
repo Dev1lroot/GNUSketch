@@ -124,6 +124,9 @@ bool GameWindow::load(const QString& path, const Vec3& feet, double yaw, QString
     s.xray = s.backEdges = false;
     s.edges = false;
     if (s.faceStyle == RenderStyle::Wireframe || s.faceStyle == RenderStyle::HiddenLine) s.faceStyle = RenderStyle::ShadedTextures;
+    // Real sun shadows: always on here, sharp near the player with soft,
+    // contact-hardening edges (Renderer::setSoftShadows).
+    s.shadows = true;
     doc_.selection.clear();
 
     // Entities first: their parts leave the static collision world.
@@ -139,11 +142,16 @@ bool GameWindow::load(const QString& path, const Vec3& feet, double yaw, QString
     bool any;
     modelBounds(doc_.state, mn, mx, any);
     if (any) camera_.setSceneRadius((mn + mx) * 0.5, (mx - mn).length() * 0.5);
+    // The sharp shadow area: the whole of a small model, 40 m around the
+    // player in a large one (the rest uses the coarser whole-model map).
+    shadowRadius_ = any ? std::clamp((mx - mn).length() * 0.6, 6.0, 40.0) : 40.0;
+    renderer_.setSoftShadows(true, shadowRadius_);
     return true;
 }
 
 void GameWindow::initializeGL() {
     glOk_ = renderer_.initialize(&glError_);
+    renderer_.setSoftShadows(true, shadowRadius_);
     clock_.start();
 }
 
@@ -217,7 +225,7 @@ void GameWindow::paintGL() {
     hud.setPen(QPen(QColor(255, 255, 255, 200), 1.5));
     hud.drawEllipse(c, 2, 2);
     const QString text = captured_
-        ? QStringLiteral("WASD walk   E press   Shift run   Space jump   R back to start   Tab edges   F11 full screen   Esc free the mouse")
+        ? QStringLiteral("WASD walk   E press   Shift run   Space jump   R back to start   Tab edges   F5 cinematic lighting %1   F11 full screen   Esc free the mouse").arg(doc_.style.cinematic ? QStringLiteral("on") : QStringLiteral("off"))
         : QStringLiteral("Click to look around with the mouse   Esc again to leave");
     QFont f = hud.font();
     f.setPointSizeF(9.5);
@@ -296,6 +304,11 @@ void GameWindow::keyPressEvent(QKeyEvent* e) {
         return;
     case Qt::Key_F11:
         setWindowState(windowState() ^ Qt::WindowFullScreen);
+        return;
+    case Qt::Key_F5:
+        // Ray traced shadows from the sun and the lights, light rays.
+        doc_.style.cinematic = !doc_.style.cinematic;
+        update();
         return;
     default: break;
     }

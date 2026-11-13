@@ -253,6 +253,14 @@ bool PlanarShapeTool::keyPress(QKeyEvent* e) {
     return true;
 }
 
+void PlanarShapeTool::holdAxis(int axis) {
+    if (axis >= 0 && heldAxis_ < 0) heldSaved_ = forcedAxis_;
+    forcedAxis_ = axis >= 0 ? axis : heldSaved_;
+    heldAxis_ = axis;
+    mouseMove(lastMouse_);
+    update();
+}
+
 Plane PlanarShapeTool::resolvePlane(const MouseEvent& e, const Vec3& p0, Id startFace) {
     if (forcedAxis_ >= 0) return Plane(kAxes[forcedAxis_], p0);
     if (startFace != kNone && mesh().faces[startFace].alive) return mesh().facePlane(startFace);
@@ -338,10 +346,16 @@ void RectangleTool::mouseMove(const MouseEvent& e) {
     int axis = forcedAxis_ < 0 ? cursorAxis(e) : -1;
     plane_ = axis >= 0 ? Plane(kAxes[axis], p0_) : resolvePlane(e, p0_, startFace_);
     shapeBasis(plane_.n, u_, v_);
+    snapDistance_ = false; // each side snaps on its own
     InferenceResult r = inferPoint(e, p0_, plane_);
+    snapDistance_ = true;
     Vec3 d = r.p - p0_;
     w_ = d.dot(u_);
     h_ = d.dot(v_);
+    if (lengthSnappable(r)) {
+        w_ = snapLen(w_);
+        h_ = snapLen(h_);
+    }
     hint_.clear();
     double px = cam().pixelSize(r.p);
     if (!r.isSnap() && std::fabs(w_) > px * 10) {

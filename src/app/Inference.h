@@ -69,6 +69,9 @@ public:
     // World normal of the front-most face under the cursor, loose or of a
     // component (zero if there is none).
     Vec3 faceNormalAt(double px, double py, const std::set<Id>* excludeVerts = nullptr) const;
+    // Front-most face under the cursor, loose or of a component: where the
+    // cursor ray hits it and its world normal. False if there is none.
+    bool faceUnder(double px, double py, const std::set<Id>* excludeVerts, Vec3& point, Vec3& normal) const;
     Id pickEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts = nullptr) const;
     int pickGuide(double px, double py, double tolPx) const;
     // Closest component instance at the level being edited under the cursor;
@@ -124,6 +127,8 @@ private:
     const Mesh& sourceMesh(const PlacedInstance& p) const {
         return p.def == kNone ? doc_.state.mesh : doc_.state.defs[p.def].mesh;
     }
+    // X-ray or back edges on: geometry behind faces can be snapped to.
+    bool seeThrough() const { return doc_.style.xray || doc_.style.backEdges; }
     bool excluded(Id v, const Options& o) const { return o.excludeVerts && o.excludeVerts->count(v); }
     // pickEdge with the nearest face hit distance already known (for occlusion).
     Id pickEdgeT(double px, double py, double tolPx, const std::set<Id>* excludeVerts, double tFace) const;

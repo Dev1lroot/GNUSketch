@@ -509,6 +509,17 @@ void Viewport::keyPressEvent(QKeyEvent* e) {
         setTyped(typed + t);
         return;
     }
+    // Holding X, Y or Z keeps the tool on the red, green or blue axis (what
+    // the arrow keys lock in each tool) until the key is let go.
+    if (const int arrow = axisArrowFor(e); arrow && tool_ && !(e->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+        if (!e->isAutoRepeat() && heldAxisArrow_ != arrow) {
+            heldAxisArrow_ = arrow;
+            heldAxisTool_ = tool_.get();
+            tool_->holdAxis(arrow == Qt::Key_Right ? 0 : arrow == Qt::Key_Left ? 1 : 2);
+            refreshToolStatus();
+        }
+        return;
+    }
     doc_->mesh().viewHint = camera_.eye;
     doc_->mesh().groundFacesDown = false;
     if (tool_ && tool_->keyPress(e)) {
@@ -518,7 +529,37 @@ void Viewport::keyPressEvent(QKeyEvent* e) {
     QOpenGLWidget::keyPressEvent(e);
 }
 
+int Viewport::axisArrowForKey(int key) {
+    switch (key) {
+    case Qt::Key_X: return Qt::Key_Right; // red
+    case Qt::Key_Y: return Qt::Key_Left;  // green
+    case Qt::Key_Z: return Qt::Key_Up;    // blue
+    default: return 0;
+    }
+}
+
+int Viewport::axisArrowFor(const QKeyEvent* e) {
+    if (int a = axisArrowForKey(e->key())) return a;
+    // Other keyboard layouts: the key in the X/Y/Z position.
+    switch (e->nativeVirtualKey()) {
+    case 'x': case 'X': return Qt::Key_Right;
+    case 'y': case 'Y': return Qt::Key_Left;
+    case 'z': case 'Z': return Qt::Key_Up;
+    default: return 0;
+    }
+}
+
+
 void Viewport::keyReleaseEvent(QKeyEvent* e) {
+    if (const int arrow = axisArrowFor(e); arrow && !e->isAutoRepeat() && arrow == heldAxisArrow_) {
+        if (tool_ && heldAxisTool_ == tool_.get()) {
+            tool_->holdAxis(-1);
+            refreshToolStatus();
+        }
+        heldAxisArrow_ = 0;
+        heldAxisTool_ = nullptr;
+        return;
+    }
     if (tool_ && tool_->keyRelease(e)) {
         update();
         return;

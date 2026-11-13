@@ -204,6 +204,59 @@ std::vector<EffectDef> buildRegistry() {
     }
     {
         EffectDef d;
+        d.name = d.menuText = QStringLiteral("De-triangulate");
+        d.submenu = QStringLiteral("Polygons");
+        d.icon = QStringLiteral("fx_detriangulate");
+        d.tip = QStringLiteral("Joins triangles back into polygons, for imported models (STL, 3MF...): flat neighbours become one face and the points in between on straight outlines go. Optionally pairs of triangles on curved surfaces become quads.");
+        d.params = {real("angle", QStringLiteral("Flatness tolerance"), 0, 5, 0.1, 2, QStringLiteral("°"), false,
+                         QStringLiteral("Neighbours this close to one plane count as flat (imported files are slightly uneven).")),
+                    flag("quads", QStringLiteral("Quads on curved surfaces"), false,
+                         QStringLiteral("Pairs of the remaining triangles become quads across their longest edge.")),
+                    real("quadAngle", QStringLiteral("Quad bend up to"), 1, 60, 30, 0, QStringLiteral("°"))};
+        d.apply = [](Mesh& m, const std::set<Id>& f, const QVariantMap& v, EffectResult* out, std::string* err) {
+            DetriangulateParams p;
+            p.angle = v["angle"].toDouble();
+            p.quads = v["quads"].toBool();
+            p.quadAngle = v["quadAngle"].toDouble();
+            return effectDetriangulate(m, f, p, out, err);
+        };
+        r.push_back(std::move(d));
+    }
+    {
+        EffectDef d;
+        d.name = d.menuText = QStringLiteral("Hollow");
+        d.submenu = QStringLiteral("Solid");
+        d.icon = QStringLiteral("fx_hollow");
+        d.tip = QStringLiteral("Makes a closed solid hollow with walls of this thickness (for 3D printing: less material). Works on any shape; where it is thinner than two walls it stays solid. The outside is not changed.");
+        d.params = {real("thickness", QStringLiteral("Wall thickness"), 0.0001, 10, 0.002, 4, QStringLiteral(" m"), true),
+                    whole("detail", QStringLiteral("Detail"), 16, 256, 96)};
+        d.params.back().tip = QStringLiteral("Grid cells along the longest side for the inner wall (more: finer, slower).");
+        d.apply = [](Mesh& m, const std::set<Id>& f, const QVariantMap& v, EffectResult* out, std::string* err) {
+            HollowParams p;
+            p.thickness = v["thickness"].toDouble();
+            p.detail = v["detail"].toInt();
+            return effectHollow(m, f, p, out, err);
+        };
+        r.push_back(std::move(d));
+    }
+    {
+        EffectDef d;
+        d.name = d.menuText = QStringLiteral("Solidify");
+        d.submenu = QStringLiteral("Solid");
+        d.icon = QStringLiteral("fx_solidify");
+        d.tip = QStringLiteral("Leaves one solid seen from outside: overlapping parts merge, inner walls, sealed hollows and loose sheets go, faces showing their back outside are turned around. Gaps narrower than a grid cell count as closed.");
+        d.params = {whole("detail", QStringLiteral("Detail"), 32, 400, 128), flag("merge", QStringLiteral("Merge overlapping parts"), true)};
+        d.params.front().tip = QStringLiteral("Grid cells along the longest side for finding the outside.");
+        d.apply = [](Mesh& m, const std::set<Id>& f, const QVariantMap& v, EffectResult* out, std::string* err) {
+            SolidifyParams p;
+            p.detail = v["detail"].toInt();
+            p.mergeParts = v["merge"].toBool();
+            return effectSolidify(m, f, p, out, err);
+        };
+        r.push_back(std::move(d));
+    }
+    {
+        EffectDef d;
         d.name = d.menuText = QStringLiteral("Merge Flat Faces");
         d.submenu = QStringLiteral("Polygons");
         d.tip = QStringLiteral("Joins connected faces lying in one plane with the same materials into single n-gons.");
@@ -235,7 +288,7 @@ EffectDialog::EffectDialog(const EffectDef& def, const QVariantMap& values, Prev
     if (!def.tip.isEmpty()) {
         auto* tip = new QLabel(def.tip, this);
         tip->setWordWrap(true);
-        tip->setStyleSheet(QStringLiteral("color: #555;"));
+        tip->setProperty("hint", true);
         top->addWidget(tip);
     }
     auto* form = new QFormLayout();

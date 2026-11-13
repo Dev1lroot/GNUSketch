@@ -90,8 +90,12 @@ public:
 
 private:
     void commit(double dist, bool keep);
+    // The faces a pick on f acts on: the whole face selection when f is part of it.
+    std::set<Id> facesFor(Id f);
     bool pulling_ = false, dragged_ = false;
     Id face_ = kNone, hover_ = kNone;
+    std::set<Id> faces_;     // all faces being pushed/pulled (contains face_)
+    std::set<Id> lastFaces_; // faces of the last commit (state before it)
     Vec3 start_, normal_;
     double dist_ = 0, lastDist_ = 0;
     Id lastFace_ = kNone; // face id (in the state before the last commit)
@@ -180,11 +184,21 @@ protected:
 
 private:
     Vec3 planeNormalAt(const MouseEvent& e, const InferenceResult& r);
+    // Angle snaps while rotating: world axes, the hovered edge and face, 15°
+    // steps; Shift = 5° steps. Returns the snapped angle (or `raw`).
+    double snapAngle(const MouseEvent& e, const InferenceResult& r, double raw);
+    bool keyRelease(QKeyEvent* e) override;
+public:
+    void holdAxis(int axis) override;
+private:
+    int heldSaved_ = -1;
     int stage_ = 0;
     int forcedAxis_ = -1;
     Vec3 center_, normal_ = Vec3(0, 0, 1), refDir_, cur_;
     double angle_ = 0;
     bool snapped_ = false;
+    Color snapColor_ = Color::rgb8(220, 0, 220);
+    QString snapLabel_;
 };
 
 // SketchUp-style scaling with grips on the selection's bounding box: corners
@@ -206,6 +220,16 @@ public:
     void mouseRelease(const MouseEvent& e) override;
     bool vcbEnter(const QString& text) override;
     void buildPreview(Preview& pv) override;
+
+    // The selection's box: its sizes along its axes (W red, L green, H blue;
+    // a single component's own axes). False without a selection.
+    bool boxLengths(Vec3& lengths) const;
+    enum class Anchor { BottomCentre, Corner, Centre };
+    // Scales the selection to these sizes (one undo step), keeping the anchor
+    // point of its box in place. Zero sizes stay as they are.
+    bool setDimensions(const Vec3& lengths, Anchor anchor);
+    // "W: 2000mm  L: 1000mm  H: 500mm" for sizes in meters.
+    QString dimensionText(const Vec3& lengths) const;
 
 protected:
     Mat4 currentTransform() const override;
@@ -238,6 +262,7 @@ private:
     double pressX_ = 0, pressY_ = 0;
     // The last scale, so a value typed afterwards can adjust it.
     bool canAdjust_ = false;
+    std::optional<Vec3> anchorOverride_; // setDimensions
     Box lastBox_;
     Grip lastGrip_ = {2, 2, 2};
     bool lastCentered_ = false;

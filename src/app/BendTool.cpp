@@ -66,6 +66,17 @@ bool BendTool::keyPress(QKeyEvent* e) {
     return true;
 }
 
+void BendTool::holdAxis(int axis) {
+    if (axis >= 0 && heldAxis_ < 0) heldSaved_ = forcedAxis_;
+    const int before = forcedAxis_;
+    forcedAxis_ = axis >= 0 ? axis : heldSaved_;
+    BendParams test;
+    if (stage_ >= 2 && !params(0, test)) forcedAxis_ = before; // the stretch cannot run along the axis
+    heldAxis_ = axis;
+    mouseMove(lastMouse_);
+    update();
+}
+
 bool BendTool::ensureSelection(const MouseEvent& e) {
     Document& d = doc();
     if (!d.selection.empty()) return true;

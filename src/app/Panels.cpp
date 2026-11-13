@@ -152,51 +152,6 @@ QImage makeStone(std::mt19937& rng) {
 } // namespace
 
 // ===========================================================================
-// Tray
-// ===========================================================================
-
-TraySection::TraySection(const QString& title, QWidget* content, QWidget* parent) : QWidget(parent), content_(content) {
-    auto* lay = new QVBoxLayout(this);
-    lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(0);
-    header_ = new QToolButton(this);
-    header_->setText(title);
-    header_->setCheckable(true);
-    header_->setChecked(true);
-    header_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    header_->setArrowType(Qt::DownArrow);
-    header_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    header_->setObjectName("TrayHeader");
-    lay->addWidget(header_);
-    lay->addWidget(content_);
-    connect(header_, &QToolButton::toggled, this, [this](bool on) { setExpanded(on); });
-}
-
-void TraySection::setExpanded(bool on) {
-    header_->blockSignals(true);
-    header_->setChecked(on);
-    header_->blockSignals(false);
-    header_->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
-    content_->setVisible(on);
-}
-
-bool TraySection::expanded() const { return header_->isChecked(); }
-
-Tray::Tray(QWidget* parent) : QWidget(parent) {
-    layout_ = new QVBoxLayout(this);
-    layout_->setContentsMargins(2, 2, 2, 2);
-    layout_->setSpacing(2);
-    layout_->addStretch(1);
-}
-
-TraySection* Tray::addSection(const QString& title, QWidget* content, bool expanded) {
-    auto* s = new TraySection(title, content, this);
-    layout_->insertWidget(layout_->count() - 1, s);
-    s->setExpanded(expanded);
-    return s;
-}
-
-// ===========================================================================
 // Entity Info
 // ===========================================================================
 
@@ -285,7 +240,7 @@ void EntityInfoPanel::refresh() {
                             ? QString::fromLatin1(sceneObjectTypeName(doc_->state.objects[*s.objects.begin()].kind))
                             : QStringLiteral("%1 Lights and Cameras").arg(s.objects.size()));
         measureLabel_->setText(s.objects.size() == 1 ? QString::fromStdString(doc_->state.objects[*s.objects.begin()].name) : QString());
-        measure_->setText(QStringLiteral("See Window > Scene"));
+        measure_->setText(QStringLiteral("Its settings are below"));
     } else if (!s.instances.empty() && s.faces.empty() && s.edges.empty()) {
         const ModelState& st = doc_->state;
         Id def = st.instances[*s.instances.begin()].def;
@@ -839,6 +794,9 @@ SunPanel::SunPanel(Document* doc, Viewport* vp, QWidget* parent) : QWidget(paren
     auto* checks = new QHBoxLayout();
     checks->addWidget(sun_);
     checks->addWidget(shadows_);
+    cinematic_ = new QCheckBox(QStringLiteral("Cinematic"), this);
+    cinematic_->setToolTip(QStringLiteral("Ray traced soft shadows from the sun and every light, and light rays in the air."));
+    checks->addWidget(cinematic_);
     checks->addStretch(1);
     form->addRow(checks);
     auto row = [&](const QString& label, const QString& tip, double lo, double hi, QSlider*& slider, QDoubleSpinBox*& spin, const QString& suffix, int scale) {
@@ -868,7 +826,10 @@ SunPanel::SunPanel(Document* doc, Viewport* vp, QWidget* parent) : QWidget(paren
     row(QStringLiteral("Direction:"), QStringLiteral("Compass direction of the sun: 0° along the green axis, 90° along the red axis."), 0, 360, a, azimuth_, QStringLiteral("°"), 1);
     row(QStringLiteral("Height:"), QStringLiteral("Height of the sun above the horizon: low for evening light, below 0° for night."), -30, 90, e, altitude_, QStringLiteral("°"), 1);
     row(QStringLiteral("Brightness:"), QStringLiteral("Strength of the direct sunlight."), 0, 2, i, intensity_, QString(), 100);
+    QSlider* rs;
+    row(QStringLiteral("Light rays:"), QStringLiteral("Cinematic: how much the air glows in the light (sun shafts, beams of lamps). 0 = none."), 0, 1, rs, rays_, QString(), 100);
     connect(sun_, &QCheckBox::toggled, this, [this] { apply(); });
+    connect(cinematic_, &QCheckBox::toggled, this, [this] { apply(); });
     connect(shadows_, &QCheckBox::toggled, this, [this] { apply(); });
     refresh();
 }
@@ -878,6 +839,8 @@ void SunPanel::apply() {
     RenderStyle& s = doc_->style;
     s.sun = sun_->isChecked();
     s.shadows = shadows_->isChecked();
+    s.cinematic = cinematic_->isChecked();
+    s.lightRays = rays_->value();
     s.sunAzimuth = azimuth_->value();
     s.sunAltitude = altitude_->value();
     s.sunIntensity = intensity_->value();
@@ -890,6 +853,8 @@ void SunPanel::refresh() {
     const RenderStyle& s = doc_->style;
     sun_->setChecked(s.sun);
     shadows_->setChecked(s.shadows);
+    cinematic_->setChecked(s.cinematic);
+    rays_->setValue(s.lightRays);
     azimuth_->setValue(s.sunAzimuth);
     altitude_->setValue(s.sunAltitude);
     intensity_->setValue(s.sunIntensity);

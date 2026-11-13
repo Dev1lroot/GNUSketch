@@ -20,6 +20,36 @@ const char* Units::suffix(LengthUnit u) {
     return "";
 }
 
+double Units::snapLength() const {
+    switch (snap) {
+    case Snap::Off: return 0;
+    case Snap::Step: return snapStep > 1e-9 ? snapStep : 0;
+    case Snap::Precision: {
+        // Feet and inches show inches with the decimals.
+        const double unitM = unit == LengthUnit::Feet ? 0.0254 : toMeters(unit);
+        return unitM * std::pow(10.0, -std::clamp(precision, 0, 9));
+    }
+    }
+    return 0;
+}
+
+double Units::snapped(double meters) const {
+    const double step = snapLength();
+    if (step <= 0) return meters;
+    return std::round(meters / step) * step;
+}
+
+int Units::defaultPrecision(LengthUnit u) {
+    switch (u) {
+    case LengthUnit::Millimeters: return 0;
+    case LengthUnit::Centimeters: return 1;
+    case LengthUnit::Meters: return 3;
+    case LengthUnit::Inches: return 2;
+    case LengthUnit::Feet: return 0;
+    }
+    return 0;
+}
+
 double Units::toMeters(LengthUnit u) {
     switch (u) {
     case LengthUnit::Millimeters: return 0.001;
@@ -56,10 +86,8 @@ std::string Units::format(double meters) const {
         std::string s = (neg ? "-" : "") + std::to_string(ft) + "' " + fmtNum(in, std::max(precision, 0)) + "\"";
         return s;
     }
-    int prec = precision;
-    if (unit == LengthUnit::Meters && prec < 2) prec = 2;
-    if (unit == LengthUnit::Centimeters && prec < 1) prec = 1;
-    return fmtNum(meters / toMeters(unit), prec) + suffix(unit);
+    // Exactly the decimals chosen (Model Info > Units).
+    return fmtNum(meters / toMeters(unit), std::clamp(precision, 0, 9)) + suffix(unit);
 }
 
 std::string Units::formatArea(double sq) const {

@@ -38,6 +38,19 @@
 #include "ModifyTools.h"
 #include "TerrainTools.h"
 #include "Viewport.h"
+#include "Icons.h"
+#include "Theme.h"
+#include "io/PrintExport.h"
+#include "EffectsUi.h"
+#include "Properties.h"
+#include <QComboBox>
+#include "Animator.h"
+#include "SceneTools.h"
+#include <QMenu>
+#include <QMenuBar>
+#include <QToolBar>
+#include <QDockWidget>
+#include <QFileInfo>
 #include "core/Components.h"
 #include "core/Primitives.h"
 #include "core/Solids.h"
@@ -239,6 +252,41 @@ int runSelfTest(MainWindow& w) {
     d.move(cc - QPointF(0, 40));
     d.type("800");
     d.check(d.mesh().aliveFaceCount() == faces + 25, "circle extruded into a cylinder");
+
+    // Push/pull acts on every selected face: select all the upward tops and pull them up together.
+    {
+        std::set<Id> tops;
+        std::vector<Vec3> pts;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive && d.mesh().faces[f].normal.z > 0.99 && d.mesh().faceInteriorPoint(f).z > 0.1) {
+                tops.insert(f);
+                pts.push_back(d.mesh().faceInteriorPoint(f));
+            }
+        d.check(tops.size() >= 3, "several top faces to push/pull");
+        doc.selection.clear();
+        doc.selection.faces = tops;
+        doc.notifySelection();
+        vp->setTool(ToolId::PushPull);
+        QPointF tc = d.screen(Vec3(-3, 0, 0.8));
+        d.click(tc);
+        d.move(tc - QPointF(0, 40));
+        d.type("500");
+        int raised = 0;
+        for (const Vec3& p : pts) {
+            Vec3 q = p + Vec3(0, 0, 0.5);
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && d.mesh().faces[f].normal.z > 0.99 &&
+                    std::fabs(d.mesh().facePlane(f).distance(q)) < 1e-6 && d.mesh().pointInFace(f, q, false)) {
+                    ++raised;
+                    break;
+                }
+        }
+        d.check(raised == (int)pts.size(), "push/pull moves all selected faces");
+        d.check(doc.selection.faces.size() == tops.size(), "pushed faces stay selected");
+        doc.undo();
+        doc.selection.clear();
+        doc.notifySelection();
+    }
 
     // Polygon, arc and freehand.
     vp->setTool(ToolId::Polygon);
@@ -1669,7 +1717,8 @@ int runSelfTest(MainWindow& w) {
         d.check(doc.selection.faces.count(face) == 1, "clicking a face selects it for the tool");
         auto* tool = dynamic_cast<TextureTool*>(vp->tool());
         d.check(tool != nullptr, "the tool is active");
-        const Face& F = m.faces[face];
+        // (Looked up each time: Esc and undo put back a copy of the model.)
+        auto F_ = [&]() -> const Face& { return d.mesh().faces[face]; };
         auto uvNow = [&](const Vec3& p) { return faceTexCoord(d.mesh().faces[face], true, p, doc.material(matId)); };
         const Vec3 probe(1.3, 2.1, 0);
 
@@ -1716,7 +1765,7 @@ int runSelfTest(MainWindow& w) {
         };
         auto axes = [&] { return explicitTexMap(d.mesh().faces[face], true, doc.material(matId)); };
         {
-            d.check(F.front.tex.valid, "the face has its own mapping now");
+            d.check(F_().front.tex.valid, "the face has its own mapping now");
             const TexMap a = axes();
             d.check(dragHandle(TextureTool::Handle::Corner2, QPointF(60, -60)), "a corner can be dragged");
             const TexMap b = axes();
@@ -1991,8 +2040,15 @@ int runSelfTest(MainWindow& w) {
         white.color = Color(1, 1, 1);
         setMat(white);
         doc.style.sunAltitude = -30; // night: only the lamps
-        const QPointF near_ = d.screen(Vec3(0, 0, 0)), far_ = d.screen(Vec3(-2.5, 2.5, 0));
         QImage dark = frame();
+        // A point on the plane well outside the lamp's range that is on screen
+        // (the viewport's size depends on the window layout).
+        const QPointF near_ = d.screen(Vec3(0, 0, 0));
+        QPointF far_ = d.screen(Vec3(-2.5, 2.5, 0));
+        for (const Vec3& cand : {Vec3(-2.5, 2.5, 0), Vec3(2.5, -2.5, 0), Vec3(2.5, 2.5, 0), Vec3(-2.5, -2.5, 0), Vec3(0, 2.7, 0), Vec3(0, -2.7, 0)}) {
+            const QPointF q = d.screen(cand);
+            if (q.x() >= 4 && q.y() >= 4 && q.x() * dpr < dark.width() - 4 && q.y() * dpr < dark.height() - 4) { far_ = q; break; }
+        }
         const int base = qGray(pixel(dark, near_).rgb());
         doc.beginOp("light");
         SceneObject lamp;
@@ -2930,6 +2986,808 @@ int runSelfTest(MainWindow& w) {
         doc.reset();
     }
 
+
+    // --- Push/Pull face snap, rotation snaps --------------------------------
+    {
+        doc.reset();
+        auto box = [&](double x0, double x1, double h) {
+            d.mesh().drawPolyline({{x0, 0, 0}, {x1, 0, 0}, {x1, 2, 0}, {x0, 2, 0}}, true);
+            for (Id f = (Id)d.mesh().faces.size() - 1; f >= 0; --f)
+                if (d.mesh().faces[f].alive && d.mesh().faceInteriorPoint(f).x > x0 && d.mesh().faceInteriorPoint(f).x < x1 &&
+                    std::fabs(d.mesh().faces[f].normal.z) > 0.99) {
+                    d.mesh().pushPull(f, d.mesh().faces[f].normal.z < 0 ? -h : h);
+                    break;
+                }
+        };
+        box(0, 2, 1);
+        box(3, 5, 2);
+        doc.notifyChanged();
+        vp->zoomExtents();
+        d.pump();
+        vp->setTool(ToolId::PushPull);
+        d.click(d.screen(Vec3(1, 1, 1)));
+        d.move(d.screen(Vec3(4.2, 1.1, 2)));
+        d.click(d.screen(Vec3(4.2, 1.1, 2)));
+        Vec3 mn, mx;
+        bool any = false;
+        double shortTop = 0;
+        for (Id v = 0; v < (Id)d.mesh().vertices.size(); ++v)
+            if (d.mesh().vertices[v].alive && d.mesh().pos(v).x < 2.5) shortTop = std::max(shortTop, d.mesh().pos(v).z);
+        std::printf("    pushed to %.6f\n", shortTop);
+        d.check(std::fabs(shortTop - 2) < 1e-9, "push/pull snaps to the plane of a parallel face under the cursor");
+        d.mesh().bounds(mn, mx, any);
+        d.check(any && std::fabs(mx.z - 2) < 1e-9, "and no further");
+
+        // Rotate: Shift turns in 5° steps; near an axis it snaps onto it.
+        doc.reset();
+        d.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        doc.notifyChanged();
+        vp->zoomExtents();
+        d.pump();
+        auto rotateTo = [&](double deg, Qt::KeyboardModifiers m) {
+            doc.selection.clear();
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) doc.selection.faces.insert(f);
+            doc.notifySelection();
+            vp->setTool(ToolId::Rotate);
+            d.click(d.screen(Vec3(0, 0, 0)));
+            d.click(d.screen(Vec3(1, 0, 0)));
+            const double a = deg * kPi / 180;
+            const QPointF end = d.screen(Vec3(2.5 * std::cos(a), 2.5 * std::sin(a), 0));
+            d.move(end, Qt::NoButton, m);
+            d.click(end, m);
+            // Where the corner that was at (1, 0, 0) went.
+            // (The corner from (0, 1, 0) is also 1 m out, 90° further on.)
+            double best = 1e9;
+            for (Id v = 0; v < (Id)d.mesh().vertices.size(); ++v) {
+                if (!d.mesh().vertices[v].alive) continue;
+                const Vec3 p = d.mesh().pos(v);
+                if (std::fabs(p.length() - 1) < 1e-6) best = std::min(best, std::atan2(p.y, p.x) * 180 / kPi);
+            }
+            doc.undo();
+            return best;
+        };
+        const double shifted = rotateTo(33, Qt::ShiftModifier);
+        std::printf("    rotated with Shift to %.4f°\n", shifted);
+        d.check(std::fabs(shifted - 35) < 1e-6, "Shift rotates in 5° steps");
+        const double free = rotateTo(33, Qt::NoModifier);
+        d.check(std::fabs(free - 35) > 0.5 && std::fabs(free - 30) > 0.5, "without Shift the angle follows the cursor");
+        const double axis = rotateTo(86.5, Qt::NoModifier);
+        std::printf("    near the green axis: %.4f°\n", axis);
+        d.check(std::fabs(axis - 90) < 1e-6, "near an axis the rotation snaps onto it");
+        vp->setTool(ToolId::Select);
+        doc.reset();
+    }
+
+
+    // --- Connected selection through holes; menus; X/Y/Z; Scene toolbar -------
+    {
+        doc.reset();
+        Mesh& m = d.mesh();
+        m.groundFacesDown = false;
+        m.drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) { m.pushPull(f, m.faces[f].normal.z < 0 ? -2 : 2); break; }
+        // A round hole through the box, from the front (y = 0) to the back.
+        std::vector<Vec3> ring;
+        for (int i = 0; i < 16; ++i) ring.push_back(Vec3(1 + 0.5 * std::cos(i * kPi / 8), 0, 1 + 0.5 * std::sin(i * kPi / 8)));
+        m.drawPolyline(ring, true);
+        Id disc = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && std::fabs(m.faces[f].normal.y) > 0.99 && m.pointInFace(f, Vec3(1, 0, 1), false)) disc = f;
+        d.check(disc != kNone, "a circle on the front of a box");
+        if (disc != kNone) m.pushPull(disc, -2);
+        m.removeDegenerateFaces();
+        Id side = kNone;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faces[f].normal.x > 0.99) side = f;
+        Selection sel;
+        sel.faces.insert(side);
+        selectConnected(m, sel);
+        std::printf("    connected: %zu of %d faces\n", sel.faces.size(), m.aliveFaceCount());
+        d.check(m.aliveFaceCount() > 20 && (int)sel.faces.size() == m.aliveFaceCount(), "triple-click selects the hole's walls too (connected through the face)");
+
+        // Round Corners and Trace Image live in Effects.
+        QMenu* effectsMenu = nullptr;
+        QMenu* toolsMenu = nullptr;
+        for (QAction* a : w.menuBar()->actions()) {
+            if (a->text().remove('&') == QStringLiteral("Effects")) effectsMenu = a->menu();
+            if (a->text().remove('&') == QStringLiteral("Tools")) toolsMenu = a->menu();
+        }
+        auto menuHas = [](QMenu* menu, const char* key) {
+            if (!menu) return false;
+            for (QAction* a : menu->actions())
+                if (a->objectName() == QLatin1String(key)) return true;
+            return false;
+        };
+        d.check(menuHas(effectsMenu, "roundcorners") && menuHas(effectsMenu, "traceimage"), "Round Corners and Trace Image are in Effects");
+        d.check(!menuHas(toolsMenu, "roundcorners") && !menuHas(toolsMenu, "traceimage"), "and no longer in Tools");
+
+        // Zoom moved off Z; holding X keeps the line on the red axis.
+        QAction* zoom = nullptr;
+        for (QAction* a : w.findChildren<QAction*>())
+            if (a->text() == QStringLiteral("Zoom")) zoom = a;
+        d.check(zoom && zoom->shortcut() == QKeySequence(QStringLiteral("Alt+Z")), "Zoom is Alt+Z");
+        doc.reset();
+        vp->camera().eye = Vec3(4, -9, 7);
+        vp->camera().target = Vec3(0, 0, 0);
+        vp->update();
+        d.pump();
+        vp->setTool(ToolId::Line);
+        auto keyEv = [&](QEvent::Type t, int k, const QString& text) {
+            QKeyEvent e(t, k, Qt::NoModifier, text);
+            QApplication::sendEvent(vp, &e);
+        };
+        d.click(d.screen(Vec3(0, 0, 0)));
+        keyEv(QEvent::KeyPress, Qt::Key_X, QStringLiteral("x"));
+        d.move(d.screen(Vec3(2, 1.3, 0.7)));
+        d.click(d.screen(Vec3(2, 1.3, 0.7)));
+        keyEv(QEvent::KeyRelease, Qt::Key_X, QStringLiteral("x"));
+        d.key(Qt::Key_Escape);
+        bool onRed = false, any = false;
+        for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e) {
+            if (!d.mesh().edges[e].alive) continue;
+            any = true;
+            const Vec3 a = d.mesh().pos(d.mesh().edges[e].v[0]), b = d.mesh().pos(d.mesh().edges[e].v[1]);
+            onRed = std::fabs(a.y - b.y) < 1e-9 && std::fabs(a.z - b.z) < 1e-9 && std::fabs(a.x - b.x) > 0.5;
+        }
+        d.check(any && onRed, "holding X keeps the line on the red axis");
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.click(d.screen(Vec3(1, 1.5, 0)));
+        d.key(Qt::Key_Escape);
+        bool offAxis = false; // (a free line from a point runs in the axis plane facing the camera)
+        for (Id v = 0; v < (Id)d.mesh().vertices.size(); ++v)
+            if (d.mesh().vertices[v].alive && (std::fabs(d.mesh().pos(v).y) > 1e-3 || std::fabs(d.mesh().pos(v).z) > 1e-3)) offAxis = true;
+        d.check(offAxis, "let go, the next line is free again");
+        vp->setTool(ToolId::Select);
+        doc.reset();
+
+        // Scene: a toolbar (Window > Toolbars), its panel not in the tray.
+        QToolBar* sceneBar = w.findChild<QToolBar*>(QStringLiteral("SceneToolbar"));
+        d.check(sceneBar && sceneBar->actions().size() >= 5, "the Scene toolbar has the light and camera tools");
+        QMenu* bars = w.findChild<QMenu*>(QStringLiteral("ToolbarsMenu"));
+        QStringList names;
+        if (bars) {
+            emit bars->aboutToShow();
+            for (QAction* a : bars->actions()) names << a->text();
+        }
+        d.check(names.contains(QStringLiteral("Scene")) && names.contains(QStringLiteral("Standard")), "Window > Toolbars lists the toolbars");
+        if (sceneBar && bars) {
+            for (QAction* a : bars->actions())
+                if (a->text() == QStringLiteral("Scene")) a->trigger();
+            d.pump();
+            d.check(!sceneBar->isVisible(), "and hides one");
+            for (QAction* a : bars->actions())
+                if (a->text() == QStringLiteral("Scene")) a->trigger();
+            d.pump();
+            d.check(sceneBar->isVisible(), "and shows it again");
+        }
+        d.check(w.findChild<QDockWidget*>(QStringLiteral("DefaultTray")) == nullptr, "there is no Default Tray any more");
+    }
+
+    // --- Cinematic lighting: ray traced lamp shadows, light rays -------------------
+    {
+        doc.reset();
+        doc.style = RenderStyle();
+        doc.style.showAxes = false;
+        Mesh& m = d.mesh();
+        m.groundFacesDown = false;
+        m.viewHint = Vec3(0, 0, 10);
+        m.drawPolyline({{-5, -5, 0}, {5, -5, 0}, {5, 5, 0}, {-5, 5, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faces[f].normal.z < 0) m.reverseFace(f);
+        // A wall standing on the floor, between the lamp and the far side.
+        m.drawPolyline({{0, -2, 0.001}, {0.2, -2, 0.001}, {0.2, 2, 0.001}, {0, 2, 0.001}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive && m.faceArea(f) < 1.0 && std::fabs(m.faces[f].normal.z) > 0.99) {
+                m.pushPull(f, m.faces[f].normal.z > 0 ? 2.0 : -2.0);
+                break;
+            }
+        m.touch();
+        Material white;
+        white.name = "White";
+        white.color = Color(1, 1, 1);
+        doc.state.materials = {white};
+        for (Face& F : m.faces) F.front.material = F.back.material = 0;
+        ++doc.materialsRevision;
+        doc.style.sunAltitude = -30; // night: only the lamp
+        SceneObject lamp;
+        lamp.pos = Vec3(-1.5, 0, 1.0);
+        lamp.intensity = 4;
+        lamp.range = 12;
+        doc.addObject(lamp);
+        doc.notifyChanged();
+        vp->camera().perspective = true;
+        vp->camera().eye = Vec3(1, -10, 9);
+        vp->camera().target = Vec3(0.5, 0, 0);
+        auto frame = [&] {
+            vp->update();
+            d.pump();
+            return vp->grabFramebuffer().convertToFormat(QImage::Format_RGB32);
+        };
+        const qreal dpr = vp->devicePixelRatioF();
+        auto grayAt = [&](const QImage& im, const Vec3& p) {
+            const QPointF q = d.screen(p);
+            return qGray(im.pixel(int(q.x() * dpr), int(q.y() * dpr)));
+        };
+        const Vec3 behind(1.4, 0, 0), front(-2.0, -1.5, 0);
+        const QImage plain = frame();
+        doc.style.cinematic = true;
+        doc.style.lightRays = 0;
+        const QImage traced = frame();
+        std::printf("    behind the wall: %d plain, %d traced; in front %d / %d\n", grayAt(plain, behind), grayAt(traced, behind),
+                    grayAt(plain, front), grayAt(traced, front));
+        d.check(grayAt(traced, behind) + 25 < grayAt(plain, behind), "cinematic: a lamp's light is blocked by the wall (ray traced)");
+        d.check(std::abs(grayAt(traced, front) - grayAt(plain, front)) < 25, "where it reaches, it lights as before");
+        doc.style.lightRays = 1.0;
+        const QImage rays = frame();
+        long sumNo = 0, sumRays = 0;
+        for (int y = 0; y < traced.height(); y += 4)
+            for (int x = 0; x < traced.width(); x += 4) {
+                sumNo += qGray(traced.pixel(x, y));
+                sumRays += qGray(rays.pixel(x, y));
+            }
+        std::printf("    light rays: mean brightness %.1f -> %.1f\n", 16.0 * sumNo / (traced.width() * traced.height()),
+                    16.0 * sumRays / (traced.width() * traced.height()));
+        d.check(sumRays > sumNo * 1.02, "light rays make the air around the lamp glow");
+        // Daytime: the sun's shadow is ray traced too.
+        doc.style.sunAltitude = 40;
+        doc.style.sunAzimuth = 270; // from the -x side: the wall shades +x
+        doc.style.lightRays = 0;
+        doc.state.objects.clear();
+        const QImage day = frame();
+        const Vec3 shade(0.6, 1.0, 0), sunny(-2.5, 1.0, 0);
+        std::printf("    sun: shade %d, sunny %d\n", grayAt(day, shade), grayAt(day, sunny));
+        d.check(grayAt(day, shade) + 20 < grayAt(day, sunny), "cinematic: the sun casts a ray traced shadow");
+        doc.reset();
+        doc.style = RenderStyle();
+        vp->zoomExtents();
+    }
+
+
+    // --- Panels, Properties, Animator, Settings sizes ---------------------------
+    {
+        doc.reset();
+        auto dock = [&](const char* name) { return w.findChild<QDockWidget*>(QString::fromLatin1(name)); };
+        bool four = true;
+        for (const char* n : {"Hierarchy", "PropertiesPanel", "MaterialsPanel", "InstructorPanel"}) four = four && dock(n) && !dock(n)->isHidden();
+        d.check(four, "Hierarchy, Properties, Materials and Instructor are open");
+        d.check(dock("EnvironmentPanel") && dock("EnvironmentPanel")->isHidden() && dock("EnvironmentPanel")->findChild<SunPanel*>() &&
+                    dock("EnvironmentPanel")->findChild<StylesPanel*>(),
+                "Environment holds Sun and Styles (from the Window menu)");
+        d.check(dock("AnimatorPanel") && dock("AnimatorPanel")->findChild<AnimatorPanel*>(), "the Animator is a panel");
+        if (QAction* envAct = w.findChild<QAction*>(QStringLiteral("panel_environment"))) {
+            envAct->trigger();
+            d.pump();
+            d.check(!dock("EnvironmentPanel")->isHidden(), "Window > Environment opens it");
+            dock("EnvironmentPanel")->hide();
+        }
+
+        // Properties: the tool's settings or the selection's.
+        auto* props = w.findChild<PropertiesPanel*>();
+        d.check(props != nullptr, "there is a Properties panel");
+        if (props) {
+            vp->setTool(ToolId::Mountain);
+            d.pump();
+            d.check(props->showing() == QLatin1String("tool") && props->findChild<TerrainPanel*>() && props->findChild<TerrainPanel*>()->isVisible(),
+                    "a terraform tool shows its brush settings");
+            vp->setTool(ToolId::PlacePointLight);
+            d.pump();
+            auto* placement = props->findChild<PlacementSettings*>();
+            d.check(props->showing() == QLatin1String("tool") && placement && placement->isVisible(), "a light tool shows the next light's settings");
+            placementDefaults(SceneObject::PointLight).intensity = 7.5;
+            placementDefaults(SceneObject::PointLight).range = 4;
+            vp->zoomExtents();
+            d.click(d.screen(Vec3(0.3, 0.2, 0)));
+            d.pump();
+            Id lamp = kNone;
+            for (Id i = 0; i < (Id)doc.state.objects.size(); ++i)
+                if (doc.state.objects[i].alive) lamp = i;
+            d.check(lamp != kNone && std::fabs(doc.state.objects[lamp].intensity - 7.5) < 1e-9 && std::fabs(doc.state.objects[lamp].range - 4) < 1e-9,
+                    "the placed light has them");
+            placementDefaults(SceneObject::PointLight) = SceneObject();
+            vp->setTool(ToolId::Select);
+            d.pump();
+            doc.selection.clear();
+            if (lamp != kNone) doc.selection.objects.insert(lamp);
+            doc.notifySelection();
+            d.pump();
+            auto* scene = props->findChild<ScenePanel*>();
+            d.check(props->showing() == QLatin1String("selection") && scene && scene->isVisible(), "a selected light shows its properties");
+            if (scene && lamp != kNone) {
+                QDoubleSpinBox* brightness = nullptr;
+                for (QDoubleSpinBox* sp : scene->findChildren<QDoubleSpinBox*>())
+                    if (std::fabs(sp->value() - 7.5) < 1e-9) brightness = sp;
+                if (brightness) brightness->setValue(2.25);
+                d.check(std::fabs(doc.state.objects[lamp].intensity - 2.25) < 1e-9, "and changes them");
+            }
+        }
+
+        // Animator: a component moved through keyframes.
+        doc.reset();
+        d.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        Selection all;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) all.faces.insert(f);
+        doc.beginOp("Make Component");
+        const Id box = makeComponent(doc.state, all, "Box");
+        doc.commitOp();
+        auto* anim = w.findChild<AnimatorPanel*>();
+        d.check(anim != nullptr && box != kNone, "a component to animate");
+        if (anim && box != kNone) {
+            dock("AnimatorPanel")->show();
+            d.pump();
+            anim->modelReplaced();
+            doc.selection.clear();
+            doc.selection.instances.insert(box);
+            doc.notifySelection();
+            anim->addLayersFromSelection();
+            d.check(doc.state.timeline.layers.size() == 1 && doc.state.timeline.layers[0].keys.size() == 1, "New Layer animates the selection, with a keyframe");
+            anim->setFrame(25);
+            const Mat4 start = doc.state.instances[box].xf;
+            doc.beginOp("Move");
+            doc.state.instances[box].xf = Mat4::translation(Vec3(4, 0, 0)) * start;
+            doc.commitOp();
+            d.check(doc.state.timeline.layers[0].keyAt(25) >= 0, "Auto Key: moving it makes a keyframe at the playhead");
+            anim->setFrame(13);
+            d.check(std::fabs(doc.state.instances[box].xf.at(0, 3) - start.at(0, 3) - 2) < 1e-6, "half way, it is half way (motion tween)");
+            anim->setFrame(1);
+            d.check(std::fabs(doc.state.instances[box].xf.at(0, 3) - start.at(0, 3)) < 1e-9, "scrubbing back puts it back");
+            anim->setCurrentLayer(0);
+            anim->setFrame(1);
+            anim->toggleTween();
+            anim->setFrame(13);
+            d.check(std::fabs(doc.state.instances[box].xf.at(0, 3) - start.at(0, 3)) < 1e-9, "without the tween it holds");
+            anim->toggleTween();
+            anim->play();
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < 400) d.pump();
+            anim->stop();
+            d.check(anim->frame() > 1, "Play runs the timeline");
+            QTemporaryDir dir;
+            const QString path = QDir(dir.path()).filePath(QStringLiteral("anim.gsketch"));
+            d.check(saveNative(doc, path, {}), "an animated model saves");
+            Document again;
+            if (loadNative(again, path, nullptr)) {
+                std::printf("    loaded: %zu layers", again.state.timeline.layers.size());
+                for (const TimelineLayer& l : again.state.timeline.layers) std::printf(", target %d (box %d), %zu keys", l.target, box, l.keys.size());
+                std::printf("\n");
+            }
+            d.check(loadNative(again, path, nullptr) && again.state.timeline.layers.size() == 1 &&
+                        again.state.timeline.layers[0].keys.size() == 2 && again.state.timeline.layers[0].keys[1].frame == 25 &&
+                        again.state.timeline.layers[0].target == box,
+                    "and opens with its timeline");
+            anim->setFrame(25);
+            doc.undo(); // the two tween switches,
+            doc.undo();
+            doc.undo(); // then the move: its keyframe goes with it
+            anim->reapply();
+            d.check(doc.state.timeline.layers.empty() || doc.state.timeline.layers[0].keyAt(25) < 0, "undo takes the auto keyframe away too");
+            dock("AnimatorPanel")->hide();
+            anim->modelReplaced();
+        }
+        doc.reset();
+
+        // Font and icon sizes.
+        {
+            const int font0 = QApplication::font().pointSize();
+            SettingsDialog dlg(&w);
+            dlg.setIconSize(40);
+            QToolBar* standard = w.findChild<QToolBar*>(QStringLiteral("StandardToolbar"));
+            d.check(standard && standard->iconSize() == QSize(40, 40), "Settings: toolbar icons change size");
+            dlg.setFontSize(15);
+            d.check(QApplication::font().pointSize() == 15, "Settings: the font changes size");
+            dlg.reject();
+            d.check(standard && standard->iconSize() == QSize(24, 24) && QApplication::font().pointSize() == font0, "and Cancel puts them back");
+        }
+    }
+
+
+    // --- De-triangulate, Hollow, Solidify on an imported model ----------------
+    {
+        doc.reset();
+        QTemporaryDir dir;
+        Document src;
+        PrimitiveParams pp;
+        pp.kind = PrimitiveKind::Sphere;
+        pp.radius = 0.02;
+        pp.segments = 48;
+        pp.rings = 24;
+        buildPrimitive(pp, src.mesh());
+        Mesh boxMesh;
+        PrimitiveParams bp;
+        bp.kind = PrimitiveKind::Box;
+        bp.width = bp.depth = bp.height = 0.03;
+        buildPrimitive(bp, boxMesh);
+        appendMesh(src.mesh(), boxMesh, Mat4::translation(Vec3(0.06, 0, 0)));
+        const QString stl = QDir(dir.path()).filePath(QStringLiteral("parts.stl"));
+        d.check(exportPrint(src, stl, PrintFormat::StlBinary, LengthUnit::Millimeters) && w.openFile(stl), "an STL (a sphere and a box) opens");
+        auto action = [&](const char* key) { return w.findChild<QAction*>(QString::fromLatin1(key)); };
+        d.check(action("effect_de-triangulate") && action("effect_hollow") && action("effect_solidify"), "De-triangulate, Hollow and Solidify are in Effects");
+        auto run = [&](const char* name, const QVariantMap& values) {
+            for (const EffectDef& def : effectRegistry()) {
+                if (def.name != QLatin1String(name)) continue;
+                Selection sel;
+                sel.instances.insert(0);
+                doc.selection = sel;
+                doc.notifySelection();
+                d.pump();
+                if (!action(def.key().toLatin1().constData())->isEnabled()) return std::string("not enabled");
+                QVariantMap v = values;
+                for (const EffectParam& prm : def.params)
+                    if (!v.contains(prm.key)) v[prm.key] = prm.type == EffectParam::Bool ? QVariant(prm.def != 0) : QVariant(prm.def);
+                std::string err;
+                QElapsedTimer t;
+                t.start();
+                doc.beginOp(name);
+                const bool ok = applyEffect(doc.state, sel, [&](Mesh& m, const std::set<Id>& f, EffectResult* r, std::string* e) { return def.apply(m, f, v, r, e); }, nullptr, &err);
+                doc.commitOp();
+                std::printf("    %s: %s in %lld ms, %d faces\n", name, ok ? "ok" : err.c_str(), (long long)t.elapsed(),
+                            doc.state.defs[doc.state.instances[0].def].mesh.aliveFaceCount());
+                return ok ? std::string() : err;
+            }
+            return std::string("missing");
+        };
+        // (Importing already joins flat triangles: split them again first.)
+        d.check(run("Triangulate", {}).empty(), "Triangulate splits it into triangles");
+        const int before = doc.state.defs[0].mesh.aliveFaceCount();
+        d.check(run("De-triangulate", {{"quads", true}}).empty() && doc.state.defs[0].mesh.aliveFaceCount() < before * 0.55,
+                "De-triangulate joins the triangles (flat sides, quads on the sphere)");
+        d.check(doc.state.defs[0].mesh.aliveFaceCount() <= 6 + 48 * 24, "the box became six faces (sphere quads stay)");
+        d.check(run("Solidify", {}).empty() && isSolid(doc.state.defs[0].mesh), "Solidify leaves a closed solid");
+        const double v0 = solidVolume(doc.state.defs[0].mesh);
+        d.check(run("Hollow", {{"thickness", 0.003}, {"detail", 64}}).empty(), "Hollow runs on it");
+        const double v1 = solidVolume(doc.state.defs[0].mesh);
+        std::printf("    volume %.3f cm3 -> %.3f cm3\n", v0 * 1e6, v1 * 1e6);
+        d.check(isSolid(doc.state.defs[0].mesh) && v1 > 0 && v1 < v0 * 0.8, "with less material, still a solid");
+        doc.undo();
+        d.check(std::fabs(solidVolume(doc.state.defs[0].mesh) - v0) < 1e-12, "one undo takes the hollow away");
+        doc.reset();
+        w.clearRecentFiles();
+    }
+
+
+    // --- Delete on the edge between two faces in one plane joins them ----------
+    {
+        doc.reset();
+        d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}}, true);
+        d.mesh().drawPolyline({{2, 0, 0}, {4, 0, 0}, {4, 2, 0}, {2, 2, 0}}, true);
+        const Id shared = d.mesh().findEdge(d.mesh().findVertex({2, 0, 0}), d.mesh().findVertex({2, 2, 0}));
+        doc.selection.clear();
+        doc.selection.edges.insert(shared);
+        doc.notifySelection();
+        w.findChild<QAction*>(QStringLiteral("delete"))->trigger();
+        d.check(d.mesh().aliveFaceCount() == 1, "Delete on the edge between two faces in one plane joins them");
+        doc.reset();
+    }
+
+
+    // --- Scale: sizes shown and typed in Properties ------------------------------
+    {
+        doc.reset();
+        doc.units.unit = LengthUnit::Millimeters;
+        doc.units.precision = 0;
+        Mesh& m = d.mesh();
+        m.groundFacesDown = false;
+        m.drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 1, 0}, {0, 1, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) { m.pushPull(f, m.faces[f].normal.z < 0 ? -0.5 : 0.5); break; }
+        doc.selection.clear();
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) doc.selection.faces.insert(f);
+        doc.notifySelection();
+        vp->setTool(ToolId::Scale);
+        d.pump();
+        auto* props = w.findChild<PropertiesPanel*>();
+        auto* scale = props ? props->findChild<ScaleSettings*>() : nullptr;
+        auto* tool = dynamic_cast<ScaleTool*>(vp->tool());
+        d.check(scale && scale->isVisible() && tool, "the Scale tool shows the sizes in Properties");
+        auto field = [&](int k) { return scale->findChild<QLineEdit*>(QStringLiteral("ScaleSize%1").arg(k)); };
+        if (scale && tool) {
+            std::printf("    fields: %s / %s / %s\n", qPrintable(field(0)->text()), qPrintable(field(1)->text()), qPrintable(field(2)->text()));
+            d.check(field(0)->text() == QLatin1String("2000mm") && field(1)->text() == QLatin1String("1000mm") && field(2)->text() == QLatin1String("500mm"),
+                    "W, L and H of the box");
+            Vec3 l;
+            tool->boxLengths(l);
+            d.check(tool->dimensionText(l) == QLatin1String("W: 2000mm   L: 1000mm   H: 500mm"), "and the label on the box says the same");
+            auto bounds = [&] {
+                Vec3 mn, mx;
+                bool any;
+                d.mesh().bounds(mn, mx, any);
+                return std::make_pair(mn, mx);
+            };
+            scale->setProportional(true);
+            d.check(scale->enter(1, QStringLiteral("500")), "typing L = 500 rescales");
+            auto [mn, mx] = bounds();
+            std::printf("    now %.3f x %.3f x %.3f, from (%.3f %.3f %.3f)\n", mx.x - mn.x, mx.y - mn.y, mx.z - mn.z, mn.x, mn.y, mn.z);
+            d.check(std::fabs(mx.x - mn.x - 1) < 1e-9 && std::fabs(mx.y - mn.y - 0.5) < 1e-9 && std::fabs(mx.z - mn.z - 0.25) < 1e-9,
+                    "Keep proportions: W and H follow");
+            d.check(std::fabs(mn.z) < 1e-9 && std::fabs((mn.x + mx.x) / 2 - 1) < 1e-9 && std::fabs((mn.y + mx.y) / 2 - 0.5) < 1e-9,
+                    "the bottom centre stays where it was");
+            d.check(field(1)->text() == QLatin1String("500mm") && field(0)->text() == QLatin1String("1000mm"), "the fields show the new sizes");
+            scale->setProportional(false);
+            d.check(scale->enter(2, QStringLiteral("1m")), "typing H = 1m (any unit)");
+            std::tie(mn, mx) = bounds();
+            d.check(std::fabs(mx.z - mn.z - 1) < 1e-9 && std::fabs(mx.x - mn.x - 1) < 1e-9 && std::fabs(mx.y - mn.y - 0.5) < 1e-9,
+                    "without Keep proportions only H changes");
+            doc.undo();
+            std::tie(mn, mx) = bounds();
+            d.check(std::fabs(mx.z - mn.z - 0.25) < 1e-9, "one undo per typed size");
+            d.check(!scale->enter(0, QStringLiteral("nonsense")), "a size that is not a length is refused");
+        }
+        vp->setTool(ToolId::Select);
+        doc.reset();
+    }
+
+
+    // --- Length snapping and display precision ---------------------------------
+    {
+        doc.reset();
+        const Units savedUnits = doc.units;
+        doc.units.unit = LengthUnit::Millimeters;
+        doc.units.precision = 0;
+        doc.units.snap = Units::Snap::Step;
+        doc.units.snapStep = 0.25;
+        vp->camera().perspective = true;
+        vp->camera().eye = Vec3(1, -6, 5);
+        vp->camera().target = Vec3(1, 1, 0);
+        vp->update();
+        d.pump();
+        // A line along the red axis, the cursor at 1.13 m: it ends at 1.25 m.
+        vp->setTool(ToolId::Line);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.move(d.screen(Vec3(1.13, 0, 0)));
+        d.click(d.screen(Vec3(1.13, 0, 0)));
+        d.key(Qt::Key_Escape);
+        d.check(d.mesh().findVertex(Vec3(1.25, 0, 0), 1e-9) != kNone, "Line: the length snaps to the step (0.25 m)");
+        // A free line in some direction: its length is a whole number of steps.
+        d.click(d.screen(Vec3(0, 2, 0)));
+        d.click(d.screen(Vec3(1.07, 2.71, 0)));
+        d.key(Qt::Key_Escape);
+        bool whole = false;
+        for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e) {
+            if (!d.mesh().edges[e].alive) continue;
+            const double l = d.mesh().edgeLength(e);
+            if (d.mesh().pos(d.mesh().edges[e].v[0]).y > 1.5) {
+                std::printf("    free line %.6f m\n", l);
+                whole = std::fabs(l / 0.25 - std::round(l / 0.25)) < 1e-9;
+            }
+        }
+        d.check(whole, "a line in any direction too");
+        // Rectangle: both sides.
+        doc.reset();
+        vp->setTool(ToolId::Rectangle);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.click(d.screen(Vec3(1.62, 0.88, 0)));
+        Vec3 mn, mx;
+        bool any = false;
+        d.mesh().bounds(mn, mx, any);
+        std::printf("    rectangle %.4f x %.4f\n", mx.x - mn.x, mx.y - mn.y);
+        d.check(any && std::fabs(mx.x - mn.x - 1.5) < 1e-9 && std::fabs(mx.y - mn.y - 1.0) < 1e-9, "Rectangle: each side snaps");
+        // Push/Pull: the height.
+        vp->setTool(ToolId::PushPull);
+        const QPointF fc = d.screen(Vec3(0.75, 0.5, 0));
+        d.click(fc);
+        d.move(fc - QPointF(0, 47));
+        d.click(fc - QPointF(0, 47));
+        d.mesh().bounds(mn, mx, any);
+        std::printf("    pushed to %.4f\n", mx.z - mn.z);
+        d.check(std::fabs((mx.z - mn.z) / 0.25 - std::round((mx.z - mn.z) / 0.25)) < 1e-9 && mx.z - mn.z > 0.2, "Push/Pull: the distance snaps");
+        // Snapping to the display precision: 0.1 mm.
+        doc.reset();
+        doc.units.snap = Units::Snap::Precision;
+        doc.units.precision = 1;
+        vp->setTool(ToolId::Line);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.click(d.screen(Vec3(0.8, 0.6, 0)));
+        d.key(Qt::Key_Escape);
+        bool tenth = false;
+        for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e)
+            if (d.mesh().edges[e].alive) {
+                const double mm = d.mesh().edgeLength(e) * 1000;
+                std::printf("    line %.6f mm\n", mm);
+                tenth = std::fabs(mm * 10 - std::round(mm * 10)) < 1e-6;
+            }
+        d.check(tenth, "To display precision: lengths in whole 0.1 mm");
+        // Model Info and Properties show the settings.
+        vp->setTool(ToolId::Line);
+        d.pump();
+        auto* props = w.findChild<PropertiesPanel*>();
+        auto* unitsBox = props ? props->findChild<UnitsSettings*>() : nullptr;
+        d.check(unitsBox && unitsBox->isVisible(), "the Line tool shows snapping and precision in Properties");
+        if (unitsBox) {
+            auto* precision = unitsBox->findChild<QComboBox*>(QStringLiteral("PrecisionCombo"));
+            QStringList items;
+            for (int i = 0; precision && i < precision->count(); ++i) items << precision->itemText(i);
+            std::printf("    precision: %s\n", qPrintable(items.join(" | ")));
+            d.check(items.size() == 7 && items[0] == QLatin1String("0mm") && items[1] == QLatin1String("0.0mm") && items[2] == QLatin1String("0.00mm"),
+                    "display precision is chosen by example (0mm, 0.0mm, 0.00mm...)");
+            auto* snap = unitsBox->findChild<QComboBox*>(QStringLiteral("SnapCombo"));
+            auto* step = unitsBox->findChild<QLineEdit*>(QStringLiteral("SnapStep"));
+            if (snap && step) {
+                snap->setCurrentIndex(2);
+                step->setText(QStringLiteral("5cm"));
+                emit step->editingFinished();
+                d.check(doc.units.snap == Units::Snap::Step && std::fabs(doc.units.snapStep - 0.05) < 1e-12, "a step typed in any unit");
+            }
+        }
+        vp->setTool(ToolId::Select);
+        doc.units = savedUnits;
+        UnitsSettings::remember(savedUnits);
+        doc.reset();
+        vp->zoomExtents();
+    }
+
+
+    // --- X-ray / back edges: snapping to what is behind faces --------------------
+    {
+        doc.reset();
+        doc.style = RenderStyle();
+        Mesh& m = d.mesh();
+        m.groundFacesDown = false;
+        m.drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) { m.pushPull(f, m.faces[f].normal.z < 0 ? -2 : 2); break; }
+        vp->camera().perspective = true;
+        vp->camera().eye = Vec3(-3, -5, 4);
+        vp->camera().target = Vec3(1, 1, 1);
+        vp->update();
+        d.pump();
+        // The far bottom corner is behind the box.
+        const Vec3 hidden(2, 2, 0);
+        const QPointF at = d.screen(hidden);
+        InferenceEngine::Options o;
+        const InferenceResult plain = vp->inference().infer(at.x(), at.y(), o);
+        d.check(!(plain.type == InferenceResult::Endpoint && plain.p.nearlyEquals(hidden)), "normally a corner behind faces does not snap");
+        doc.style.xray = true;
+        const InferenceResult xr = vp->inference().infer(at.x(), at.y(), o);
+        d.check(xr.type == InferenceResult::Endpoint && xr.p.nearlyEquals(hidden), "with X-ray it does");
+        doc.style.xray = false;
+        doc.style.backEdges = true;
+        const InferenceResult be = vp->inference().infer(at.x(), at.y(), o);
+        d.check(be.type == InferenceResult::Endpoint && be.p.nearlyEquals(hidden), "and with back edges shown");
+        doc.style = RenderStyle();
+        doc.reset();
+        vp->zoomExtents();
+    }
+
+    // --- Game Mode: soft sun shadows ------------------------------------------
+    {
+        QTemporaryDir dir;
+        doc.reset();
+        d.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) { d.mesh().pushPull(f, d.mesh().faces[f].normal.z < 0 ? -2 : 2); break; }
+        doc.style.sun = true;
+        doc.style.shadows = false; // Game Mode turns them on by itself
+        const QString path = QDir(dir.path()).filePath(QStringLiteral("shadow.gsketch"));
+        QString err;
+        d.check(saveNative(doc, path, {}, &err), "a box to cast a shadow saves");
+        const Vec3 sun = doc.style.sunDirection();
+        const Vec3 h = Vec3(sun.x, sun.y, 0).normalized();
+        const Vec3 side = Vec3(-h.y, h.x, 0);
+        GameWindow game;
+        // Stand to the side of the shadow and look at the box.
+        const Vec3 feet = Vec3(0.5, 0.5, 0) - h * 1.0 + side * 9.0;
+        d.check(game.load(path, feet, 0.0, &err), "Game Mode loads it");
+        double bestYaw = 0, bestDot = -2;
+        for (int i = 0; i < 360; ++i) {
+            game.walker().setYaw(i * kPi / 180);
+            const Vec3 to = (Vec3(0.5, 0.5, 0.3) - game.walker().eye()).normalized();
+            const double dd = game.walker().lookDirection().dot(to);
+            if (dd > bestDot) { bestDot = dd; bestYaw = i * kPi / 180; }
+        }
+        game.walker().setYaw(bestYaw);
+        game.resize(640, 480);
+        game.show();
+        d.pump();
+        const QImage img = game.grabFramebuffer();
+        d.check(game.renderOk() && !img.isNull(), "it renders with soft shadows");
+        d.check(game.renderer().softShadows(), "soft shadows are on in Game Mode");
+        auto gray = [&](const Vec3& p) {
+            double x, y;
+            if (!game.camera().project(p, x, y)) return -1;
+            const double k = img.width() / double(game.width());
+            const int ix = int(x * k), iy = int(y * k);
+            if (ix < 0 || iy < 0 || ix >= img.width() || iy >= img.height()) return -1;
+            return qGray(img.pixel(ix, iy));
+        };
+        const int shaded = gray(Vec3(0.5, 0.5, 0) - h * 1.3), lit = gray(Vec3(0.5, 0.5, 0) + h * 2.5);
+        std::printf("    ground in the shadow %d, in the sun %d\n", shaded, lit);
+        d.check(shaded >= 0 && lit >= 0 && shaded + 15 < lit, "the box's shadow falls on the ground away from the sun");
+        game.hide();
+        doc.reset();
+    }
+
+    // --- Dark theme, duotone icons and Settings --------------------------------
+    {
+        d.check(QApplication::palette().color(QPalette::Window).lightness() < 90, "the interface is dark by default");
+        auto iconColours = [](const char* name) {
+            const QImage im = Icons::get(QString::fromLatin1(name)).pixmap(48, 48).toImage().convertToFormat(QImage::Format_ARGB32);
+            int reddish = 0, greenish = 0, other = 0;
+            for (int y = 0; y < im.height(); ++y)
+                for (int x = 0; x < im.width(); ++x) {
+                    const QColor c = QColor::fromRgba(im.pixel(x, y));
+                    if (c.alpha() < 200) continue;
+                    if (c.red() > 150 && c.green() < 60 && c.blue() < 60) ++reddish;
+                    else if (c.green() > 150 && c.red() < 60 && c.blue() < 60) ++greenish;
+                    else ++other;
+                }
+            return std::array<int, 3>{reddish, greenish, other};
+        };
+        const ThemeSettings before = Theme::current();
+        {
+            SettingsDialog dlg(&w);
+            dlg.setDuotone(true);
+            dlg.setPrimary(QColor(0, 255, 0));
+            dlg.setSecondary(QColor(255, 0, 0));
+            const auto c = iconColours("pushpull");
+            std::printf("    duotone pushpull icon: %d red, %d green, %d other\n", c[0], c[1], c[2]);
+            d.check(c[0] > 0 && c[1] > 0 && c[2] < (c[0] + c[1]) / 4, "duotone icons are drawn in the two chosen colours");
+            dlg.setDuotone(false);
+            const auto full = iconColours("materials");
+            d.check(full[2] > full[0] + full[1], "Full colour brings the original colours back");
+            dlg.setDark(false);
+            d.check(QApplication::palette().color(QPalette::Window).lightness() > 200, "the light interface is still there");
+            dlg.reject();
+        }
+        d.check(Theme::current() == before && QApplication::palette().color(QPalette::Window).lightness() < 90,
+                "Cancel restores the theme");
+
+        // File > Import / Export submenus, Open Recent.
+        QMenu* imp = w.findChild<QMenu*>(QStringLiteral("ImportMenu"));
+        QMenu* exp = w.findChild<QMenu*>(QStringLiteral("ExportMenu"));
+        d.check(imp && !imp->actions().isEmpty(), "File > Import is a submenu of formats");
+        QStringList expTexts;
+        if (exp)
+            for (QAction* a : exp->actions()) expTexts << a->text();
+        std::printf("    export: %s\n", qPrintable(expTexts.join(" | ")));
+        QStringList impTexts;
+        if (imp)
+            for (QAction* a : imp->actions()) impTexts << a->objectName();
+        d.check(impTexts.contains("import3mf") && impTexts.contains("importamf") && impTexts.contains("importstl") &&
+                    impTexts.contains("importply") && impTexts.contains("importoff"),
+                "File > Import lists the 3D printing formats");
+        {
+            QTemporaryDir pdir;
+            Document box;
+            box.mesh().drawPolyline({{0, 0, 0}, {0.03, 0, 0}, {0.03, 0.02, 0}, {0, 0.02, 0}}, true);
+            for (Id f = 0; f < (Id)box.mesh().faces.size(); ++f)
+                if (box.mesh().faces[f].alive) { box.mesh().pushPull(f, box.mesh().faces[f].normal.z < 0 ? -0.01 : 0.01); break; }
+            const QString stl = QDir(pdir.path()).filePath(QStringLiteral("part.stl"));
+            d.check(exportPrint(box, stl, PrintFormat::StlBinary, LengthUnit::Millimeters), "an STL to open");
+            d.check(w.openFile(stl), "File > Open reads an STL");
+            Vec3 mn, mx;
+            const bool one = doc.state.instances.size() == 1 && instanceBounds(doc.state, 0, mn, mx);
+            d.check(one && std::fabs(mx.x - mn.x - 0.03) < 1e-6 && std::fabs(mx.z - mn.z - 0.01) < 1e-6 &&
+                        doc.state.defs[0].name == "part" && doc.state.defs[0].mesh.aliveFaceCount() == 6,
+                    "as a component named after the file, in its unit, with n-gon faces");
+            doc.reset();
+            w.clearRecentFiles();
+        }
+        d.check(exp && expTexts.join(' ').contains("3MF") && expTexts.join(' ').contains("AMF") && expTexts.join(' ').contains("STL") &&
+                    expTexts.join(' ').contains("glTF") && expTexts.join(' ').contains("PLY"),
+                "File > Export lists the model and 3D printing formats");
+        QTemporaryDir dir;
+        doc.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        const QString path = QDir(dir.path()).filePath(QStringLiteral("recent.gsketch"));
+        d.check(saveNative(doc, path, {}), "a model to reopen saves");
+        w.openFile(path);
+        d.check(!w.recentFiles().isEmpty() && w.recentFiles().first() == QFileInfo(path).absoluteFilePath(), "an opened file goes to the top of Open Recent");
+        QMenu* recent = w.findChild<QMenu*>(QStringLiteral("RecentMenu"));
+        bool listed = false;
+        if (recent) {
+            emit recent->aboutToShow();
+            for (QAction* a : recent->actions()) listed = listed || a->text().contains(QStringLiteral("recent.gsketch"));
+        }
+        d.check(listed, "and is listed in File > Open Recent");
+        w.clearRecentFiles();
+        d.check(w.recentFiles().isEmpty(), "Clear Recent Files empties it");
+        doc.reset();
+        doc.modified = false;
+    }
+
     std::printf("selftest: %d faces, %d edges, %zu materials, %d failures\n", d.mesh().aliveFaceCount(),
                 d.mesh().aliveEdgeCount(), doc.state.materials.size(), d.failures);
     doc.modified = false;
@@ -2976,6 +3834,24 @@ int runGlProbe() {
         doc.style.faceStyle = (RenderStyle::FaceStyle)s;
         r.render(doc, cam, pv, 1.0);
     }
+    // Sun shadows, then the Game Mode's soft ones (near map, PCSS).
+    doc.style.shadows = true;
+    r.render(doc, cam, pv, 1.0);
+    r.setSoftShadows(true, 10.0);
+    r.render(doc, cam, pv, 1.0);
+    // Cinematic: ray traced shadows from the sun and a lamp, light rays.
+    SceneObject lamp;
+    lamp.pos = Vec3(3, -1, 1.5);
+    lamp.intensity = 3;
+    lamp.range = 10;
+    doc.addObject(lamp);
+    doc.style.cinematic = true;
+    doc.style.lightRays = 1.0;
+    QElapsedTimer cineClock;
+    cineClock.start();
+    for (int k = 0; k < 3; ++k) r.render(doc, cam, pv, 1.0);
+    f->glFinish();
+    std::printf("gl-probe: cinematic frame %.1f ms\n", cineClock.nsecsElapsed() / 3e6);
     GLenum err = f->glGetError();
     QImage img = fbo.toImage();
     QSet<QRgb> colors;

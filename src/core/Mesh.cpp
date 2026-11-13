@@ -264,6 +264,23 @@ int Mesh::faceEdgeDirection(Id f, Id a, Id b) const {
     return 0;
 }
 
+bool Mesh::solidBehind(Id f) const {
+    // Odd number of faces hit by a ray from the face into its back side: the
+    // face is the skin of a closed solid there.
+    const Face& F = faces[f];
+    const Vec3 start = faceInteriorPoint(f) - F.normal * (kTol * 10);
+    // Slightly skewed so the ray does not run exactly through edges.
+    Vec3 d = (-F.normal + Vec3(1.3e-4, 2.9e-4, 1.7e-4)).normalized();
+    const Ray r{start, d};
+    int hits = 0;
+    for (Id g = 0; g < (Id)faces.size(); ++g) {
+        if (g == f || !faces[g].alive) continue;
+        double t;
+        if (rayFace(g, r, t) && t > kTol) ++hits;
+    }
+    return hits % 2 == 1;
+}
+
 bool Mesh::isFreeFace(Id f) const {
     for (Id e : faceEdges(f)) {
         for (Id g : edgeFaces(e))
@@ -446,6 +463,39 @@ void Mesh::splitEdgesThrough(Id v) {
     }
 }
 
+void Mesh::splitEdgeAtVertices(Id e) {
+    if (e < 0 || !edges[e].alive) return;
+    const Vec3 a = pos(edges[e].v[0]), b = pos(edges[e].v[1]);
+    const double len = (b - a).length();
+    if (len < kTol) return;
+    const double eps = kTol / len;
+    Vec3 mn, mx;
+    for (int i = 0; i < 3; ++i) {
+        mn[i] = std::min(a[i], b[i]) - kTol;
+        mx[i] = std::max(a[i], b[i]) + kTol;
+    }
+    std::vector<std::pair<double, Id>> on;
+    for (Id v = 0; v < (Id)vertices.size(); ++v) {
+        if (!vertices[v].alive || edges[e].has(v)) continue;
+        const Vec3& P = vertices[v].p;
+        if (P.x < mn.x || P.y < mn.y || P.z < mn.z || P.x > mx.x || P.y > mx.y || P.z > mx.z) continue;
+        const double t = closestParamOnSegment(a, b, P);
+        if (t <= eps || t >= 1 - eps) continue;
+        if ((lerp(a, b, t) - P).length() <= kTol) on.emplace_back(t, v);
+    }
+    if (on.empty()) return;
+    // Split from the far end so the remaining piece keeps the id `e` and
+    // still runs from the start to the next vertex.
+    std::sort(on.begin(), on.end());
+    const Id start = edges[e].v[0];
+    Id cur = e;
+    for (auto it = on.rbegin(); it != on.rend(); ++it) {
+        splitEdge(cur, it->second);
+        cur = findEdge(start, it->second);
+        if (cur == kNone) break;
+    }
+}
+
 void Mesh::splitEdge(Id e, Id v, const std::vector<Id>* inFaces) {
     Id a = edges[e].v[0], b = edges[e].v[1];
     if (v == a || v == b) return;
@@ -550,6 +600,14 @@ void Mesh::insertSegment(const Vec3& pa, const Vec3& pb, Id curve, std::vector<I
 }
 
 std::vector<Id> Mesh::drawSegments(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve) {
+    std::vector<Id> drawn = drawSegmentsKeepHidden(segs, curve);
+    // Drawing over hidden edges shows them again.
+    for (Id e : drawn)
+        if (e >= 0 && e < (Id)edges.size()) edges[e].hidden = false;
+    return drawn;
+}
+
+std::vector<Id> Mesh::drawSegmentsKeepHidden(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve) {
     std::vector<Id> created, lineEdges;
     for (const auto& s : segs) {
         if (s.first.nearlyEquals(s.second)) continue;
@@ -900,6 +958,30 @@ void Mesh::eraseEdge(Id e, bool heal) {
         if (faces[f].alive) fs.push_back(f);
     Id a = edges[e].v[0], b = edges[e].v[1];
 
+    if (heal && fs.size() >= 2) {
+        // Two faces on the edge lying in one plane merge, also when one of them
+        // faces the other way (it is turned round first, keeping its look);
+        // any other face on the edge (a wall standing on it) goes.
+        int pa = -1, pb = -1;
+        for (size_t i = 0; i < fs.size() && pa < 0; ++i)
+            for (size_t j = i + 1; j < fs.size(); ++j)
+                if (std::fabs(faces[fs[i]].normal.dot(faces[fs[j]].normal)) > 1 - 1e-6 &&
+                    facePlane(fs[i]).coincident(facePlane(fs[j]), kTol * 10)) {
+                    pa = (int)i;
+                    pb = (int)j;
+                    break;
+                }
+        if (pa >= 0) {
+            for (size_t i = 0; i < fs.size(); ++i)
+                if ((int)i != pa && (int)i != pb) faces[fs[i]].alive = false;
+            const Id A = fs[pa], B = fs[pb];
+            if (faces[A].normal.dot(faces[B].normal) < 0) reverseFace(faceArea(A) < faceArea(B) ? A : B);
+            fs.resize(2);
+            fs[0] = A;
+            fs[1] = B;
+            adjDirty_ = true;
+        }
+    }
     if (heal && fs.size() == 2) {
         Plane p1 = facePlane(fs[0]), p2 = facePlane(fs[1]);
         if (p1.coincident(p2, kTol * 10) && faces[fs[0]].normal.dot(faces[fs[1]].normal) > 0) {
@@ -940,6 +1022,94 @@ void Mesh::removeEdgesWithoutFaces(const std::vector<Id>& candidates) {
         adjDirty_ = true;
         revision = nextMeshRevision();
     }
+}
+
+void Mesh::attachLyingEdges(const std::vector<Id>& candidates) {
+    std::set<Id> verts;
+    for (Id e : candidates)
+        if (e >= 0 && e < (Id)edges.size() && edges[e].alive) {
+            verts.insert(edges[e].v[0]);
+            verts.insert(edges[e].v[1]);
+        }
+    if (verts.empty()) return;
+    // Pasted or exploded geometry comes with its own vertices: one per place.
+    weld(verts);
+    std::vector<std::pair<Vec3, Vec3>> boxes(faces.size());
+    for (Id f = 0; f < (Id)faces.size(); ++f) {
+        if (!faces[f].alive) continue;
+        Vec3 mn(1e300, 1e300, 1e300), mx(-1e300, -1e300, -1e300);
+        for (Id v : faces[f].outer)
+            for (int k = 0; k < 3; ++k) mn[k] = std::min(mn[k], pos(v)[k]), mx[k] = std::max(mx[k], pos(v)[k]);
+        boxes[f] = {mn - Vec3(kTol * 10, kTol * 10, kTol * 10), mx + Vec3(kTol * 10, kTol * 10, kTol * 10)};
+    }
+    std::vector<std::pair<Vec3, Vec3>> segs;
+    for (Id e : candidates) {
+        if (e < 0 || e >= (Id)edges.size() || !edges[e].alive) continue;
+        const Id va = edges[e].v[0], vb = edges[e].v[1];
+        const Vec3 a = pos(va), b = pos(vb), mid = (a + b) * 0.5;
+        for (Id f = 0; f < (Id)faces.size(); ++f) {
+            if (!faces[f].alive) continue;
+            const auto& [mn, mx] = boxes[f];
+            bool out = false;
+            for (int k = 0; k < 3 && !out; ++k) out = std::max(a[k], b[k]) < mn[k] || std::min(a[k], b[k]) > mx[k];
+            if (out || faceEdgeDirection(f, va, vb) != 0) continue; // its own edge
+            const Plane P = facePlane(f);
+            if (!P.contains(a, kTol * 10) || !P.contains(b, kTol * 10) || !pointInFace(f, mid, true)) continue;
+            segs.emplace_back(a, b);
+            break;
+        }
+    }
+    // Drawn again, they split the edges they touch and the faces they cross.
+    if (!segs.empty()) drawSegmentsKeepHidden(segs);
+}
+
+int Mesh::removeDegenerateFaces() {
+    int removed = 0;
+    std::map<LoopKey, Id> seen;
+    const double tiny = kTol * kTol * 0.01;
+    for (Id f = 0; f < (Id)faces.size(); ++f) {
+        Face& F = faces[f];
+        if (!F.alive) continue;
+        auto kill = [&] {
+            F.alive = false;
+            ++removed;
+        };
+        // Repeated vertices in a row and dead vertices make no sense in a loop.
+        auto clean = [&](std::vector<Id>& L) {
+            std::vector<Id> out;
+            for (Id v : L) {
+                if (v < 0 || v >= (Id)vertices.size() || !vertices[v].alive) continue;
+                if (out.empty() || out.back() != v) out.push_back(v);
+            }
+            while (out.size() > 1 && out.front() == out.back()) out.pop_back();
+            if (out.size() != L.size()) L.swap(out);
+        };
+        clean(F.outer);
+        for (auto& h : F.holes) clean(h);
+        std::vector<Id> so(F.outer);
+        std::sort(so.begin(), so.end());
+        // A hole that is the outline itself (or too small) leaves nothing.
+        F.holes.erase(std::remove_if(F.holes.begin(), F.holes.end(),
+                                     [&](const std::vector<Id>& h) {
+                                         if (h.size() < 3) return true;
+                                         std::vector<Id> sh(h);
+                                         std::sort(sh.begin(), sh.end());
+                                         return sh == so;
+                                     }),
+                      F.holes.end());
+        if (std::set<Id>(F.outer.begin(), F.outer.end()).size() < 3) { kill(); continue; }
+        if (faceArea(f) < tiny) { kill(); continue; }
+        // The same loop twice facing the same way: one is a ghost.
+        LoopKey k = canonicalKey(F.outer, F.holes);
+        auto it = seen.find(k);
+        if (it != seen.end() && faces[it->second].normal.dot(F.normal) > 0) { kill(); continue; }
+        seen[k] = f;
+    }
+    if (removed) {
+        adjDirty_ = true;
+        revision = nextMeshRevision();
+    }
+    return removed;
 }
 
 void Mesh::removeOrphanVertices() {
@@ -1002,6 +1172,131 @@ bool Mesh::mergeCollinearAt(Id v) {
 // Push / Pull
 // ---------------------------------------------------------------------------
 
+std::vector<Id> Mesh::pushPullFaces(const std::set<Id>& fs, double dist, bool keepOriginal) {
+    std::vector<Id> result;
+    if (std::fabs(dist) < kTol) return result;
+    std::vector<Id> live;
+    for (Id f : fs)
+        if (f >= 0 && f < (Id)faces.size() && faces[f].alive) live.push_back(f);
+    if (live.size() == 1) {
+        Id r = pushPull(live[0], dist, keepOriginal);
+        if (r != kNone) result.push_back(r);
+        return result;
+    }
+
+    // Group faces that share an edge and lie in the same plane facing the same way.
+    const std::set<Id> in(live.begin(), live.end());
+    auto sameRegion = [&](Id a, Id b) {
+        return faces[a].normal.dot(faces[b].normal) > 1 - 1e-9 && facePlane(a).coincident(facePlane(b), kTol * 10);
+    };
+    std::map<Id, int> groupOf;
+    std::vector<std::vector<Id>> groups;
+    for (Id f : live) {
+        if (groupOf.count(f)) continue;
+        const int gi = (int)groups.size();
+        groups.push_back({});
+        std::vector<Id> stack = {f};
+        groupOf[f] = gi;
+        while (!stack.empty()) {
+            Id g = stack.back();
+            stack.pop_back();
+            groups[gi].push_back(g);
+            for (Id e : faceEdges(g))
+                for (Id h : edgeFaces(e))
+                    if (h != g && faces[h].alive && in.count(h) && !groupOf.count(h) && sameRegion(g, h)) {
+                        groupOf[h] = gi;
+                        stack.push_back(h);
+                    }
+        }
+    }
+
+    // Faces get renumbered by earlier operations (healing, merging), so each
+    // group is captured by geometry and found again when its turn comes.
+    struct Part {
+        Vec3 inside;
+        FaceSide front, back;
+        bool hidden;
+    };
+    struct Group {
+        Vec3 normal;
+        std::vector<Part> parts;
+        std::vector<std::pair<Vec3, Vec3>> inner; // shared edges between members
+        std::vector<Edge> innerFlags;
+    };
+    std::vector<Group> plan;
+    for (const auto& members : groups) {
+        Group G;
+        G.normal = faces[members[0]].normal;
+        std::set<Id> mem(members.begin(), members.end());
+        std::set<Id> seen;
+        for (Id g : members) {
+            G.parts.push_back({faceInteriorPoint(g), faces[g].front, faces[g].back, faces[g].hidden});
+            for (Id e : faceEdges(g)) {
+                if (seen.count(e)) continue;
+                int n = 0, alive = 0;
+                for (Id h : edgeFaces(e))
+                    if (faces[h].alive) { ++alive; n += mem.count(h) ? 1 : 0; }
+                if (n == 2 && alive == 2) {
+                    seen.insert(e);
+                    G.inner.emplace_back(pos(edges[e].v[0]), pos(edges[e].v[1]));
+                    G.innerFlags.push_back(edges[e]);
+                }
+            }
+        }
+        plan.push_back(std::move(G));
+    }
+
+    auto findFace = [&](const Vec3& p, const Vec3& n) {
+        for (Id g = 0; g < (Id)faces.size(); ++g)
+            if (faces[g].alive && faces[g].normal.dot(n) > 1 - 1e-6 && std::fabs(facePlane(g).distance(p)) < kTol * 10 &&
+                pointInFace(g, p, false))
+                return g;
+        return kNone;
+    };
+
+    for (const Group& G : plan) {
+        // Merge the region into one face by removing the edges between members.
+        for (const auto& seg : G.inner) {
+            Id a = findVertex(seg.first), b = findVertex(seg.second);
+            Id e = (a != kNone && b != kNone) ? findEdge(a, b) : kNone;
+            if (e != kNone) eraseEdge(e, true);
+        }
+        Id f = findFace(G.parts[0].inside, G.normal);
+        if (f == kNone) continue;
+        Id moved = pushPull(f, dist, keepOriginal);
+        if (moved == kNone || G.parts.size() == 1) {
+            if (moved != kNone) result.push_back(moved);
+            continue;
+        }
+        // Put the dividing edges back on the moved face and restore each part's look.
+        const Vec3 off = G.normal * dist;
+        const Vec3 movedN = faces[moved].normal;
+        for (size_t i = 0; i < G.inner.size(); ++i) {
+            for (Id e : drawLine(G.inner[i].first + off, G.inner[i].second + off)) {
+                edges[e].soft = G.innerFlags[i].soft;
+                edges[e].smooth = G.innerFlags[i].smooth;
+                edges[e].hidden = G.innerFlags[i].hidden;
+            }
+            if (keepOriginal) drawLine(G.inner[i].first, G.inner[i].second);
+        }
+        const bool flipped = movedN.dot(G.normal) < 0;
+        for (const Part& P : G.parts) {
+            Id g = findFace(P.inside + off, movedN);
+            if (g == kNone) continue;
+            FaceSide fr = P.front, bk = P.back;
+            if (fr.tex.valid) fr.tex.origin += off;
+            if (bk.tex.valid) bk.tex.origin += off;
+            if (flipped) std::swap(fr, bk);
+            faces[g].front = fr;
+            faces[g].back = bk;
+            faces[g].hidden = P.hidden;
+            result.push_back(g);
+        }
+    }
+    touch();
+    return result;
+}
+
 Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
     if (f < 0 || !faces[f].alive || std::fabs(dist) < kTol) return f;
     const Face F = faces[f];
@@ -1029,11 +1324,22 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
             std::set<Id> vs;
             for (const auto& L : loops) vs.insert(L.begin(), L.end());
             transformVertices(vs, Mat4::translation(off), true);
+            // Pushed onto an opposite face (a pocket's floor onto the back
+            // wall): both go, leaving a hole. Pushed flush with a neighbour
+            // facing the same way: they become one face.
+            cancelCoincident({f});
+            healCoplanar(f);
+            if (!faces[f].alive) return kNone;
             return f;
         }
     }
 
     const bool isFree = keepOriginal || isFreeFace(f);
+    // A face with neighbours but no solid behind it (a rectangle drawn on the
+    // ground next to another one, the floor beside a box) makes a protrusion
+    // either way: orient the new faces outwards as for a free face, but the
+    // starting face is still used up.
+    const bool orientFree = isFree || !solidBehind(f);
     std::unordered_map<Id, Id> vm;
     for (const auto& L : loops)
         for (Id v : L) vm[v] = addVertex(pos(v) + off);
@@ -1053,7 +1359,7 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
 
     std::vector<std::pair<Id, Id>> oldEdges;
     std::vector<Id> created;
-    const double sgn = isFree ? 1.0 : (dist > 0 ? 1.0 : -1.0);
+    const double sgn = orientFree ? 1.0 : (dist > 0 ? 1.0 : -1.0);
     for (const auto& L : loops) {
         size_t k = L.size();
         for (size_t i = 0; i < k; ++i) {
@@ -1082,6 +1388,12 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
         }
     }
 
+    // The new side edges may run through corners already there (the top of
+    // a lower neighbouring box): split them so the walls share topology.
+    for (const auto& L : loops)
+        for (Id v : L)
+            splitEdgeAtVertices(findEdge(v, vm[v]));
+
     std::vector<Id> newOuter;
     for (Id v : F.outer) newOuter.push_back(vm[v]);
     std::vector<std::vector<Id>> newHoles;
@@ -1090,7 +1402,7 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
         for (Id v : h) nh.push_back(vm[v]);
         newHoles.push_back(std::move(nh));
     }
-    bool flipMoved = isFree && dist < 0;
+    bool flipMoved = orientFree && dist < 0;
     Id moved = addFaceRaw(newOuter, newHoles, flipMoved ? -n : n);
     if (moved != kNone) {
         FaceSide fr = F.front, bk = F.back;
@@ -1124,11 +1436,18 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
         for (Id v : L)
             if (vertices[v].alive) mergeCollinearAt(v);
 
-    // New faces landing coplanar with an opposite-facing face cancel out where
-    // they overlap: the moved face when pushed all the way through a solid, or
-    // a side face sliding along a neighbour (the floor of a doorway). Cut the
-    // plane along the new face's boundary and remove both coincident parts.
     created.push_back(moved);
+    cancelCoincident(created);
+    healCoplanar(moved);
+    if (moved != kNone && !faces[moved].alive) return kNone;
+    return moved;
+}
+
+// New faces landing coplanar with an opposite-facing face cancel out where
+// they overlap: the moved face when pushed all the way through a solid, or a
+// side face sliding along a neighbour (the floor of a doorway). Cut the plane
+// along the new face's boundary and remove both coincident parts.
+void Mesh::cancelCoincident(const std::vector<Id>& created) {
     for (Id s : created) {
         if (s == kNone || !faces[s].alive) continue;
         const Plane sp = facePlane(s);
@@ -1173,8 +1492,36 @@ Id Mesh::pushPull(Id f, double dist, bool keepOriginal) {
         for (Id v : ends)
             if (vertices[v].alive) mergeCollinearAt(v);
     }
-    if (moved != kNone && !faces[moved].alive) return kNone;
-    return moved;
+}
+
+// Removes edges around face f (its own and those of the faces next to it)
+// that separate two coplanar faces facing the same way with the same look:
+// a face pushed flush with the next one, and the walls that became flush.
+void Mesh::healCoplanar(Id f) {
+    if (f == kNone || f >= (Id)faces.size() || !faces[f].alive) return;
+    std::set<std::pair<Id, Id>> list;
+    for (Id e : faceEdges(f)) {
+        list.emplace(edges[e].v[0], edges[e].v[1]);
+        for (Id g : edgeFaces(e)) {
+            if (g == f || !faces[g].alive) continue;
+            for (Id e2 : faceEdges(g)) list.emplace(edges[e2].v[0], edges[e2].v[1]);
+        }
+    }
+    for (const auto& pr : list) {
+        if (!vertices[pr.first].alive || !vertices[pr.second].alive) continue;
+        Id e = findEdge(pr.first, pr.second);
+        if (e == kNone) continue;
+        std::vector<Id> fs;
+        for (Id g : edgeFaces(e))
+            if (faces[g].alive) fs.push_back(g);
+        if (fs.size() != 2) continue;
+        const Face &A = faces[fs[0]], &B = faces[fs[1]];
+        if (A.normal.dot(B.normal) < 1 - 1e-9) continue;
+        if (A.front.material != B.front.material || A.back.material != B.back.material) continue;
+        if (A.hidden != B.hidden || edges[e].hidden) continue;
+        if (!facePlane(fs[0]).coincident(facePlane(fs[1]), kTol * 10)) continue;
+        eraseEdge(e, true);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1253,7 +1600,7 @@ void Mesh::duplicate(const std::set<Id>& faceIds, const std::set<Id>& edgeIds, s
         if (ne == kNone) continue;
         edges[ne].soft = src.soft;
         edges[ne].smooth = src.smooth;
-        edges[ne].hidden = src.hidden;
+        edges[ne].hidden = false; // a copy of hidden geometry shows
         edges[ne].curve = mapCurve(src.curve);
         newEdges.insert(ne);
     }
@@ -1272,7 +1619,7 @@ void Mesh::duplicate(const std::set<Id>& faceIds, const std::set<Id>& edgeIds, s
         if (nf == kNone) continue;
         faces[nf].front = src.front;
         faces[nf].back = src.back;
-        faces[nf].hidden = src.hidden;
+        faces[nf].hidden = false;
         newFaces.insert(nf);
     }
 }

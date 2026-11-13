@@ -7,7 +7,18 @@ A free, native Linux 3D sketching tool with a push/pull workflow, written from
 scratch in C++20 with Qt 6 Widgets and OpenGL 3.3 (core profile). Clean-room design:
 no proprietary formats, code or artwork. All icons are original inline SVGs.
 
-![GNUSketch: rounded box, Follow Me beam, pipe and lathed vase, a wall with a pushed-through doorway, and traced 3D letters](docs/screenshot.png)
+![GNUSketch: the dark interface with Hierarchy, Properties, Materials, Instructor and the Animator timeline](docs/window.png)
+
+| Push/Pull | Animator (motion tween) |
+|---|---|
+| ![A rectangle pulled up into a block](docs/pushpull.gif) | ![A crate tumbling across the ground on the timeline](docs/animator.gif) |
+| **Cinematic lighting**: ray traced soft shadows | **Hollow** effect for 3D printing (cut open) |
+| ![The house in low sun with soft shadows](docs/cinematic.png) | ![A sphere hollowed with even walls, cut in half](docs/hollow.png) |
+
+![Rounded box, Follow Me beam, pipe and lathed vase, a wall with a pushed-through doorway, and traced 3D letters](docs/screenshot.png)
+
+The pictures are rendered by the program itself: `tools/readme-media.sh` (a
+virtual screen, nothing shows on the desktop; needs Python with Pillow).
 
 > **Status: early alpha (0.1).** The core modelling tools work. Expect rough edges
 > and see "Not implemented yet" below.
@@ -83,6 +94,8 @@ was read, tags, props and animations included.
 * **Push/Pull** extrudes faces. When a face's edges all border perpendicular faces,
   it stretches the solid instead. Coplanar side faces are healed, pushing through a
   solid cuts a hole, and the sides of circles and arcs become soft and smooth-shaded.
+  Clicking one of several selected faces pushes/pulls all of them by the same
+  distance, each along its own normal; neighbouring coplanar faces move as one.
 * **Follow Me** sweeps any profile face (with holes) along a path of lines, arcs
   or a closed outline, with mitred joints: pipes, T/H/I beams, mouldings and
   lathed shapes. Select the path and click the profile, or click the profile and
@@ -128,7 +141,7 @@ was read, tags, props and animations included.
     in cells per meter), **Triangulate** and **Merge Flat Faces**. Pattern cells are
     planar on flat surfaces and slightly warped across curved ones, so Solid Tools
     and exact picking work best on the flat ones.
-* **Sun** (View > Render, Window > Sun): sunlight with sky and ground bounce, the sun
+* **Sun** (View > Render, Window > Environment): sunlight with sky and ground bounce, the sun
   itself in the sky, and its direction, height and brightness. Low sun is warm, below
   the horizon it is night. Shadows follow it.
 * **Backface Culling** (View > Render, off by default): the back of a face is neither
@@ -245,16 +258,40 @@ was read, tags, props and animations included.
   are fixed automatically; a component with holes in its surface or edges shared by
   more than two faces isn't a solid, and the status bar says why. Entity Info
   shows **Solid Component** and the volume for solids.
+* **Effects → Polygons → De-triangulate**: joins triangles (imported STL/3MF...)
+  back into polygons: flat neighbours within a tolerance become one n-gon and the
+  points in between on straight outlines go; optionally pairs of triangles on curved
+  surfaces become quads.
+* **Effects → Solid → Hollow**: makes a closed solid hollow with walls of a chosen
+  thickness, for any shape and topology (the inner wall follows the distance to the
+  surface; parts thinner than two walls stay solid). **Solidify**: one solid seen
+  from outside: overlapping parts merge, inner walls, sealed hollows and loose
+  sheets go, faces showing their back outside are turned round.
+* **Panels** (Window menu): **Hierarchy**, **Properties** (the equipped tool's
+  settings: terraform brushes, light tools; otherwise the selection: a light or
+  camera to edit, faces, edges, components), **Materials** and **Instructor** open
+  at the start; **Environment** (sun and styles) and the **Animator**. Window →
+  Settings also sets the font size and the toolbar icon size.
+* **Animator** (Window → Animator): a timeline like Flash's. Select a component,
+  light or camera and press **New Layer**; move the playhead, change or move the
+  thing and a keyframe appears there (Auto Key), or press **F6**. Between keyframes
+  a **motion tween** (blue, with an arrow) moves it smoothly; without one it holds
+  (grey). Drag keyframes, right-click for tweens, the eye hides, the lock protects a
+  layer; frame rate, length, play/loop below. Saved with the model.
+* **View → Render → Cinematic Lighting** (also Window → Environment, F5 in Game Mode):
+  ray traced soft shadows from the sun and from every light (a bounding volume
+  hierarchy of the model is traced on the graphics card), and light rays: sun shafts
+  through the air and beams of lamps, with Window → Environment → Light rays for their strength.
 * **View → Render**: sun **Shadows**, **Ambient Occlusion** (soft darkening in
   creases, corners and where objects meet; screen-space, so it follows what is on
   screen) and **Antialiasing** toggles.
-* **Terraform** (Tools → Terraform, tool set, Terraform tray section): **Mountain**,
+* **Terraform** (Tools → Terraform, tool set; settings in the Properties panel): **Mountain**,
   **Pit** and **Flatten** sculpting brushes. Press and hold on a face: Mountain
   raises it, Pit sinks it, Flatten levels it to the height where the stroke started;
   drag to paint. The faces under the brush turn into a smooth-shaded triangle mesh
   that keeps subdividing wherever triangles stretch, so it stays smooth. Brushes
   work in any direction (on walls and slopes too). Radius (shown on the cursor),
-  Force (cm per second of holding) and Hardness are set in the Terraform tray
+  Force (cm per second of holding) and Hardness are set in the Properties panel
   section; type a value while a Terraform tool is active to set the radius. Hold
   **Shift** to keep the brush on the vertical axis instead of the surface normal.
   **Ctrl+wheel** changes the radius, **Alt+wheel** the hardness.
@@ -279,16 +316,29 @@ was read, tags, props and animations included.
 | P | Push/Pull | M | Move / Copy (Ctrl) / Array (`5x`, `/5`) |
 | Q | Rotate (Ctrl = copy) | S | Scale with grips (corner / edge / face, Shift, Ctrl) |
 | F | Offset | T | Tape Measure (guides, model resize) |
-| O / H / Z | Orbit / Pan / Zoom | Shift+Z | Zoom Extents |
+| O / H / Alt+Z | Orbit / Pan / Zoom | Shift+Z | Zoom Extents |
+| hold X / Y / Z | keep any tool on the red / green / blue axis (what the arrow keys lock in that tool) while held | | |
 
-Also Freehand, Zoom Window, **Follow Me**, **Round Corners**, the **Solid Tools** and the
+Also Freehand, Zoom Window, **Follow Me**, the **Solid Tools** and the
 **Terraform** brushes and Texture Brush (Tools menu and the
 tool set; no shortcut keys). Middle mouse orbits and Shift+middle pans with any
 tool. The wheel zooms towards the cursor; double-clicking the middle button
 re-centres the view.
 
-**Scale** shows a box with grips around the selection (along a single component's
-own axes). Corner grips scale uniformly, edge-midpoint grips scale two axes and
+**Units, precision and length snapping** (Window → Model Info, or the Properties
+panel while a drawing tool is equipped): the length unit, the display precision
+(chosen by example: `0mm`, `0.0mm`, `0.00mm`…) and length snapping: off, to the
+display precision (0.1 mm at one decimal), or every step you type (`1m`, `10cm`,
+`5mm`, `1/16"`). Freely drawn lengths (Line, each Rectangle side, Circle/Polygon
+radius, Arc, Push/Pull, Move, Offset, Tape) come out in whole steps; snapping to
+points, edges and guides stays exact, and typed values are used as typed.
+
+**Scale** shows a box with grips around the selection, labelled with its sizes
+(W red, L green, H blue; live while dragging). With the Scale tool equipped the
+Properties panel has the three sizes: type a new one (any unit) to rescale, with
+**Keep proportions** (the others follow) and the point that stays in place
+(bottom centre, corner or centre). The box follows a single component's own
+axes. Corner grips scale uniformly, edge-midpoint grips scale two axes and
 face-centre grips one axis, keeping the opposite grip fixed. Shift toggles
 uniform scaling, Ctrl scales about the centre. Type `2`, `1.5,2` or `1,2,1`
 while scaling, or right after to adjust it.
@@ -452,7 +502,17 @@ the image is traced, so on a tiled texture fit the image to the face first.
   Y-up on disk.
 * **glTF 2.0** (export) produces a single self-contained `.gltf`, Y-up, with PBR
   materials, their maps and textures, lights (`KHR_lights_punctual`) and cameras.
-* **STL** (export) is binary, in millimetres.
+* **3D printing** (File → Export → 3D Printing), all in the model's unit by
+  default (another can be picked when exporting), solids welded so slicers see them
+  closed:
+  * **3MF** and **AMF** store the unit in the file, and the materials' colours;
+  * **STL** (binary or ASCII), **PLY** and **OFF** have no unit field: the numbers are
+    in the chosen unit and the header/comment says which.
+  * The same formats **import** (File → Import → 3D Printing, or File → Open): 3MF
+    and AMF (also zipped AMF) in their own unit, with 3MF components, transforms and
+    colours; STL/PLY/OFF written by GNUSketch in theirs, others in the unit you pick
+    (millimeters by default). Each file becomes a component named after it, its
+    triangles welded and flat ones joined back into n-gons, colours as materials.
 
 **To get FBX:** export OBJ or glTF, then convert with Blender (File → Import, then
 File → Export → FBX) or with assimp (`assimp export model.gltf model.fbx`).
@@ -464,9 +524,9 @@ src/core    Math, Mesh (B-rep kernel + face inference), Triangulate, Units, Docu
             FollowMe (profile sweeps), RoundCorners (fillets), ImageTrace (image outlines),
             Terrain (sculpting brushes), Solids (boolean solid tools),
             Effects (noise, blur, decimate, remesh), Walker (Game Mode physics)
-src/io      NativeFormat, ObjIO, GltfExport, StlExport, ImageUtil
+src/io      NativeFormat, ObjIO, GltfExport, StlExport, PrintExport (3MF/AMF/STL/PLY/OFF), ImageUtil
 src/render  Camera, Renderer (GL 3.3: faces, geometry-shader wide/dashed lines, sky/ground)
-src/app     Viewport, Inference, tools (Draw/Modify/Camera/Terrain/Solid), Panels (tray), MainWindow, Icons,
+src/app     Viewport, Inference, tools (Draw/Modify/Camera/Terrain/Solid), Panels, Properties, Animator (timeline), MainWindow, Icons, Theme (dark UI, duotone icons, Settings),
             EffectsUi (Effects menu and dialog), GameMode (placement tool and game window)
 tests       kernel and I/O tests
 ```

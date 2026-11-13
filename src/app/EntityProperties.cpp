@@ -213,7 +213,7 @@ EntityProperties::EntityProperties(Document* doc, Viewport* vp, QWidget* parent)
     message_ = new QLabel(this);
     message_->setWordWrap(true);
     message_->setText(QStringLiteral("self.tween(state, seconds), self.play([states], {duration, loop}), self.fire(), on(\"use\" | \"touch\" | \"trigger\" | \"start\" | \"tick\", fn), after(seconds, fn)"));
-    message_->setStyleSheet(QStringLiteral("color: #555;"));
+    message_->setProperty("hint", true);
     lay->addWidget(message_);
 
     connect(class_, &QComboBox::activated, this, [this] { setClass(class_->currentData().toString()); });

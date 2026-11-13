@@ -60,7 +60,14 @@ void Tool::clearLocks() {
     shiftLock_ = false;
 }
 
+void Tool::holdAxis(int axis) {
+    heldAxis_ = axis;
+    mouseMove(lastMouse_);
+    update();
+}
+
 Color Tool::lockColor() const {
+    if (heldAxis_ >= 0) return Renderer::axisColor(heldAxis_);
     if (lockAxis_ >= 0) return Renderer::axisColor(lockAxis_);
     return Color::rgb8(220, 0, 220);
 }
@@ -80,7 +87,11 @@ InferenceResult Tool::inferPoint(const MouseEvent& e, std::optional<Vec3> ref, s
                                  const std::set<Id>* exclude, bool axes) {
     InferenceEngine::Options o;
     o.ref = ref;
-    if (ref && lockDir_) {
+    if (ref && heldAxis_ >= 0) {
+        static const Vec3 axes[3] = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)};
+        o.lockDir = axes[heldAxis_];
+        o.lockAxis = heldAxis_;
+    } else if (ref && lockDir_) {
         o.lockDir = lockDir_;
         o.lockAxis = lockAxis_;
     }
@@ -88,7 +99,40 @@ InferenceResult Tool::inferPoint(const MouseEvent& e, std::optional<Vec3> ref, s
     o.excludeVerts = exclude;
     o.axes = axes;
     inf_ = engine().infer(e.x, e.y, o);
+    // Length snapping: a free point moves along its direction from the
+    // reference to the nearest whole step.
+    if (ref && snapDistance_ && lengthSnappable(inf_)) {
+        bool keep = true;
+        if (inf_.type == InferenceResult::OnFace && inf_.face != kNone) // stays on the face only if ref is in its plane
+            keep = mesh().facePlane(inf_.face).contains(*ref, kTol * 10);
+        const Vec3 d = inf_.p - *ref;
+        const double len = d.length();
+        if (keep && len > kTol) {
+            const double s = snapLen(len);
+            if (s > kTol && std::fabs(s - len) > 1e-12) inf_.p = *ref + d * (s / len);
+        }
+    }
     return inf_;
+}
+
+double Tool::snapLen(double meters) { return doc().units.snapped(meters); }
+
+bool Tool::lengthSnappable(const InferenceResult& r) {
+    switch (r.type) {
+    case InferenceResult::Free:
+    case InferenceResult::Ground:
+    case InferenceResult::AxisX:
+    case InferenceResult::AxisY:
+    case InferenceResult::AxisZ:
+    case InferenceResult::Locked:
+    case InferenceResult::OnPlane:
+    case InferenceResult::OnFace:
+    case InferenceResult::AlongEdge:
+    case InferenceResult::Parallel:
+    case InferenceResult::Perpendicular:
+    case InferenceResult::FaceNormal: return true;
+    default: return false;
+    }
 }
 
 bool Tool::keyPress(QKeyEvent* e) {

@@ -31,6 +31,7 @@ add_library(gs_core SHARED
   src/core/Document.h src/core/Document.cpp
   src/core/Components.h src/core/Components.cpp
   src/core/Animation.h src/core/Animation.cpp
+  src/core/Timeline.h src/core/Timeline.cpp
   src/core/Physics.h src/core/Physics.cpp
   src/core/Terrain.h src/core/Terrain.cpp
   src/core/Solids.h src/core/Solids.cpp
@@ -51,21 +52,29 @@ add_library(gs_io SHARED
   src/io/ObjIO.h src/io/ObjIO.cpp
   src/io/GltfExport.h src/io/GltfExport.cpp
   src/io/StlExport.h src/io/StlExport.cpp
+  src/io/PrintExport.h src/io/PrintExport.cpp
+  src/io/PrintImport.h src/io/PrintImport.cpp
   src/io/ImageUtil.h src/io/ImageUtil.cpp
   src/io/AssetLibrary.h src/io/AssetLibrary.cpp
   src/io/ArchMaterials.h src/io/ArchMaterials.cpp
   src/io/EntityScript.h src/io/EntityScript.cpp
 )
-target_link_libraries(gs_io PUBLIC gs_core Qt6::Core Qt6::Gui Qt6::Qml)
+find_package(ZLIB REQUIRED)
+target_link_libraries(gs_io PUBLIC gs_core Qt6::Core Qt6::Gui Qt6::Qml PRIVATE ZLIB::ZLIB)
 target_compile_options(gs_io PRIVATE -Wall -Wextra)
 
 add_executable(gnusketch
   src/main.cpp
   src/render/Camera.h src/render/Camera.cpp
   src/render/Renderer.h src/render/Renderer.cpp
+  src/render/RayScene.h src/render/RayScene.cpp
   src/render/OffscreenRenderer.h src/render/OffscreenRenderer.cpp
   src/app/Inference.h src/app/Inference.cpp
   src/app/Tool.h src/app/Tool.cpp
+  src/app/Theme.h src/app/Theme.cpp
+  src/app/Properties.h src/app/Properties.cpp
+  src/app/Animator.h src/app/Animator.cpp
+  src/app/Screenshots.cpp
   src/app/DrawTools.h src/app/DrawTools.cpp
   src/app/ModifyTools.h src/app/ModifyTools.cpp
   src/app/TerrainTools.h src/app/TerrainTools.cpp

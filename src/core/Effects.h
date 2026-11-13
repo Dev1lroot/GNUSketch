@@ -68,6 +68,41 @@ bool effectTriangulate(Mesh& m, const std::set<Id>& faces, EffectResult* out = n
 // Joins connected coplanar faces with the same materials into n-gons.
 bool effectMergeFlat(Mesh& m, const std::set<Id>& faces, EffectResult* out = nullptr, std::string* error = nullptr);
 
+// Joins triangles back into polygons (an imported STL, say): neighbours lying in
+// one plane within `angle` degrees become one n-gon, and the points in between
+// on straight outlines go. With `quads`, pairs of the triangles left over that
+// bend less than `quadAngle` degrees become quads (curved surfaces).
+struct DetriangulateParams {
+    double angle = 0.1;
+    bool quads = false;
+    double quadAngle = 30;
+};
+bool effectDetriangulate(Mesh& m, const std::set<Id>& faces, const DetriangulateParams& p, EffectResult* out = nullptr,
+                         std::string* error = nullptr);
+
+// Makes a closed solid hollow: an inner wall `thickness` inside the surface,
+// facing the cavity. Any shape and topology: the inner wall is the level set
+// of the distance to the surface (on a grid of `detail` cells along the longest
+// side, finer if the wall needs it), so where the solid is thinner than two
+// walls it stays solid. The outer surface is not changed.
+struct HollowParams {
+    double thickness = 0.002;
+    int detail = 96;
+};
+bool effectHollow(Mesh& m, const std::set<Id>& faces, const HollowParams& p, EffectResult* out = nullptr, std::string* error = nullptr);
+
+// Leaves only the outside of the geometry: overlapping closed parts are merged
+// (union), and faces that cannot be seen from outside go: inner walls, the
+// walls of sealed hollows (they become solid), loose sheets. Faces seen from
+// outside with their back are turned around. Gaps narrower than a grid cell
+// (`detail` cells along the longest side) count as closed.
+struct SolidifyParams {
+    int detail = 128;
+    bool mergeParts = true;
+};
+bool effectSolidify(Mesh& m, const std::set<Id>& faces, const SolidifyParams& p, EffectResult* out = nullptr,
+                    std::string* error = nullptr);
+
 struct RemeshParams {
     enum Shape { Triangles, Quads, Hexagons };
     Shape shape = Quads;

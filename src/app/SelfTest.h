@@ -2,6 +2,8 @@
 // GNUSketch - scripted smoke test driving the real UI with synthetic input.
 #pragma once
 
+class QString;
+
 namespace gs {
 
 class MainWindow;
@@ -9,5 +11,7 @@ class MainWindow;
 int runSelfTest(MainWindow& w);
 // Renders one frame offscreen with the real renderer (no window); prints diagnostics.
 int runGlProbe();
+// Renders the README pictures into dir (see Screenshots.cpp).
+int runScreenshots(MainWindow& w, const QString& dir);
 
 } // namespace gs

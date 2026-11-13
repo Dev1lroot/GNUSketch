@@ -57,12 +57,14 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy*.AppImage
-          export VERSION=${GITHUB_REF_NAME#v}
+          VERSION=$(sed -n 's/^project(GNUSketch VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          case "$GITHUB_REF" in refs/tags/v*) VERSION=${GITHUB_REF_NAME#v} ;; esac
+          export VERSION
           export LD_LIBRARY_PATH="$PWD/AppDir/usr/lib"
           ./linuxdeploy-x86_64.AppImage --appdir AppDir \
             --desktop-file packaging/gnusketch.desktop --icon-file packaging/gnusketch.svg \
             --plugin qt --output appimage
-          mv GNUSketch-*.AppImage GNUSketch-${VERSION}-x86_64.AppImage
+          [ -f "GNUSketch-${VERSION}-x86_64.AppImage" ] || mv GNUSketch-*.AppImage "GNUSketch-${VERSION}-x86_64.AppImage"
           ./GNUSketch-${VERSION}-x86_64.AppImage --version
 
       - uses: actions/upload-artifact@v4

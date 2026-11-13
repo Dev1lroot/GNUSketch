@@ -101,14 +101,16 @@ jobs:
       - name: UI self-test (Mesa software OpenGL)
         env:
           GALLIUM_DRIVER: llvmpipe
+          QT_OPENGL: software
         run: |
-          # Mesa's opengl32.dll beside the program (Windows looks there first);
-          # only for the test, the package uses the system's OpenGL.
-          cp /ucrt64/bin/opengl32.dll build/ || true
-          cp /ucrt64/bin/libgallium_wgl.dll build/ 2>/dev/null || true
+          # Qt's software OpenGL: Mesa (llvmpipe) as opengl32sw.dll beside the
+          # program. Only for the test; the package uses the system's driver.
+          pacman -Ql mingw-w64-ucrt-x86_64-mesa | grep -i '\.dll$' || true
+          cp /ucrt64/bin/opengl32.dll build/opengl32sw.dll
+          for d in /ucrt64/bin/libgallium_wgl.dll /ucrt64/bin/libglapi.dll; do [ -f "$d" ] && cp "$d" build/; done
           ./build/gnusketch.exe --gl-probe
           ./build/gnusketch.exe --selftest
-          rm -f build/opengl32.dll build/libgallium_wgl.dll
+          rm -f build/opengl32sw.dll build/libgallium_wgl.dll build/libglapi.dll
 
       - name: Package
         run: |

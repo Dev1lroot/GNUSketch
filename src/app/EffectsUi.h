@@ -39,6 +39,13 @@ struct EffectDef {
     QString tip;
     std::vector<EffectParam> params; // none: runs without a dialog
     std::function<bool(Mesh&, const std::set<Id>&, const QVariantMap&, EffectResult*, std::string*)> apply;
+    // Instead of `apply`, for effects on lines as well as faces: works on the
+    // selected faces and edges of the mesh being edited, sets `sel` to the
+    // result and `message` to what to show.
+    std::function<bool(Mesh&, Selection& sel, const QVariantMap&, QString& message, std::string*)> applyLines;
+    // Instead of `apply`, for effects that make components: works on the
+    // selected faces and components of the model.
+    std::function<bool(ModelState&, Selection& sel, const QVariantMap&, QString& message, std::string*)> applyModel;
     QString key() const; // object name of the menu action, settings key
 };
 

@@ -13,7 +13,8 @@
 
 namespace gs {
 
-// Expands selected edges to whole curves (arcs/circles).
+// Expands selected edges to the whole run each is part of (a circle, an arc,
+// a smooth curve) up to where another edge divides it (Mesh::edgeChain).
 void expandCurves(const Mesh& m, std::set<Id>& edges);
 // Vertex set referenced by a selection.
 std::set<Id> selectionVertices(const Mesh& m, const Selection& s);
@@ -102,6 +103,7 @@ private:
     bool lastKeep_ = false, canAdjust_ = false;
     double pressX_ = 0, pressY_ = 0;
     std::set<Id> faceVerts_;
+    std::set<Id> flips_; // faces of faces_ that get turned to face like face_
 };
 
 // Shared machinery for tools that transform the selection live (move/rotate/scale).

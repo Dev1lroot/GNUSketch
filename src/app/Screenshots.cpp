@@ -8,6 +8,8 @@
 #include "Animator.h"
 #include "MainWindow.h"
 #include "Viewport.h"
+#include "core/GearNotch.h"
+#include "core/Slicer.h"
 #include "core/Components.h"
 #include "core/Effects.h"
 #include "core/Primitives.h"
@@ -699,6 +701,96 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
         p.quads = true;
         effectDetriangulate(m, allFaces(m), p);
     });
+
+    // Gear Notches: a gear, a notched plate and a rack, each a flat shape
+    // given teeth and pulled up.
+    still(QStringLiteral("fx_gear"), [&](Mesh& m) {
+        const Id metal = addColor(doc, "Steel", Color::rgb8(90, 140, 210)), brass = addColor(doc, "Brass", Color::rgb8(214, 170, 70)),
+                 red = addColor(doc, "Red", Color::rgb8(200, 80, 70));
+        auto flat = [](const std::vector<Vec3>& pts) {
+            Mesh f;
+            f.groundFacesDown = false;
+            f.viewHint = Vec3(0, 0, 10);
+            f.drawPolyline(pts, true, f.newCurveId());
+            return f;
+        };
+        auto pull = [](Mesh& f, double h) {
+            for (Id g = 0; g < (Id)f.faces.size(); ++g)
+                if (f.faces[g].alive && std::fabs(f.faces[g].normal.z) > 0.99) {
+                    f.pushPull(g, h * f.faces[g].normal.z);
+                    return;
+                }
+        };
+        auto faces = [](const Mesh& f) {
+            std::set<Id> s;
+            for (Id g = 0; g < (Id)f.faces.size(); ++g)
+                if (f.faces[g].alive) s.insert(g);
+            return s;
+        };
+        std::vector<Vec3> ring;
+        for (int i = 0; i < 64; ++i) ring.push_back(Vec3(std::cos(2 * kPi * i / 64), std::sin(2 * kPi * i / 64), 0));
+        GearNotchParams gp;
+        gp.profile = GearNotchParams::Gear;
+        gp.count = 20;
+        gp.depth = 0.16;
+        gp.toothWidth = 0.55;
+        gp.tipWidth = 0.45;
+        Mesh gearM = flat(ring);
+        gearNotch(gearM, faces(gearM), {}, gp);
+        pull(gearM, 0.35);
+        paintAll(gearM, metal);
+        place(m, gearM, Mat4::translation({0, 0, 0}));
+
+        Mesh plate = flat({{0, 0, 0}, {1.8, 0, 0}, {1.8, 1.8, 0}, {0, 1.8, 0}});
+        GearNotchParams np;
+        np.profile = GearNotchParams::Square;
+        np.inward = true;
+        np.count = 12;
+        np.depth = 0.12;
+        gearNotch(plate, faces(plate), {}, np);
+        pull(plate, 0.2);
+        paintAll(plate, brass);
+        place(m, plate, Mat4::translation({1.7, -0.9, 0}));
+
+        Mesh rack = flat({{0, 0, 0}, {3.2, 0, 0}, {3.2, 0.45, 0}, {0, 0.45, 0}});
+        GearNotchParams rp;
+        rp.profile = GearNotchParams::Trapezoid;
+        rp.count = 14;
+        rp.depth = 0.16;
+        rp.tipWidth = 0.4;
+        const Id top = rack.findEdge(rack.findVertex({0, 0.45, 0}), rack.findVertex({3.2, 0.45, 0}));
+        gearNotch(rack, {}, {top}, rp);
+        pull(rack, 0.25);
+        paintAll(rack, red);
+        place(m, rack, Mat4::translation({-1.2, -2.6, 0}));
+    }, Vec3(-0.35, 0.8, -0.7));
+
+    // Slicer: a ball cut to fit a small print bed, with pegs, pulled apart.
+    {
+        fresh();
+        const Id c = addColor(doc, "Print", Color::rgb8(90, 140, 210));
+        Mesh ball = primitive(PrimitiveKind::Sphere, 0.6);
+        paintAll(ball, c);
+        doc.mesh() = ball;
+        Selection sel;
+        for (Id f = 0; f < (Id)doc.mesh().faces.size(); ++f)
+            if (doc.mesh().faces[f].alive) sel.faces.insert(f);
+        SlicerParams p;
+        p.size = Vec3(0.62, 0.62, 0.62);
+        p.connector = SlicerParams::RoundPegs;
+        p.connectorSize = 0.07;
+        p.connectorLength = 0.06;
+        p.margin = 0.03;
+        p.clearance = 0.004;
+        p.perCut = 3;
+        p.spread = 0.35;
+        sliceSelection(doc.state, sel, p);
+        doc.selection.clear();
+        doc.notifySelection();
+        ++doc.materialsRevision;
+        look(iso, 0.8);
+        frame(QStringLiteral("fx_slicer"));
+    }
 
     // Lights at night: coloured lamps over shapes and a terrain.
     {

@@ -26,7 +26,7 @@ jobs:
           apt-get install -y --no-install-recommends ca-certificates git wget file xvfb xauth \
             build-essential cmake ninja-build zlib1g-dev pkg-config \
             qt6-base-dev qt6-base-dev-tools qt6-declarative-dev libqt6opengl6-dev \
-            qt6-image-formats-plugins qt6-svg-plugins qt6-wayland libxcb-cursor0 libgl1-mesa-dev libegl1-mesa-dev libgl1-mesa-dri
+            qt6-image-formats-plugins qt6-svg-plugins qt6-wayland libxcb-cursor0 weston libgl1-mesa-dev libegl1-mesa-dev libgl1-mesa-dri
           # (the Svg module's package name changed between releases)
           apt-get install -y --no-install-recommends qt6-svg-dev || apt-get install -y --no-install-recommends libqt6svg6-dev
 
@@ -44,36 +44,20 @@ jobs:
       - name: UI self-test (Xvfb, software GL)
         run: tools/headless-selftest.sh build
 
-      - name: AppImage
+      - name: AppImage (packaged, then checked on X11 and Wayland)
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
           QMAKE: /usr/lib/qt6/bin/qmake
-          EXTRA_QT_MODULES: svg
-          EXTRA_PLATFORM_PLUGINS: libqwayland.so
         run: |
-          DESTDIR=$PWD/AppDir cmake --install build
-          cp packaging/gnusketch.png AppDir/gnusketch.png
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
-          chmod +x linuxdeploy*.AppImage
           VERSION=$(sed -n 's/^project(GNUSketch VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           case "$GITHUB_REF" in refs/tags/v*) VERSION=${GITHUB_REF_NAME#v} ;; esac
-          export VERSION
-          export LD_LIBRARY_PATH="$PWD/AppDir/usr/lib"
-          ./linuxdeploy-x86_64.AppImage --appdir AppDir \
-            --desktop-file packaging/gnusketch.desktop --icon-file packaging/gnusketch.svg \
-            --plugin qt --output appimage
-          [ -f "GNUSketch-${VERSION}-x86_64.AppImage" ] || mv GNUSketch-*.AppImage "GNUSketch-${VERSION}-x86_64.AppImage"
-          # The packaged program starts (on a virtual display) and renders.
-          env -u WAYLAND_DISPLAY QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 \
-            xvfb-run -a -s "-screen 0 1600x1000x24" ./GNUSketch-${VERSION}-x86_64.AppImage --gl-probe
+          tools/build-appimage.sh build "$VERSION"
 
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         with:
           name: linux
-          path: GNUSketch-*.AppImage
+          path: build/GNUSketch-*.AppImage
 
   windows:
     runs-on: windows-latest

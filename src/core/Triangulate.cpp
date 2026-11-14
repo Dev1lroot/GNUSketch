@@ -30,7 +30,52 @@ double loopArea(const Ctx& c, const std::vector<int>& loop) {
 
 // Merge a hole (CW) into the outer polygon (CCW) through a mutually visible bridge
 // (Eberly's "Triangulation by ear clipping", section 3).
-void bridgeHole(const Ctx& c, std::vector<int>& poly, const std::vector<int>& hole) {
+// Segments p-q and a-b share a point other than an endpoint they have in
+// common (by position).
+bool segmentsTouch(const Ctx& c, int p, int q, int a, int b) {
+    const Vec2 P = c.pts[p], Q = c.pts[q], A = c.pts[a], B = c.pts[b];
+    auto same = [](const Vec2& x, const Vec2& y) { return std::fabs(x.x - y.x) <= 1e-12 && std::fabs(x.y - y.y) <= 1e-12; };
+    const bool shareP = same(P, A) || same(P, B), shareQ = same(Q, A) || same(Q, B);
+    auto orient = [](const Vec2& o, const Vec2& u, const Vec2& v) { return (u - o).cross(v - o); };
+    const double e = c.eps;
+    const double d1 = orient(A, B, P), d2 = orient(A, B, Q), d3 = orient(P, Q, A), d4 = orient(P, Q, B);
+    if (((d1 > e && d2 < -e) || (d1 < -e && d2 > e)) && ((d3 > e && d4 < -e) || (d3 < -e && d4 > e))) return true;
+    // A point of one lying on the other (not a shared endpoint).
+    auto on = [&](const Vec2& x, const Vec2& s0, const Vec2& s1, double d) {
+        if (std::fabs(d) > e) return false;
+        return x.x >= std::min(s0.x, s1.x) - 1e-12 && x.x <= std::max(s0.x, s1.x) + 1e-12 && x.y >= std::min(s0.y, s1.y) - 1e-12 &&
+               x.y <= std::max(s0.y, s1.y) + 1e-12;
+    };
+    if (!shareP && on(P, A, B, d1)) return true;
+    if (!shareQ && on(Q, A, B, d2)) return true;
+    if (!same(A, P) && !same(A, Q) && on(A, P, Q, d3)) return true;
+    if (!same(B, P) && !same(B, Q) && on(B, P, Q, d4)) return true;
+    return false;
+}
+
+// The bridge from polygon vertex poly[i] to point m runs inside the polygon
+// at that vertex (O'Rourke's InCone) and crosses or touches nothing.
+bool bridgeOk(const Ctx& c, const std::vector<int>& poly, int i, int m, const std::vector<int>& hole,
+              const std::vector<std::vector<int>>& holes, size_t firstOther) {
+    const int n = (int)poly.size();
+    const int a = poly[i], a0 = poly[(i + n - 1) % n], a1 = poly[(i + 1) % n];
+    auto orient = [&](int o, int u, int v) { return c.cross(o, u, v); };
+    const bool inCone = orient(a0, a, a1) >= 0 ? orient(a, m, a0) > c.eps && orient(m, a, a1) > c.eps
+                                               : !(orient(a, m, a1) >= -c.eps && orient(m, a, a0) >= -c.eps);
+    if (!inCone) return false;
+    for (int k = 0; k < n; ++k)
+        if (segmentsTouch(c, a, m, poly[k], poly[(k + 1) % n])) return false;
+    const int h = (int)hole.size();
+    for (int k = 0; k < h; ++k)
+        if (segmentsTouch(c, a, m, hole[k], hole[(k + 1) % h])) return false;
+    for (size_t j = firstOther; j < holes.size(); ++j)
+        for (int k = 0, sz = (int)holes[j].size(); k < sz; ++k)
+            if (segmentsTouch(c, a, m, holes[j][k], holes[j][(k + 1) % sz])) return false;
+    return true;
+}
+
+void bridgeHole(const Ctx& c, std::vector<int>& poly, const std::vector<int>& hole, const std::vector<std::vector<int>>& holes,
+                size_t firstOther) {
     int mi = 0;
     for (int i = 1; i < (int)hole.size(); ++i)
         if (c.pts[hole[i]].x > c.pts[hole[mi]].x) mi = i;
@@ -99,6 +144,26 @@ void bridgeHole(const Ctx& c, std::vector<int>& poly, const std::vector<int>& ho
         }
     }
 
+    // Lined-up holes (corners at the same height) can leave the ray running
+    // along an earlier bridge or edge; then the nearest vertex the hole can
+    // see is taken instead.
+    if (!bridgeOk(c, poly, bestPos, hole[mi], hole, holes, firstOther)) {
+        std::vector<std::pair<double, int>> order;
+        for (int i = 0; i < (int)poly.size(); ++i) order.push_back({(c.pts[poly[i]] - M).length(), i});
+        std::sort(order.begin(), order.end());
+        bool found = false;
+        for (int hm = 0; hm < (int)hole.size() && !found; ++hm) {
+            const int start = hm == 0 ? mi : (mi + hm) % (int)hole.size();
+            for (const auto& [d, i] : order)
+                if (bridgeOk(c, poly, i, hole[start], hole, holes, firstOther)) {
+                    bestPos = i;
+                    mi = start;
+                    found = true;
+                    break;
+                }
+        }
+    }
+
     std::vector<int> out;
     out.reserve(poly.size() + hole.size() + 2);
     for (int i = 0; i <= bestPos; ++i) out.push_back(poly[i]);
@@ -146,7 +211,7 @@ std::vector<std::array<int, 3>> triangulatePolygon(const std::vector<std::vector
         for (int i : b) bx = std::max(bx, c.pts[i].x);
         return ax > bx;
     });
-    for (const auto& h : holes) bridgeHole(c, poly, h);
+    for (size_t i = 0; i < holes.size(); ++i) bridgeHole(c, poly, holes[i], holes, i + 1);
 
     // Ear clipping.
     std::vector<int> v = poly;

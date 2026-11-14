@@ -46,6 +46,9 @@ Double-clicking the middle button re-centres the view.
 Click points; each segment splits the edges it crosses and every closed outline in a
 plane becomes a face. Type a length after the first point. Arrow keys (or holding
 X / Y / Z) keep it on the red / green / blue axis; Shift locks the current direction.
+A line drawn over existing lines in its direction replaces them: the pieces and the
+gaps between them become one edge with the new line's look (shown and hard, even
+where the old ones were soft or hidden). Points where another edge meets it stay.
 
 ### Rectangle (R), Circle (C), Polygon (G), 2 Point Arc (A), Freehand
 ![Rectangle](docs/media/rectangle.gif) ![Circle and polygon](docs/media/circle.gif)
@@ -53,6 +56,10 @@ X / Y / Z) keep it on the red / green / blue axis; Shift locks the current direc
 Rectangles go on the ground, on faces, or on vertical planes (drag up the blue axis or
 use the arrow keys); type `width,height`. Circles and polygons take a radius and `Ns`
 for the number of sides. Arcs are curves of segments that stay together.
+Clicking one edge of a circle, an arc or any smooth curve (also an imported one)
+selects the whole curve, up to the points where another edge divides it: a line
+across a circle splits it into two arcs that select separately. A rectangle's sides
+stay single edges.
 
 ### Primitives (Draw → Primitive…)
 ![Primitives](docs/media/primitives.png)
@@ -155,6 +162,8 @@ and one undo step (Ctrl+F repeats the last one).
 | ![Remesh to hexagons](docs/media/fx_remesh.png) | **Remesh** to quads, hexagons or triangles of a set size, following the creases. **Subdivide**, **Triangulate**, **Merge Flat Faces**. |
 | ![Voxelate](docs/media/fx_voxelate.png) | **Voxelate** rebuilds the geometry from cubes on a world grid, solid or as a shell. |
 | ![De-triangulate](docs/media/fx_detriangulate.png) | **De-triangulate** joins triangles (imported STL, 3MF…) into polygons: flat parts become single faces, curved ones optionally quads. |
+| ![Gear Notches](docs/media/fx_gear.png) | **Gear Notches** (Effects → Shape) puts teeth or notches on whatever is selected: a circle or any flat shape (its outline), a curve, a rectangle's sides, a single line. Settings: tooth shape (square, trapezoid, triangle, sawtooth, rounded, gear with curved flanks), number of teeth or distance between them, depth, tooth and tip width, teeth outward or notches inward, offset along a closed curve, corner angle (each straight side between corners gets its own whole number of teeth, so corners stay clean), holes too, and which side of a free line. Push/pull the result into a gear, a notched plate or a rack. Work on the flat shape before push/pull; overlapping teeth are refused with a message. |
+| ![Slicer](docs/media/fx_slicer.png) | **Slicer** (Effects → Solid) cuts a solid, its selected faces or components, into pieces no larger than a width, length and height: a giant model into parts that fit a 3D printer's build plate. Each piece becomes a component in place (or pulled apart by a gap). Equal pieces divides every axis evenly; otherwise full-size parts and a remainder. **Connectors**: round pegs, square keys or ribs (tongue and groove) stand out of one cut face and sink into a matching socket, larger by the clearance, in the next piece, so the glued parts only fit one way and hold on more surface. They are placed only where the solid leaves the set wall around them. The model must be closed (Solidify can close it). |
 | ![Hollow](docs/media/hollow.png) | **Hollow** makes a closed solid hollow with walls of an exact thickness, for any shape. **Solidify** leaves one clean solid: overlapping parts merge, inner walls, sealed hollows and loose sheets go. |
 
 **Round Corners** and **Trace Image** (outlines from a face's picture: alpha cutouts or
@@ -228,6 +237,13 @@ Collisions, stairs and slopes, physics bodies and scripted entities work as in a
   come in at their real size as a component, flat triangles joined back into faces.
 - **Export:** OBJ (n-gons), glTF 2.0 (PBR, lights, cameras), and for 3D printing 3MF
   and AMF (unit and colours inside), STL binary/ASCII, PLY and OFF in the unit you choose.
+- **Too big for the printer?** Effects → Solid → Slicer cuts the model into parts that
+  fit the build plate, with pegs, keys or ribs to glue them together (see Effects).
+- **Export Selection** (File → Export Selection): any of those formats, plugin formats
+  included, or a `.gsketch` model, with only what is selected: faces, edges,
+  components with everything inside them, lights and cameras, and just the materials
+  they use. It stays where it is in the model (no move to the origin), so pieces
+  exported one by one still fit together.
 - **Plugins** add formats; Help → Plugins shows each one's vendor, license and
   version, and turns it on or off. Included: **Open Block Model** (GNUBlocks), and the
   **Valve Source** exports: Hammer maps (.vmf: convex pieces as brushes, components

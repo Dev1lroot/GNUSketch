@@ -13,12 +13,14 @@
 #include "io/ArchMaterials.h"
 #include "TextureTool.h"
 #include "io/AssetLibrary.h"
+#include "io/ObjIO.h"
 #include "render/OffscreenRenderer.h"
 #include "core/TextureMapping.h"
 
 #include <QDialog>
 #include <QDragEnterEvent>
 #include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QLineEdit>
 #include <QListWidget>
@@ -32,6 +34,7 @@
 #include <QJsonObject>
 #include <QPushButton>
 #include <QSettings>
+#include <QStatusBar>
 #include <QTimer>
 
 #include "MainWindow.h"
@@ -3850,6 +3853,342 @@ int runSelfTest(MainWindow& w) {
         d.check(listed, "and is listed in File > Open Recent");
         w.clearRecentFiles();
         d.check(w.recentFiles().isEmpty(), "Clear Recent Files empties it");
+        doc.reset();
+        doc.modified = false;
+    }
+
+    // A flat shape cut into pieces by lines and a rectangle drawn on it, and
+    // a rectangle drawn over its corner from below the ground (the part
+    // sticking out faces down); everything selected (Select All) and pulled
+    // up: one solid.
+    {
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        d.pump();
+        vp->setStandardView(Vec3(-0.4, 0.7, -0.6));
+        vp->camera().target = Vec3(2, 1.5, 0);
+        d.pump();
+        vp->setTool(ToolId::Rectangle);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.click(d.screen(Vec3(4, 3, 0)));
+        vp->setTool(ToolId::Line);
+        d.click(d.screen(Vec3(1, 0, 0)));
+        d.click(d.screen(Vec3(1, 3, 0)));
+        d.key(Qt::Key_Escape);
+        d.click(d.screen(Vec3(1, 1.5, 0)));
+        d.click(d.screen(Vec3(4, 1.5, 0)));
+        d.key(Qt::Key_Escape);
+        vp->setTool(ToolId::Rectangle);
+        d.click(d.screen(Vec3(2, 0.5, 0)));
+        d.click(d.screen(Vec3(3, 1, 0)));
+        vp->setStandardView(Vec3(-0.4, 0.7, 0.6));
+        vp->camera().target = Vec3(2.5, 1.5, 0);
+        d.pump();
+        d.click(d.screen(Vec3(3.5, 2, 0)));
+        d.click(d.screen(Vec3(5, 4, 0)));
+        vp->setStandardView(Vec3(-0.4, 0.7, -0.6));
+        vp->camera().target = Vec3(2.5, 1.5, 0);
+        d.pump();
+        int pieces = 0, up = 0;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) { ++pieces; up += d.mesh().faces[f].normal.z > 0.99; }
+        std::printf("  sliced flat: %d pieces, %d facing up\n", pieces, up);
+        d.check(pieces == 6 && up == 5, "a flat shape in 6 pieces, one facing down");
+        if (QAction* all = w.findChild<QAction*>(QStringLiteral("selectall"))) all->trigger();
+        d.pump();
+        vp->setTool(ToolId::PushPull);
+        QPointF pc = d.screen(Vec3(0.5, 0.5, 0));
+        d.click(pc);
+        d.move(pc - QPointF(0, 60));
+        d.type("1000");
+        Vec3 smn, smx;
+        bool sany;
+        d.mesh().bounds(smn, smx, sany);
+        int bad = 0, faceCount = 0;
+        double area = 0;
+        for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e) {
+            if (!d.mesh().edges[e].alive) continue;
+            int n = 0;
+            for (Id f : d.mesh().edgeFaces(e)) n += d.mesh().faces[f].alive ? 1 : 0;
+            bad += n != 2;
+        }
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) { ++faceCount; area += d.mesh().faceArea(f); }
+        std::printf("  pulled: %d faces, area %.3f, z %.3f..%.3f, %d open edges\n", faceCount, area, smn.z, smx.z, bad);
+        d.check(sany && std::fabs(smx.z - 1) < 1e-6 && std::fabs(smn.z) < 1e-6, "the whole sliced flat is pulled up 1 m");
+        d.check(bad == 0 && std::fabs(area - (2 * 14.5 + 18)) < 1e-6, "into one closed box (no walls inside, none missing)");
+        doc.reset();
+        doc.modified = false;
+    }
+
+    // Effects > Shape > Gear Notches: a circle drawn and clicked, teeth put on
+    // it through the dialog, pulled into a gear; then a single line.
+    {
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        d.pump();
+        vp->setStandardView(Vec3(-0.3, 0.6, -0.75));
+        vp->camera().target = Vec3(0, 0, 0);
+        d.pump();
+        QAction* gear = w.findChild<QAction*>(QStringLiteral("effect_gear_notches"));
+        d.check(gear != nullptr, "Effects has Gear Notches");
+        if (gear) {
+            doc.selection.clear();
+            doc.notifySelection();
+            d.check(!gear->isEnabled(), "Gear Notches is disabled without a selection");
+            vp->setTool(ToolId::Circle);
+            d.click(d.screen(Vec3(0, 0, 0)));
+            d.click(d.screen(Vec3(1, 0, 0)));
+            vp->setTool(ToolId::Select);
+            d.click(d.screen(Vec3(0.3, 0.3, 0)));
+            d.check(doc.selection.faces.size() == 1, "clicking the circle selects its face");
+            d.check(gear->isEnabled(), "a face enables Gear Notches");
+            auto throughDialog = [&](const std::function<void(QDialog*)>& inDialog) {
+                bool shown = false;
+                QTimer::singleShot(0, &w, [&] {
+                    auto* dlg = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                    if (!dlg) return;
+                    shown = true;
+                    if (inDialog) inDialog(dlg);
+                    dlg->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+                });
+                gear->trigger();
+                d.pump();
+                return shown;
+            };
+            const bool shown = throughDialog([&](QDialog* dlg) {
+                // Spin boxes in order: teeth, distance, depth, ...
+                const auto spins = dlg->findChildren<QDoubleSpinBox*>();
+                if (spins.size() >= 3) {
+                    spins[0]->setValue(16);
+                    spins[2]->setValue(0.1);
+                }
+                waitMs(250);
+            });
+            double rMax = 0;
+            for (const Vertex& v : d.mesh().vertices)
+                if (v.alive) rMax = std::max(rMax, std::hypot(v.p.x, v.p.y));
+            std::printf("  gear: %d faces, %d edges, outer radius %.3f, status '%s'\n", d.mesh().aliveFaceCount(), d.mesh().aliveEdgeCount(), rMax,
+                        qPrintable(w.statusBar()->currentMessage()));
+            d.check(shown && doc.undoName() == "Gear Notches", "the dialog puts the teeth on as one undo step");
+            d.check(d.mesh().aliveFaceCount() == 1 && d.mesh().aliveEdgeCount() > 16 * 4 && rMax > 1.08 && rMax < 1.1 + 1e-6, // (tips between the circle's points sit on its chords)
+                   
+                    "the circle face gets 16 teeth, 10 cm deep");
+            d.check(w.statusBar()->currentMessage().contains(QStringLiteral("16 teeth")), "the status bar counts the teeth");
+            d.check(doc.selection.faces.size() == 1, "the toothed face is selected");
+            // Pulled up: a closed gear.
+            vp->setTool(ToolId::PushPull);
+            const QPointF gc = d.screen(Vec3(0.3, 0.3, 0));
+            d.click(gc);
+            d.move(gc - QPointF(0, 50));
+            d.type("300");
+            int open = 0;
+            for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e) {
+                if (!d.mesh().edges[e].alive) continue;
+                int n = 0;
+                for (Id f : d.mesh().edgeFaces(e)) n += d.mesh().faces[f].alive ? 1 : 0;
+                open += n != 2;
+            }
+            d.check(open == 0 && d.mesh().aliveFaceCount() > 16 * 4, "push/pull makes it a closed gear");
+
+            // One line, selected by clicking it.
+            vp->setTool(ToolId::Select);
+            vp->cancelTool();
+            doc.reset();
+            d.pump();
+            vp->setTool(ToolId::Line);
+            d.click(d.screen(Vec3(-1, -1, 0)));
+            d.click(d.screen(Vec3(1, -1, 0)));
+            d.key(Qt::Key_Escape);
+            vp->setTool(ToolId::Select);
+            d.click(d.screen(Vec3(0, -1, 0)));
+            d.check(doc.selection.edges.size() == 1 && gear->isEnabled(), "a single line enables Gear Notches");
+            throughDialog([&](QDialog* dlg) {
+                const auto spins = dlg->findChildren<QDoubleSpinBox*>();
+                if (spins.size() >= 3) {
+                    spins[0]->setValue(8);
+                    spins[2]->setValue(0.1);
+                }
+                waitMs(250);
+            });
+            d.check(d.mesh().aliveFaceCount() == 0 && d.mesh().aliveEdgeCount() >= 8 * 4 && !doc.selection.edges.empty(),
+                    "the line gets 8 teeth (and stays a line)");
+            d.check(d.mesh().findVertex(Vec3(-1, -1, 0)) != kNone && d.mesh().findVertex(Vec3(1, -1, 0)) != kNone, "its ends stay where they were");
+        }
+        doc.reset();
+        doc.modified = false;
+    }
+
+    // Effects > Solid > Slicer on a box, through its dialog; clicking edges
+    // (a circle in one click, an arc when a line divides it); a line drawn over
+    // lines in its direction replaces them.
+    {
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        d.pump();
+        solidBoxAt(d.mesh(), Vec3(0, 0, 0), Vec3(0.5, 0.3, 0.25));
+        vp->zoomExtents();
+        d.pump();
+        QAction* slicer = w.findChild<QAction*>(QStringLiteral("effect_slicer"));
+        d.check(slicer != nullptr, "Effects has the Slicer");
+        if (slicer) {
+            doc.selection.clear();
+            doc.notifySelection();
+            d.check(!slicer->isEnabled(), "the Slicer is disabled without a selection");
+            if (QAction* all = w.findChild<QAction*>(QStringLiteral("selectall"))) all->trigger();
+            d.pump();
+            d.check(slicer->isEnabled(), "a selected solid enables it");
+            auto throughDialog = [&](const std::function<void(QDialog*)>& inDialog) {
+                bool shown = false;
+                QTimer::singleShot(0, &w, [&] {
+                    auto* dlg = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                    if (!dlg) return;
+                    shown = true;
+                    if (inDialog) inDialog(dlg);
+                    dlg->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+                });
+                slicer->trigger();
+                d.pump();
+                return shown;
+            };
+            // 22 x 22 x 25 cm (the defaults): 3 x 2 x 1 pieces.
+            const bool shown = throughDialog([&](QDialog*) { waitMs(250); });
+            int pieces = 0;
+            for (const Instance& in : doc.state.instances) pieces += in.alive ? 1 : 0;
+            std::printf("  slicer: %d pieces, status '%s'\n", pieces, qPrintable(w.statusBar()->currentMessage()));
+            d.check(shown && doc.undoName() == "Slicer" && pieces == 6 && d.mesh().aliveFaceCount() == 0,
+                    "the box becomes 6 components that fit 22 x 22 x 25 cm");
+            d.check(doc.selection.instances.size() == 6, "the pieces are selected");
+            bool solid = true;
+            for (const Instance& in : doc.state.instances)
+                if (in.alive) solid = solid && isSolid(doc.state.defs[in.def].mesh);
+            d.check(solid, "each piece is a closed solid");
+            // Again with round pegs.
+            w.findChild<QAction*>(QStringLiteral("undo"))->trigger();
+            d.pump();
+            if (QAction* all = w.findChild<QAction*>(QStringLiteral("selectall"))) all->trigger();
+            d.pump();
+            throughDialog([&](QDialog* dlg) {
+                if (auto* combo = dlg->findChild<QComboBox*>()) combo->setCurrentIndex(1);
+                waitMs(400);
+            });
+            const QString msg = w.statusBar()->currentMessage();
+            std::printf("  slicer with pegs: '%s'\n", qPrintable(msg));
+            d.check(msg.contains(QStringLiteral("connectors")) && !msg.contains(QStringLiteral(" 0 connectors")), "with round pegs the cuts get connectors");
+        }
+
+        // Clicking a circle's edge takes the whole circle...
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        d.pump();
+        vp->setStandardView(Vec3(-0.3, 0.6, -0.75));
+        vp->camera().target = Vec3(0, 0, 0);
+        d.pump();
+        vp->setTool(ToolId::Circle);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.click(d.screen(Vec3(1, 0, 0)));
+        auto clickEdge = [&](bool upper) {
+            Id best = kNone;
+            for (Id e = 0; e < (Id)d.mesh().edges.size(); ++e) {
+                if (!d.mesh().edges[e].alive) continue;
+                const Vec3 mid = (d.mesh().pos(d.mesh().edges[e].v[0]) + d.mesh().pos(d.mesh().edges[e].v[1])) * 0.5;
+                if (mid.length() > 0.9 && (mid.y > 0.5) == upper && std::fabs(mid.x) < 0.3) best = e;
+            }
+            if (best == kNone) return;
+            const Vec3 mid = (d.mesh().pos(d.mesh().edges[best].v[0]) + d.mesh().pos(d.mesh().edges[best].v[1])) * 0.5;
+            vp->setTool(ToolId::Select);
+            d.click(d.screen(mid));
+        };
+        clickEdge(true);
+        const int circleEdges = d.mesh().aliveEdgeCount();
+        d.check(doc.selection.edges.size() == (size_t)circleEdges && circleEdges >= 12, "clicking a circle's edge selects the whole circle");
+        // ...and a line across it divides it into two arcs.
+        vp->setTool(ToolId::Line);
+        d.click(d.screen(Vec3(1, 0, 0)));
+        d.click(d.screen(Vec3(-1, 0, 0)));
+        d.key(Qt::Key_Escape);
+        clickEdge(true);
+        std::printf("  circle: %d edges, an arc click selects %zu\n", circleEdges, doc.selection.edges.size());
+        d.check(doc.selection.edges.size() == (size_t)circleEdges / 2, "after a line across it, a click selects one arc");
+        // A rectangle's side alone.
+        doc.reset();
+        d.pump();
+        vp->setTool(ToolId::Rectangle);
+        d.click(d.screen(Vec3(-1, -1, 0)));
+        d.click(d.screen(Vec3(1, 1, 0)));
+        vp->setTool(ToolId::Select);
+        d.click(d.screen(Vec3(0, -1, 0)));
+        d.check(doc.selection.edges.size() == 1 && doc.selection.faces.empty(), "clicking a rectangle's side selects that side");
+
+        // Two lines in a row with a gap, a line drawn over both: one edge.
+        doc.reset();
+        d.pump();
+        vp->setTool(ToolId::Line);
+        d.click(d.screen(Vec3(-1, 0.5, 0)));
+        d.click(d.screen(Vec3(-0.3, 0.5, 0)));
+        d.key(Qt::Key_Escape);
+        d.click(d.screen(Vec3(0.2, 0.5, 0)));
+        d.click(d.screen(Vec3(0.8, 0.5, 0)));
+        d.key(Qt::Key_Escape);
+        const int twoLines = d.mesh().aliveEdgeCount();
+        d.click(d.screen(Vec3(-1.2, 0.5, 0)));
+        d.click(d.screen(Vec3(1.0, 0.5, 0)));
+        d.key(Qt::Key_Escape);
+        std::printf("  overwrite: %d edges, then %d\n", twoLines, d.mesh().aliveEdgeCount());
+        d.check(twoLines == 2 && d.mesh().aliveEdgeCount() == 1, "a line drawn over lines in its direction replaces them with one");
+        doc.reset();
+        doc.modified = false;
+    }
+
+    // File > Export Selection: the File > Export formats (and .gsketch) for
+    // what is selected only.
+    {
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        solidBoxAt(d.mesh(), Vec3(0, 0, 0), Vec3(1, 1, 1));
+        solidBoxAt(d.mesh(), Vec3(3, 0, 0), Vec3(4, 1, 2));
+        doc.selection.clear();
+        doc.notifySelection();
+        QMenu* selMenu = w.findChild<QMenu*>(QStringLiteral("ExportSelectionMenu"));
+        QMenu* expMenu = w.findChild<QMenu*>(QStringLiteral("ExportMenu"));
+        d.check(selMenu && expMenu, "File has Export and Export Selection");
+        if (selMenu && expMenu) {
+            d.check(!selMenu->menuAction()->isEnabled(), "Export Selection is disabled without a selection");
+            d.check(!w.exportSelection([] {}), "and does nothing then");
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive && d.mesh().faceInteriorPoint(f).x > 2) doc.selection.faces.insert(f);
+            doc.notifySelection();
+            d.check(selMenu->menuAction()->isEnabled(), "a selection enables it");
+            int formats = 0, selFormats = 0;
+            for (QAction* a : expMenu->actions()) formats += a->isSeparator() ? 0 : 1;
+            for (QAction* a : selMenu->actions()) selFormats += a->isSeparator() ? 0 : 1;
+            d.check(selFormats == formats + 1 && w.findChild<QAction*>(QStringLiteral("exportsel_gsketch")),
+                    "it offers every File > Export format, and .gsketch");
+            QTemporaryDir dir;
+            const QString objPath = QDir(dir.path()).filePath(QStringLiteral("selection.obj"));
+            bool ran = false, wrote = false, whole = false;
+            w.exportSelection([&] {
+                ran = true;
+                wrote = exportObj(w.exportDoc(), objPath);
+                whole = &w.exportDoc() == &doc;
+            });
+            d.check(ran && wrote && !whole, "an export runs on the selection, not the model");
+            QFile obj(objPath);
+            int objFaces = 0;
+            double minX = 1e9;
+            if (obj.open(QIODevice::ReadOnly))
+                for (const QByteArray& line : obj.readAll().split('\n')) {
+                    if (line.startsWith("f ")) ++objFaces;
+                    if (line.startsWith("v ")) minX = std::min(minX, line.split(' ').value(1).toDouble());
+                }
+            d.check(objFaces == 6 && std::fabs(minX - 3) < 1e-6, "the OBJ holds just the selected box, where it was");
+            d.check(&w.exportDoc() == &doc && d.mesh().aliveFaceCount() == 12, "afterwards exports write the whole model again");
+        }
         doc.reset();
         doc.modified = false;
     }

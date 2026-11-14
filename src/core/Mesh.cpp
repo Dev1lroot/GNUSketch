@@ -1168,13 +1168,115 @@ bool Mesh::mergeCollinearAt(Id v) {
     return true;
 }
 
+std::vector<Id> Mesh::overwriteLine(const std::vector<Id>& lineEdges, Id curve) {
+    std::set<Id> line;
+    for (Id e : lineEdges)
+        if (e >= 0 && e < (Id)edges.size() && edges[e].alive) {
+            edges[e].soft = edges[e].smooth = edges[e].hidden = false;
+            edges[e].curve = curve;
+            line.insert(e);
+        }
+    // Points inside the line where only two of its pieces meet.
+    std::map<Id, int> uses;
+    for (Id e : line)
+        for (Id v : edges[e].v) ++uses[v];
+    for (const auto& [v, n] : uses) {
+        if (n != 2) continue;
+        std::vector<Id> here;
+        for (Id e : vertexEdges(v))
+            if (edges[e].alive) here.push_back(e);
+        if (here.size() != 2 || !line.count(here[0]) || !line.count(here[1])) continue;
+        const Id keep = edges[here[0]].alive ? here[0] : here[1];
+        if (mergeCollinearAt(v)) line.erase(keep == here[0] ? here[1] : here[0]);
+    }
+    std::vector<Id> out;
+    for (Id e : line)
+        if (edges[e].alive) out.push_back(e);
+    touch();
+    return out;
+}
+
+std::set<Id> Mesh::edgeChain(Id e0, double maxTurn) const {
+    std::set<Id> chain;
+    if (e0 < 0 || e0 >= (Id)edges.size() || !edges[e0].alive) return chain;
+    chain.insert(e0);
+    const double cosMax = std::cos(std::clamp(maxTurn, 0.0, 180.0) * kPi / 180);
+    auto aliveAt = [&](Id v) {
+        std::vector<Id> es;
+        for (Id e : vertexEdges(v))
+            if (edges[e].alive) es.push_back(e);
+        return es;
+    };
+    for (int side = 0; side < 2; ++side) {
+        Id e = e0, v = edges[e0].v[side];
+        while (true) {
+            const std::vector<Id> es = aliveAt(v);
+            if (es.size() != 2) break; // an end, or divided by another edge
+            const Id next = es[0] == e ? es[1] : es[0];
+            if (chain.count(next)) break; // round a closed loop
+            const Edge& A = edges[e];
+            const Edge& B = edges[next];
+            const bool sameCurve = A.curve != kNone && A.curve == B.curve;
+            const Vec3 in = (pos(v) - pos(A.other(v))).normalized(), out = (pos(B.other(v)) - pos(v)).normalized();
+            if (!sameCurve && in.dot(out) < cosMax) break; // a corner
+            chain.insert(next);
+            e = next;
+            v = B.other(v);
+        }
+    }
+    return chain;
+}
+
 // ---------------------------------------------------------------------------
 // Push / Pull
 // ---------------------------------------------------------------------------
 
-std::vector<Id> Mesh::pushPullFaces(const std::set<Id>& fs, double dist, bool keepOriginal) {
+std::set<Id> Mesh::pushPullFlips(const std::set<Id>& fs, Id reference) const {
+    std::set<Id> in;
+    for (Id f : fs)
+        if (f >= 0 && f < (Id)faces.size() && faces[f].alive) in.insert(f);
+    std::set<Id> flips, done;
+    for (Id f : in) {
+        if (done.count(f)) continue;
+        // The region: selected faces in the same plane (either way round)
+        // reached through shared edges.
+        std::vector<Id> region, stack = {f};
+        done.insert(f);
+        const Plane P = facePlane(f);
+        while (!stack.empty()) {
+            const Id g = stack.back();
+            stack.pop_back();
+            region.push_back(g);
+            for (Id e : faceEdges(g))
+                for (Id h : edgeFaces(e)) {
+                    if (h == g || done.count(h) || !in.count(h) || !faces[h].alive) continue;
+                    if (std::fabs(faces[h].normal.dot(P.n)) < 1 - 1e-9) continue;
+                    if (!facePlane(h).coincident(P, kTol * 10)) continue;
+                    done.insert(h);
+                    stack.push_back(h);
+                }
+        }
+        if (region.size() < 2) continue;
+        Id ref = kNone;
+        double best = -1;
+        for (Id g : region) {
+            if (g == reference) { ref = g; break; }
+            const double a = faceArea(g);
+            if (a > best) { best = a; ref = g; }
+        }
+        for (Id g : region)
+            if (faces[g].normal.dot(faces[ref].normal) < 0) flips.insert(g);
+    }
+    return flips;
+}
+
+std::vector<Id> Mesh::pushPullFaces(const std::set<Id>& fs, double dist, bool keepOriginal, Id reference) {
     std::vector<Id> result;
     if (std::fabs(dist) < kTol) return result;
+    // Pieces of one flat facing opposite ways would be pushed apart, each
+    // along its own normal, tearing the flat into inside-out shells. Turn
+    // them to face the way the picked one does (each side keeps its look).
+    for (Id f : pushPullFlips(fs, reference)) reverseFace(f);
     std::vector<Id> live;
     for (Id f : fs)
         if (f >= 0 && f < (Id)faces.size() && faces[f].alive) live.push_back(f);

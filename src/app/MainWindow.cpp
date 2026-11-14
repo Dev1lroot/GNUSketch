@@ -477,6 +477,24 @@ void MainWindow::buildMenus() {
     exp->addAction(acts_["exportstlascii"]);
     exp->addAction(acts_["exportply"]);
     exp->addAction(acts_["exportoff"]);
+    // The same formats for the selection only.
+    exportSelMenu_ = file->addMenu(Icons::get("export"), QStringLiteral("Export &Selection"));
+    exportSelMenu_->setObjectName(QStringLiteral("ExportSelectionMenu"));
+    exportSelMenu_->setToolTipsVisible(true);
+    exportSelMenu_->menuAction()->setToolTip(QStringLiteral("Write only what is selected to a file"));
+    {
+        QAction* own = exportSelMenu_->addAction(QStringLiteral("GNUSketch model (*.gsketch)…"), this, [this] { exportSelection(); });
+        own->setObjectName(QStringLiteral("exportsel_gsketch"));
+        for (QAction* a : exp->actions()) {
+            if (a->isSeparator()) {
+                exportSelMenu_->addSection(a->text());
+                continue;
+            }
+            QAction* c = exportSelMenu_->addAction(a->icon(), a->text(), this, [this, a] { exportSelection([a] { a->trigger(); }); });
+            c->setObjectName(QStringLiteral("exportsel_") + (a->objectName().isEmpty() ? a->text() : a->objectName()));
+        }
+    }
+    exportSelMenu_->menuAction()->setEnabled(false);
     file->addSeparator();
     file->addAction(acts_["quit"]);
 
@@ -912,10 +930,14 @@ void MainWindow::onSelectionChanged() {
         propertiesDock_->show(); // a light or camera alone: its properties
     bool any = !doc_.selection.empty();
     for (const char* k : {"cut", "copy", "delete", "hide", "roundcorners"}) acts_[k]->setEnabled(any);
+    if (exportSelMenu_) exportSelMenu_->menuAction()->setEnabled(any);
     acts_["traceimage"]->setEnabled(!doc_.selection.faces.empty());
     const bool effectTargets = effectFaceCount(doc_.state, doc_.selection) > 0;
-    for (const EffectDef& d : effectRegistry()) acts_[d.key()]->setEnabled(effectTargets);
-    acts_["repeateffect"]->setEnabled(effectTargets && lastEffect_);
+    const bool lineTargets = !doc_.selection.faces.empty() || !doc_.selection.edges.empty();
+    const bool modelTargets = !doc_.selection.faces.empty() || !doc_.selection.instances.empty();
+    auto targets = [&](const EffectDef& d) { return d.applyLines ? lineTargets : d.applyModel ? modelTargets : effectTargets; };
+    for (const EffectDef& d : effectRegistry()) acts_[d.key()]->setEnabled(targets(d));
+    acts_["repeateffect"]->setEnabled(lastEffect_ && targets(*lastEffect_));
     const bool geometry = !doc_.selection.faces.empty() || !doc_.selection.edges.empty();
     const bool instances = !doc_.selection.instances.empty();
     acts_["makecomponent"]->setEnabled(geometry || instances);
@@ -1127,13 +1149,13 @@ void MainWindow::exportPlugin(FormatPlugin* f) {
     QSettings s;
     QStringList pats;
     for (const QString& e : f->extensions()) pats << "*." + e;
-    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export %1").arg(f->formatName()), s.value("files/lastDir").toString(),
+    QString path = QFileDialog::getSaveFileName(this, exportTitle(f->formatName()), s.value("files/lastDir").toString(),
                                                 QStringLiteral("%1 (%2)").arg(f->formatName(), pats.join(' ')));
     if (path.isEmpty()) return;
     if (!f->extensions().isEmpty() && !f->extensions().contains(QFileInfo(path).suffix().toLower())) path += "." + f->extensions().first();
     s.setValue("files/lastDir", QFileInfo(path).absolutePath());
     QStringList msgs;
-    if (!f->exportFile(doc_, path, &msgs)) {
+    if (!f->exportFile(exportDoc(), path, &msgs)) {
         QMessageBox::warning(this, QStringLiteral("Export"), QStringLiteral("Could not write %1:\n%2").arg(path, msgs.join('\n')));
         return;
     }
@@ -1154,25 +1176,55 @@ void MainWindow::showPlugins() {
     dlg.exec();
 }
 
+QString MainWindow::exportTitle(const QString& format) const {
+    return exportSource_ ? QStringLiteral("Export Selection as %1").arg(format) : QStringLiteral("Export %1").arg(format);
+}
+
+bool MainWindow::exportSelection(const std::function<void()>& exportFn) {
+    if (doc_.selection.empty()) return false;
+    viewport_->cancelTool();
+    Document part;
+    part.state = extractSelection(doc_.state, doc_.selection);
+    part.units = doc_.units;
+    part.style = doc_.style;
+    if (exportFn) {
+        exportSource_ = &part;
+        exportFn();
+        exportSource_ = nullptr;
+        return true;
+    }
+    // As a model of its own.
+    QSettings s;
+    QString path = QFileDialog::getSaveFileName(this, exportTitle(QStringLiteral("GNUSketch Model")), s.value("files/lastDir").toString(),
+                                                QStringLiteral("GNUSketch model (*.gsketch)"));
+    if (path.isEmpty()) return true;
+    if (!path.endsWith(".gsketch", Qt::CaseInsensitive)) path += ".gsketch";
+    s.setValue("files/lastDir", QFileInfo(path).absolutePath());
+    QString err;
+    if (!saveNative(part, path, {}, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
+    else statusLabel_->setText(QStringLiteral("Exported the selection to %1").arg(path));
+    return true;
+}
+
 void MainWindow::exportObj() {
     QSettings s;
-    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export OBJ"), s.value("files/lastDir").toString(),
+    QString path = QFileDialog::getSaveFileName(this, exportTitle(QStringLiteral("OBJ")), s.value("files/lastDir").toString(),
                                                 QStringLiteral("Wavefront OBJ (*.obj)"));
     if (path.isEmpty()) return;
     if (!path.endsWith(".obj", Qt::CaseInsensitive)) path += ".obj";
     QString err;
-    if (!gs::exportObj(doc_, path, {}, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
+    if (!gs::exportObj(exportDoc(), path, {}, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
     else statusLabel_->setText(QStringLiteral("Exported %1").arg(path));
 }
 
 void MainWindow::exportGltf() {
     QSettings s;
-    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export glTF"), s.value("files/lastDir").toString(),
+    QString path = QFileDialog::getSaveFileName(this, exportTitle(QStringLiteral("glTF")), s.value("files/lastDir").toString(),
                                                 QStringLiteral("glTF 2.0 (*.gltf)"));
     if (path.isEmpty()) return;
     if (!path.endsWith(".gltf", Qt::CaseInsensitive)) path += ".gltf";
     QString err;
-    if (!gs::exportGltf(doc_, path, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
+    if (!gs::exportGltf(exportDoc(), path, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
     else statusLabel_->setText(QStringLiteral("Exported %1").arg(path));
 }
 
@@ -1183,7 +1235,7 @@ void MainWindow::exportForPrint(int format) {
     // Unit: the model's own by default (that is what "keeping units" means for
     // the formats without a unit field).
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("Export %1").arg(QString::fromLatin1(printFormatName(fmt))));
+    dlg.setWindowTitle(exportTitle(QString::fromLatin1(printFormatName(fmt))));
     auto* form = new QFormLayout(&dlg);
     auto* unitBox = new QComboBox(&dlg);
     unitBox->setObjectName(QStringLiteral("PrintUnit"));
@@ -1202,7 +1254,7 @@ void MainWindow::exportForPrint(int format) {
         if (printUnitFor(fmt, u) != u) t += QStringLiteral(" AMF has no centimeters, millimeters are used.");
         Vec3 mn, mx;
         bool any = false;
-        flattenModel(doc_.state).bounds(mn, mx, any);
+        flattenModel(exportDoc().state).bounds(mn, mx, any);
         if (any) {
             const double k = 1.0 / Units::toMeters(printUnitFor(fmt, u));
             const Vec3 d = (mx - mn) * k;
@@ -1228,7 +1280,7 @@ void MainWindow::exportForPrint(int format) {
     if (!path.endsWith("." + ext, Qt::CaseInsensitive)) path += "." + ext;
     s.setValue("files/lastDir", QFileInfo(path).absolutePath());
     QString err;
-    if (!exportPrint(doc_, path, fmt, unit, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
+    if (!exportPrint(exportDoc(), path, fmt, unit, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
     else statusLabel_->setText(QStringLiteral("Exported %1 (%2)").arg(path, QString::fromLatin1(printUnitName(fmt, unit))));
 }
 
@@ -1411,51 +1463,8 @@ static const QString kClipMime = QStringLiteral("application/x-gnusketch");
 
 void MainWindow::copySelection(bool cut) {
     if (doc_.selection.empty()) return;
-    ModelState clip;
-    {
-        std::map<Id, Id> defMap;
-        for (Id i : doc_.selection.instances) copyInstanceInto(clip, doc_.state, i, defMap);
-    }
-    for (Id o : doc_.selection.objects) clip.objects.push_back(doc_.state.objects[o]);
-    clip.mesh = doc_.mesh();
-    Mesh& m = clip.mesh;
-    std::set<Id> keepEdges = doc_.selection.edges;
-    for (Id f : doc_.selection.faces)
-        for (Id e : m.faceEdges(f)) keepEdges.insert(e);
-    for (Id f = 0; f < (Id)m.faces.size(); ++f)
-        if (!doc_.selection.faces.count(f)) m.faces[f].alive = false;
-    for (Id e = 0; e < (Id)m.edges.size(); ++e)
-        if (!keepEdges.count(e)) m.edges[e].alive = false;
-    m.removeOrphanVertices();
-    m.compact();
-    // Only the materials the copied faces use.
-    std::map<Id, Id> matMap;
-    std::vector<Face*> clipFaces;
-    for (Face& f : m.faces) clipFaces.push_back(&f);
-    for (ComponentDef& d : clip.defs)
-        for (Face& f : d.mesh.faces) clipFaces.push_back(&f);
-    auto mapMaterial = [&](Id& mat) {
-        if (mat < 0 || mat >= (Id)doc_.state.materials.size()) {
-            mat = kNone;
-            return;
-        }
-        auto it = matMap.find(mat);
-        if (it == matMap.end()) {
-            it = matMap.emplace(mat, (Id)clip.materials.size()).first;
-            clip.materials.push_back(doc_.state.materials[mat]);
-        }
-        mat = it->second;
-    };
-    for (Face* fp : clipFaces)
-        for (FaceSide* s : {&fp->front, &fp->back}) mapMaterial(s->material);
-    // Textures painted with the Texture Brush.
-    std::vector<Mesh*> clipMeshes = {&m};
-    for (ComponentDef& d : clip.defs) clipMeshes.push_back(&d.mesh);
-    for (Mesh* cm : clipMeshes)
-        for (Vertex& v : cm->vertices) {
-            for (PaintWeight& w : v.paint) mapMaterial(w.material);
-            std::erase_if(v.paint, [](const PaintWeight& w) { return w.material == kNone; });
-        }
+    const ModelState clip = extractSelection(doc_.state, doc_.selection);
+    const Mesh& m = clip.mesh;
     const size_t count = m.faces.size() + m.edges.size() + clip.instances.size();
     auto* md = new QMimeData;
     md->setData(kClipMime, modelToJson(clip));
@@ -1739,9 +1748,14 @@ void MainWindow::modelInfo() {
 void MainWindow::runEffect(const EffectDef& def, bool repeat) {
     viewport_->cancelTool();
     const Selection original = doc_.selection;
-    const int before = effectFaceCount(doc_.state, original);
+    const bool lines = (bool)def.applyLines, whole = (bool)def.applyModel;
+    const int before = lines ? int(original.faces.size() + original.edges.size())
+                       : whole ? int(original.faces.size() + original.instances.size())
+                               : effectFaceCount(doc_.state, original);
     if (before == 0) {
-        statusBar()->showMessage(QStringLiteral("Select faces or components for the effect first."), 5000);
+        statusBar()->showMessage(lines ? QStringLiteral("Select faces, curves or lines for %1 first.").arg(def.name)
+                                       : QStringLiteral("Select faces or components for the effect first."),
+                                 5000);
         return;
     }
     QSettings settings;
@@ -1767,11 +1781,23 @@ void MainWindow::runEffect(const EffectDef& def, bool repeat) {
         result = original;
         bool limited = false;
         std::string err;
-        ok = applyEffect(doc_.state, result, [&](Mesh& m, const std::set<Id>& faces, EffectResult* out, std::string* e) {
-            return def.apply(m, faces, v, out, e);
-        }, &limited, &err);
         QString text;
-        if (ok) {
+        if (lines) {
+            result.instances.clear();
+            result.objects.clear();
+            ok = def.applyLines(doc_.mesh(), result, v, text, &err);
+        } else if (whole) {
+            result.edges.clear();
+            result.objects.clear();
+            ok = def.applyModel(doc_.state, result, v, text, &err);
+        } else {
+            ok = applyEffect(doc_.state, result, [&](Mesh& m, const std::set<Id>& faces, EffectResult* out, std::string* e) {
+                return def.apply(m, faces, v, out, e);
+            }, &limited, &err);
+        }
+        if (ok && (lines || whole)) {
+            doc_.mesh().touch();
+        } else if (ok) {
             text = QStringLiteral("Polygons: %1 → %2").arg(before).arg(effectFaceCount(doc_.state, result));
             if (limited) text += QStringLiteral(". Detail reduced: the area is too large for this density.");
         } else {

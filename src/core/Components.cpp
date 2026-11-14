@@ -395,6 +395,55 @@ void makeUnique(ModelState& st, const std::set<Id>& insts) {
     }
 }
 
+ModelState extractSelection(const ModelState& st, const Selection& sel) {
+    ModelState clip;
+    {
+        std::map<Id, Id> defMap;
+        for (Id i : sel.instances) copyInstanceInto(clip, st, i, defMap);
+    }
+    for (Id o : sel.objects) clip.objects.push_back(st.objects[o]);
+    clip.mesh = st.activeMesh();
+    Mesh& m = clip.mesh;
+    std::set<Id> keepEdges = sel.edges;
+    for (Id f : sel.faces)
+        for (Id e : m.faceEdges(f)) keepEdges.insert(e);
+    for (Id f = 0; f < (Id)m.faces.size(); ++f)
+        if (!sel.faces.count(f)) m.faces[f].alive = false;
+    for (Id e = 0; e < (Id)m.edges.size(); ++e)
+        if (!keepEdges.count(e)) m.edges[e].alive = false;
+    m.removeOrphanVertices();
+    m.compact();
+    // Only the materials the copied faces use.
+    std::map<Id, Id> matMap;
+    std::vector<Face*> clipFaces;
+    for (Face& f : m.faces) clipFaces.push_back(&f);
+    for (ComponentDef& d : clip.defs)
+        for (Face& f : d.mesh.faces) clipFaces.push_back(&f);
+    auto mapMaterial = [&](Id& mat) {
+        if (mat < 0 || mat >= (Id)st.materials.size()) {
+            mat = kNone;
+            return;
+        }
+        auto it = matMap.find(mat);
+        if (it == matMap.end()) {
+            it = matMap.emplace(mat, (Id)clip.materials.size()).first;
+            clip.materials.push_back(st.materials[mat]);
+        }
+        mat = it->second;
+    };
+    for (Face* fp : clipFaces)
+        for (FaceSide* s : {&fp->front, &fp->back}) mapMaterial(s->material);
+    // Textures painted with the Texture Brush.
+    std::vector<Mesh*> clipMeshes = {&m};
+    for (ComponentDef& d : clip.defs) clipMeshes.push_back(&d.mesh);
+    for (Mesh* cm : clipMeshes)
+        for (Vertex& v : cm->vertices) {
+            for (PaintWeight& w : v.paint) mapMaterial(w.material);
+            std::erase_if(v.paint, [](const PaintWeight& w) { return w.material == kNone; });
+        }
+    return clip;
+}
+
 Id copyInstanceInto(ModelState& dst, const ModelState& src, Id inst, std::map<Id, Id>& defMap) {
     if (!aliveInstance(src, inst)) return kNone;
     // The instance first: a file's first instance is what a prefab places.

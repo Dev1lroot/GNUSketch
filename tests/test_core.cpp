@@ -9,6 +9,8 @@
 #include "core/Mesh.h"
 #include "core/Primitives.h"
 #include "core/RoundCorners.h"
+#include "core/GearNotch.h"
+#include "core/Slicer.h"
 #include "core/Solids.h"
 #include "core/Terrain.h"
 #include "core/TextureMapping.h"
@@ -311,6 +313,53 @@ int main() {
         CHECK_EQ(c.aliveFaceCount(), 6);
     });
 
+    test("push/pull a flat cut into pieces facing different ways", [] {
+        // A rectangle cut by lines and by a rectangle drawn on it; every
+        // other piece turned over (drawn from below, imported, reversed).
+        // Pulled by the piece facing up: the whole flat becomes one box.
+        for (int pick = 0; pick < 2; ++pick)
+            for (double d : {1.0, -1.0}) {
+                Mesh m;
+                m.drawPolyline({{0, 0, 0}, {4, 0, 0}, {4, 3, 0}, {0, 3, 0}}, true);
+                m.drawLine({1, 0, 0}, {1, 3, 0});
+                m.drawLine({1, 1.5, 0}, {4, 1.5, 0});
+                m.drawPolyline({{2, 0.5, 0}, {3, 0.5, 0}, {3, 1, 0}, {2, 1, 0}}, true);
+                std::set<Id> all;
+                for (Id g = 0; g < (Id)m.faces.size(); ++g)
+                    if (m.faces[g].alive) all.insert(g);
+                CHECK_EQ((int)all.size(), 4);
+                int i = 0;
+                for (Id g : all) {
+                    if (m.faces[g].normal.z < 0) m.reverseFace(g);
+                    if (i++ % 2) m.reverseFace(g);
+                }
+                Id ref = kNone;
+                for (Id g : all)
+                    if ((m.faces[g].normal.z > 0) == (pick == 0)) ref = g;
+                const double up = d * m.faces[ref].normal.z; // where the region goes
+                CHECK_EQ((int)m.pushPullFlips(all, ref).size(), 2);
+                m.pushPullFaces(all, d, false, ref);
+                Vec3 mn, mx;
+                bool any;
+                m.bounds(mn, mx, any);
+                CHECK(std::fabs(mx.z - std::max(0.0, up)) < 1e-9 && std::fabs(mn.z - std::min(0.0, up)) < 1e-9);
+                CHECK(std::fabs(totalArea(m) - (2 * 12 + 14)) < 1e-9);
+                int open = 0;
+                for (Id e = 0; e < (Id)m.edges.size(); ++e)
+                    if (m.edges[e].alive) {
+                        int n = 0;
+                        for (Id g : m.edgeFaces(e)) n += m.faces[g].alive ? 1 : 0;
+                        open += n != 2;
+                    }
+                CHECK_EQ(open, 0);
+                // Outward everywhere: the faces enclose a positive volume.
+                double vol = 0;
+                for (Id g = 0; g < (Id)m.faces.size(); ++g)
+                    if (m.faces[g].alive) vol += m.faceArea(g) * m.faces[g].normal.dot(m.faceInteriorPoint(g)) / 3;
+                CHECK(std::fabs(vol - 12) < 1e-9);
+            }
+    });
+
     test("push/pull through a solid cuts a hole", [] {
         Mesh m;
         rect(m, 0, 0, 2, 2);
@@ -416,6 +465,324 @@ int main() {
     };
     // Area cut away from a corner of a square by an N-segment fillet of radius R.
     auto cornerLoss = [](double R, int N) { return R * R - N * 0.5 * R * R * std::sin(kPi / 2 / N); };
+
+    test("gear notches: on a circle, a square, one side, a loose line", [&] {
+        auto faceSet = [](const Mesh& m) {
+            std::set<Id> s;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) s.insert(f);
+            return s;
+        };
+        auto edgeSet = [](const Mesh& m) {
+            std::set<Id> s;
+            for (Id e = 0; e < (Id)m.edges.size(); ++e)
+                if (m.edges[e].alive) s.insert(e);
+            return s;
+        };
+        auto circle = [&](Mesh& m, double r, int n) {
+            std::vector<Vec3> pts;
+            for (int i = 0; i < n; ++i) pts.push_back(Vec3(r * std::cos(2 * kPi * i / n), r * std::sin(2 * kPi * i / n), 0));
+            m.drawPolyline(pts, true, m.newCurveId());
+            for (Id f : faceSet(m))
+                if (m.faces[f].normal.z < 0) m.reverseFace(f);
+        };
+        auto closedSolid = [](const Mesh& m) {
+            for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+                if (!m.edges[e].alive) continue;
+                int n = 0;
+                for (Id f : m.edgeFaces(e)) n += m.faces[f].alive ? 1 : 0;
+                if (n != 2) return false;
+            }
+            return true;
+        };
+        GearNotchParams p;
+        p.profile = GearNotchParams::Square;
+        p.count = 12;
+        p.depth = 0.1;
+        p.toothWidth = 0.5;
+
+        // A square: 3 teeth a side (corners kept clean), each 1/3 m x 0.1 m.
+        {
+            Mesh m;
+            rect(m, 0, 0, 2, 2);
+            Id f = onlyFace(m);
+            m.faces[f].front.material = 3;
+            const Vec3 n0 = m.faces[f].normal;
+            GearNotchResult r;
+            std::string err;
+            CHECK(gearNotch(m, {f}, {}, p, &r, &err));
+            CHECK_EQ(r.teeth, 12);
+            CHECK_EQ(r.paths, 1);
+            CHECK_EQ(m.aliveFaceCount(), 1);
+            CHECK(std::fabs(totalArea(m) - (4 + 12 * (2.0 / 3) * 0.5 * 0.1)) < 1e-9);
+            const Id g = onlyFace(m);
+            CHECK(m.faces[g].front.material == 3 && m.faces[g].normal.dot(n0) > 0.99); // keeps its look and side
+            for (const Vec3& corner : {Vec3(0, 0, 0), Vec3(2, 0, 0), Vec3(2, 2, 0), Vec3(0, 2, 0)})
+                CHECK(m.findVertex(corner) != kNone);
+            // Notches instead: the same amount cut in.
+            Mesh c;
+            rect(c, 0, 0, 2, 2);
+            GearNotchParams q = p;
+            q.inward = true;
+            CHECK(gearNotch(c, {onlyFace(c)}, {}, q));
+            CHECK(std::fabs(totalArea(c) - (4 - 12 * (2.0 / 3) * 0.5 * 0.1)) < 1e-9);
+        }
+        // A circle (its face, or only its edges): a gear that pulls into a closed solid.
+        for (int byEdges = 0; byEdges < 2; ++byEdges)
+            for (int prof = 0; prof <= GearNotchParams::Gear; ++prof) {
+                Mesh m;
+                circle(m, 1, 48);
+                GearNotchParams q = p;
+                q.profile = (GearNotchParams::Profile)prof;
+                q.count = 20;
+                GearNotchResult r;
+                std::string err;
+                const bool ok = byEdges ? gearNotch(m, {}, edgeSet(m), q, &r, &err) : gearNotch(m, faceSet(m), {}, q, &r, &err);
+                CHECK(ok);
+                if (!ok) std::printf("    %s\n", err.c_str());
+                CHECK_EQ(r.teeth, 20);
+                CHECK_EQ(m.aliveFaceCount(), 1);
+                Vec3 mn, mx;
+                bool any;
+                m.bounds(mn, mx, any);
+                CHECK(mx.x > 1.05 && mx.x < 1.1 + 1e-9); // teeth stand out up to the depth
+                const Id f = onlyFace(m);
+                m.pushPull(f, -0.3 * m.faces[f].normal.z);
+                CHECK(closedSolid(m));
+            }
+        // One side of a square: teeth only there, outwards.
+        {
+            Mesh m;
+            rect(m, 0, 0, 2, 2);
+            const Id e = m.findEdge(m.findVertex({0, 0, 0}), m.findVertex({2, 0, 0}));
+            GearNotchParams q = p;
+            q.count = 4;
+            CHECK(gearNotch(m, {}, {e}, q));
+            CHECK_EQ(m.aliveFaceCount(), 1);
+            CHECK(std::fabs(totalArea(m) - (4 + 4 * 0.5 * 0.5 * 0.1)) < 1e-9);
+            Vec3 mn, mx;
+            bool any;
+            m.bounds(mn, mx, any);
+            CHECK(std::fabs(mn.y + 0.1) < 1e-9 && std::fabs(mx.y - 2) < 1e-9 && std::fabs(mn.x) < 1e-9 && std::fabs(mx.x - 2) < 1e-9);
+        }
+        // A loose line: a toothed line, ends where they were; flip puts the teeth on the other side.
+        for (int flip = 0; flip < 2; ++flip) {
+            Mesh m;
+            m.drawLine({0, 0, 0}, {3, 0, 0});
+            GearNotchParams q = p;
+            q.count = 6;
+            q.flip = flip;
+            GearNotchResult r;
+            CHECK(gearNotch(m, {}, edgeSet(m), q, &r));
+            CHECK_EQ(r.teeth, 6);
+            CHECK_EQ(m.aliveFaceCount(), 0);
+            CHECK(m.findVertex({0, 0, 0}) != kNone && m.findVertex({3, 0, 0}) != kNone);
+            Vec3 mn, mx;
+            bool any;
+            m.bounds(mn, mx, any);
+            CHECK(flip ? std::fabs(mx.y - 0.1) < 1e-9 : std::fabs(mn.y + 0.1) < 1e-9);
+            double len = 0;
+            for (Id e : edgeSet(m)) len += m.edgeLength(e);
+            CHECK(std::fabs(len - (3 + 6 * 2 * 0.1)) < 1e-9);
+        }
+        // Spacing instead of a count: one tooth per 0.5 m on a 3 m line.
+        {
+            Mesh m;
+            m.drawLine({0, 0, 0}, {3, 0, 0});
+            GearNotchParams q = p;
+            q.byCount = false;
+            q.pitch = 0.5;
+            GearNotchResult r;
+            CHECK(gearNotch(m, {}, edgeSet(m), q, &r));
+            CHECK_EQ(r.teeth, 6);
+        }
+        // Refused, nothing changed: the rim of a solid, too deep notches.
+        {
+            Mesh m;
+            circle(m, 1, 32);
+            const Id f = onlyFace(m);
+            m.pushPull(f, -0.5 * m.faces[f].normal.z);
+            const int faces = m.aliveFaceCount();
+            std::string err;
+            CHECK(!gearNotch(m, {}, edgeSet(m), p, nullptr, &err));
+            CHECK(err.find("flat") != std::string::npos);
+            CHECK_EQ(m.aliveFaceCount(), faces);
+            Mesh c;
+            circle(c, 1, 32);
+            GearNotchParams q = p;
+            q.inward = true;
+            q.depth = 2;
+            CHECK(!gearNotch(c, faceSet(c), {}, q, nullptr, &err));
+            CHECK_EQ(c.aliveFaceCount(), 1);
+        }
+    });
+
+    test("edge chains: a circle in one click, up to where another edge divides it", [&] {
+        auto circlePts = [](int n, double r) {
+            std::vector<Vec3> pts;
+            for (int i = 0; i < n; ++i) pts.push_back(Vec3(r * std::cos(2 * kPi * i / n), r * std::sin(2 * kPi * i / n), 0));
+            return pts;
+        };
+        Mesh m;
+        m.drawPolyline(circlePts(24, 1), true, m.newCurveId());
+        CHECK_EQ((int)m.edgeChain(0).size(), 24);
+        // Without its curve (an imported circle) it is still smooth: one chain.
+        Mesh im;
+        im.drawPolyline(circlePts(24, 1), true);
+        for (Edge& e : im.edges) e.curve = kNone;
+        Id any = kNone;
+        for (Id e = 0; e < (Id)im.edges.size() && any == kNone; ++e)
+            if (im.edges[e].alive) any = e;
+        CHECK_EQ((int)im.edgeChain(any).size(), 24);
+        // A line across it divides it into two arcs of 12.
+        const Vec3 a(1, 0, 0), b(-1, 0, 0);
+        m.drawLine(a, b);
+        Id onArc = kNone;
+        for (Id e = 0; e < (Id)m.edges.size(); ++e)
+            if (m.edges[e].alive && m.edges[e].curve != kNone && (m.pos(m.edges[e].v[0]) + m.pos(m.edges[e].v[1])).y > 0) onArc = e;
+        CHECK(onArc != kNone);
+        const std::set<Id> arc = m.edgeChain(onArc);
+        CHECK_EQ((int)arc.size(), 12);
+        for (Id e : arc) CHECK((m.pos(m.edges[e].v[0]) + m.pos(m.edges[e].v[1])).y > 0);
+        // A rectangle's sides stay separate (corners).
+        Mesh r;
+        rect(r, 0, 0, 2, 1);
+        for (Id e = 0; e < (Id)r.edges.size(); ++e)
+            if (r.edges[e].alive) CHECK_EQ((int)r.edgeChain(e).size(), 1);
+    });
+
+    test("a line drawn over edges in its direction replaces them", [&] {
+        Mesh m;
+        const Id c = m.newCurveId();
+        for (Id e : m.drawLine({0, 0, 0}, {1, 0, 0}, c)) m.edges[e].soft = true;
+        for (Id e : m.drawLine({1.5, 0, 0}, {3, 0, 0}, c)) m.edges[e].hidden = true;
+        const std::vector<Id> line = m.overwriteLine(m.drawLine({-0.5, 0, 0}, {3.5, 0, 0}));
+        CHECK_EQ(m.aliveEdgeCount(), 1);
+        CHECK_EQ((int)line.size(), 1);
+        if (line.size() == 1) {
+            const Edge& E = m.edges[line[0]];
+            CHECK(!E.soft && !E.hidden && E.curve == kNone);
+            CHECK(std::fabs(m.edgeLength(line[0]) - 4) < 1e-9);
+        }
+        // Where another edge meets the line, the point stays.
+        Mesh t;
+        t.drawLine({0, 0, 0}, {1, 0, 0});
+        t.drawLine({1, 0, 0}, {2, 0, 0});
+        t.drawLine({1, 0, 0}, {1, 1, 0});
+        t.overwriteLine(t.drawLine({0, 0, 0}, {2, 0, 0}));
+        CHECK_EQ(t.aliveEdgeCount(), 3);
+        CHECK(t.findVertex({1, 0, 0}) != kNone);
+        // Over a face's side split in two: one side again, the face intact.
+        Mesh f;
+        rect(f, 0, 0, 2, 1);
+        f.drawLine({1, 0, 0}, {1, 0.5, 0}); // splits the bottom side at (1, 0)...
+        f.eraseEdge(f.findEdge(f.findVertex({1, 0, 0}), f.findVertex({1, 0.5, 0})), true); // ...and goes again
+        f.removeOrphanVertices();
+        const int edgesBefore = f.aliveEdgeCount();
+        f.overwriteLine(f.drawLine({0, 0, 0}, {2, 0, 0}));
+        CHECK_EQ(f.aliveFaceCount(), 1);
+        CHECK(f.aliveEdgeCount() <= edgesBefore);
+        CHECK(std::fabs(totalArea(f) - 2) < 1e-9);
+    });
+
+    test("slicer: pieces to fit a build plate, with connectors", [&] {
+        PrimitiveParams bp;
+        bp.kind = PrimitiveKind::Box;
+        bp.width = 0.5;
+        bp.depth = 0.3;
+        bp.height = 0.25;
+        Mesh box;
+        buildPrimitive(bp, box);
+        const double v0 = solidVolume(box);
+        for (int conn = 0; conn <= SlicerParams::Ribs; ++conn) {
+            Document d;
+            d.state.mesh = box;
+            Selection sel;
+            for (Id f = 0; f < (Id)box.faces.size(); ++f)
+                if (box.faces[f].alive) sel.faces.insert(f);
+            SlicerParams p;
+            p.size = Vec3(0.2, 0.2, 0.2);
+            p.connector = (SlicerParams::Connector)conn;
+            p.connectorSize = 0.02;
+            p.connectorLength = 0.015;
+            p.margin = 0.005;
+            p.clearance = 0.0005;
+            SlicerResult r;
+            std::string err;
+            CHECK(sliceSelection(d.state, sel, p, &r, &err));
+            CHECK(r.nx == 3 && r.ny == 2 && r.nz == 2);
+            CHECK_EQ(r.pieces, 12);
+            CHECK_EQ((int)sel.instances.size(), 12);
+            CHECK_EQ(d.state.mesh.aliveFaceCount(), 0); // the original went
+            double v = 0;
+            int solids = 0;
+            for (Id i : sel.instances) {
+                const Mesh& pm = d.state.defs[d.state.instances[i].def].mesh;
+                v += solidVolume(pm);
+                solids += isSolid(pm) ? 1 : 0;
+                // Every piece fits the build volume (pegs stand out by their length).
+                Vec3 mn, mx;
+                bool any;
+                pm.bounds(mn, mx, any);
+                for (int k = 0; k < 3; ++k) CHECK(mx[k] - mn[k] <= 0.2 + p.connectorLength + 1e-9);
+            }
+            CHECK_EQ(solids, 12);
+            if (conn == 0) {
+                CHECK(std::fabs(v - v0) < 1e-12);
+                CHECK_EQ(r.connectors, 0);
+            } else {
+                CHECK(r.connectors >= 12);
+                // Pegs in, sockets out: only the clearance is lost.
+                CHECK(v < v0 && v > v0 * 0.99);
+            }
+        }
+        // A sphere: every piece still a closed solid, nothing lost.
+        PrimitiveParams sp;
+        sp.kind = PrimitiveKind::Sphere;
+        sp.radius = 0.25;
+        Mesh ball;
+        buildPrimitive(sp, ball);
+        Document d;
+        d.state.mesh = ball;
+        Selection sel;
+        for (Id f = 0; f < (Id)ball.faces.size(); ++f)
+            if (ball.faces[f].alive) sel.faces.insert(f);
+        SlicerParams p;
+        p.size = Vec3(0.2, 0.2, 0.2);
+        SlicerResult r;
+        CHECK(sliceSelection(d.state, sel, p, &r));
+        CHECK_EQ(r.pieces, 27);
+        double v = 0;
+        for (Id i : sel.instances) v += solidVolume(d.state.defs[d.state.instances[i].def].mesh);
+        CHECK(std::fabs(v - solidVolume(ball)) < 1e-9);
+        // An open sheet is refused, nothing changed.
+        Document o;
+        rect(o.state.mesh, 0, 0, 1, 1);
+        Selection os;
+        os.faces.insert(onlyFace(o.state.mesh));
+        std::string err;
+        CHECK(!sliceSelection(o.state, os, p, nullptr, &err));
+        CHECK(err.find("closed") != std::string::npos);
+        CHECK_EQ(o.state.mesh.aliveFaceCount(), 1);
+    });
+
+    test("triangulating a face with holes lined up on one height", [&] {
+        // Square holes whose corners share x and y with each other: the
+        // triangles must cover exactly the face, wherever it lies.
+        for (double shift : {0.0, -0.2, 0.37, 5.0}) {
+            std::vector<std::vector<Vec2>> loops = {{{0, 0.2}, {-0.2, 0.2}, {-0.2, 0}, {0, 0}}};
+            for (auto [cx, cy] : {std::pair{-0.1845, 0.0155}, {-0.0155, 0.0155}, {-0.1845, 0.1845}}) {
+                loops.push_back({{cx + 0.01, cy - 0.01}, {cx - 0.01, cy - 0.01}, {cx - 0.01, cy + 0.01}, {cx + 0.01, cy + 0.01}});
+            }
+            for (auto& L : loops)
+                for (Vec2& q : L) q.x += shift, q.y += shift;
+            std::vector<Vec2> flat;
+            for (auto& L : loops) flat.insert(flat.end(), L.begin(), L.end());
+            double area = 0;
+            for (const auto& t : triangulatePolygon(loops)) area += std::fabs((flat[t[1]] - flat[t[0]]).cross(flat[t[2]] - flat[t[0]])) / 2;
+            CHECK(std::fabs(area - (0.04 - 3 * 0.0004)) < 1e-12);
+        }
+    });
 
     test("round corners of a rectangle (2D)", [&] {
         Mesh m;
@@ -770,6 +1137,50 @@ int main() {
             if (d.mesh().edges[e].alive) s.edges.insert(e);
         return s;
     };
+
+    test("the selection as a model of its own (Copy, Export Selection)", [&] {
+        Document d;
+        box(d, 2, 3); // a component of its own...
+        const Id inst = makeComponent(d.state, selectAllGeometry(d), "Box");
+        CHECK(inst != kNone);
+        rect(d.mesh(), 5, 0, 6, 1); // ...and two loose squares
+        rect(d.mesh(), 8, 0, 9, 1);
+        Material red, blue, unused;
+        red.name = "Red";
+        blue.name = "Blue";
+        unused.name = "Unused";
+        const Id mUnused = d.addMaterial(unused), mRed = d.addMaterial(red), mBlue = d.addMaterial(blue);
+        (void)mUnused;
+        Id first = kNone, second = kNone;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) (d.mesh().faceInteriorPoint(f).x < 7 ? first : second) = f;
+        d.mesh().faces[first].front.material = mRed;
+        d.mesh().faces[second].front.material = mBlue;
+
+        Selection sel;
+        sel.faces = {first};
+        ModelState part = extractSelection(d.state, sel);
+        CHECK_EQ(part.mesh.aliveFaceCount(), 1);
+        CHECK_EQ(part.mesh.aliveEdgeCount(), 4);
+        CHECK(part.instances.empty() && part.defs.empty());
+        CHECK_EQ((int)part.materials.size(), 1);
+        CHECK(part.materials.size() == 1 && part.materials[0].name == "Red" && part.mesh.faces[0].front.material == 0);
+        Vec3 mn, mx;
+        bool any;
+        part.mesh.bounds(mn, mx, any);
+        CHECK(any && std::fabs(mn.x - 5) < 1e-9 && std::fabs(mx.x - 6) < 1e-9); // stays where it was
+
+        sel.instances = {inst};
+        part = extractSelection(d.state, sel);
+        CHECK_EQ((int)part.instances.size(), 1);
+        CHECK_EQ((int)part.defs.size(), 1);
+        CHECK(part.defs.size() == 1 && part.defs[0].mesh.aliveFaceCount() == 6);
+        CHECK_EQ(part.mesh.aliveFaceCount(), 1);
+        CHECK_EQ(flattenModel(part).aliveFaceCount(), 7);
+        // The model itself is untouched.
+        CHECK_EQ(d.mesh().aliveFaceCount(), 2);
+        CHECK_EQ((int)d.state.materials.size(), 3);
+    });
 
     test("make component moves geometry into a definition", [&] {
         Document d;

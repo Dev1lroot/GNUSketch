@@ -25,6 +25,8 @@ add_library(gs_core SHARED
   src/core/Triangulate.h src/core/Triangulate.cpp
   src/core/Mesh.h src/core/Mesh.cpp
   src/core/RoundCorners.h src/core/RoundCorners.cpp
+  src/core/GearNotch.h src/core/GearNotch.cpp
+  src/core/Slicer.h src/core/Slicer.cpp
   src/core/FollowMe.h src/core/FollowMe.cpp
   src/core/ImageTrace.h src/core/ImageTrace.cpp
   src/core/Units.h src/core/Units.cpp
@@ -120,6 +122,16 @@ add_subdirectory(plugins/obm)
 add_subdirectory(plugins/valve)
 install(FILES packaging/gnusketch.desktop DESTINATION share/applications)
 install(FILES packaging/gnusketch.svg DESTINATION share/icons/hicolor/scalable/apps)
+
+# `cmake --build build --target appimage`: packages this build as
+# build/GNUSketch-<version>-x86_64.AppImage and checks it starts with OpenGL on
+# X11 and Wayland (off-screen). The same script makes the released AppImage.
+if(UNIX AND NOT APPLE)
+  add_custom_target(appimage
+    COMMAND ${CMAKE_SOURCE_DIR}/tools/build-appimage.sh ${CMAKE_BINARY_DIR} ${PROJECT_VERSION}
+    DEPENDS gnusketch gnusketch_obm gnusketch_valve_vmf gnusketch_valve_smd
+    USES_TERMINAL VERBATIM)
+endif()
 
 if(GNUSKETCH_BUILD_TESTS)
   enable_testing()

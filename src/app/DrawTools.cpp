@@ -132,7 +132,8 @@ void LineTool::commit(const Vec3& a, const Vec3& b) {
     if (a.nearlyEquals(b)) return;
     int facesBefore = mesh().aliveFaceCount();
     doc().beginOp("Line");
-    mesh().drawLine(a, b);
+    // Drawn over existing edges in line with it, the new line replaces them.
+    mesh().overwriteLine(mesh().drawLine(a, b));
     doc().commitOp();
     bool closed = mesh().aliveFaceCount() > facesBefore;
     clearLocks();

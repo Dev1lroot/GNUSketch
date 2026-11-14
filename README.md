@@ -30,10 +30,10 @@ code, formats or artwork); models are stored as open, documented JSON.
 | | |
 |---|---|
 | ![Push/Pull](docs/media/pushpull.gif) | **Direct modelling.** Lines split and close into faces; faces are true n-gons with holes. Push/Pull, Move, Rotate, Scale with grips, Offset, Follow Me, Round Corners, Bend, Solid Tools (union, subtract, intersect, trim, split). Inference snaps to endpoints, midpoints, edges, faces, axes, parallels and intersections; lengths can snap to steps, and typed values are exact. |
-| ![Bend](docs/media/bend.gif) | **Shapes beyond boxes.** Bend anything around an axis, ten parametric primitives, terrain sculpting with brushes, and effects: Noise, Blur, Decimate, Remesh to quads/hexagons/triangles, Voxelate, De-triangulate, Hollow and Solidify. |
+| ![Bend](docs/media/bend.gif) | **Shapes beyond boxes.** Bend anything around an axis, ten parametric primitives, terrain sculpting with brushes, and effects: Noise, Blur, Decimate, Remesh to quads/hexagons/triangles, Voxelate, De-triangulate, Gear Notches, Hollow and Solidify. |
 | ![Animator](docs/media/animator.gif) | **Alive models.** Components with animation states, an Animator timeline with keyframes and motion tweens, entities scripted in JavaScript (doors, buttons, actors), rigid-body physics, and Game Mode to walk around in first person. |
 | ![PBR materials](docs/media/pbr.png) | **Look and light.** PBR materials with maps and custom GLSL surface shaders, sun with shadows, point, spot and directional lights, ambient occlusion, and optional cinematic lighting: ray traced soft shadows and light rays. |
-| ![Hollow](docs/media/hollow.png) | **Made to be built.** Real units with chosen precision, 3D printing export and import (3MF, AMF, STL, PLY, OFF), Hollow with an exact wall thickness, Solidify for clean printable solids, OBJ (n-gons) and glTF 2.0 export. |
+| ![Hollow](docs/media/hollow.png) | **Made to be built.** Real units with chosen precision, 3D printing export and import (3MF, AMF, STL, PLY, OFF), Hollow with an exact wall thickness, Solidify for clean printable solids, the Slicer to cut a large model into parts that fit the build plate (with pegs, keys or ribs to glue them), OBJ (n-gons) and glTF 2.0 export. |
 
 ![The interface: Hierarchy, Properties, Materials, Instructor and the Animator](docs/media/window.png)
 
@@ -75,6 +75,13 @@ Tests (none of them open a window on your desktop):
 cd build && ctest                 # geometry kernel + file format tests
 tools/headless-selftest.sh        # drives the real UI with synthetic input on Xvfb
 ./build/gnusketch --gl-probe      # renders one frame offscreen on your GPU, prints driver info
+```
+
+AppImage of your build (needs `xvfb-run` and `kwin_wayland` or `weston`; it is checked
+on an off-screen X11 and Wayland display before it is kept):
+
+```sh
+cmake --build build --target appimage   # -> build/GNUSketch-<version>-x86_64.AppImage
 ```
 
 If the window does not open, run `./build/gnusketch --gl-probe` from a terminal and

@@ -112,6 +112,11 @@ public:
     // +1 if face f traverses a->b, -1 if b->a, 0 if not at all.
     int faceEdgeDirection(Id f, Id a, Id b) const;
     bool isFreeFace(Id f) const; // no boundary edge shared with another face
+    // The edges joined to e in a row without anything branching off: the
+    // chain continues through points where exactly two edges meet if they
+    // belong to one curve (circle, arc) or turn by at most maxTurn degrees
+    // (a circle whose curve was lost); a third edge at a point divides it.
+    std::set<Id> edgeChain(Id e, double maxTurn = 30) const;
     // A ray from the face into its back side leaves a closed solid (odd hits).
     bool solidBehind(Id f) const;
     int aliveVertexCount() const;
@@ -139,6 +144,12 @@ public:
     std::vector<Id> drawSegments(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve = kNone);
     std::vector<Id> drawSegmentsKeepHidden(const std::vector<std::pair<Vec3, Vec3>>& segs, Id curve = kNone);
     std::vector<Id> drawPolyline(const std::vector<Vec3>& pts, bool closed, Id curve = kNone);
+    // A line drawn over existing edges in its direction replaces them: the
+    // edges of the drawn line (what drawLine returned) take the new line's
+    // look (shown, hard, `curve`), and pieces in a row become one edge
+    // wherever nothing else meets them and they bound the same faces.
+    // Returns the line's edges afterwards.
+    std::vector<Id> overwriteLine(const std::vector<Id>& lineEdges, Id curve = kNone);
 
     // Inserts vertex v into edge e. `inFaces` (all faces using e) limits the
     // loop fix-up to those faces instead of scanning the whole mesh.
@@ -168,8 +179,16 @@ public:
     Id pushPull(Id f, double dist, bool keepOriginal = false);
     // Push/pull several faces at once, each along its own normal by dist.
     // Neighbouring coplanar faces in the set move together as one region (no
-    // walls between them); their shared edges are kept. Returns the moved faces.
-    std::vector<Id> pushPullFaces(const std::set<Id>& fs, double dist, bool keepOriginal = false);
+    // walls between them); their shared edges are kept. Pieces of such a
+    // region facing the other way are turned round first (see
+    // pushPullFlips), so a flat cut into pieces always moves as one.
+    // Returns the moved faces.
+    std::vector<Id> pushPullFaces(const std::set<Id>& fs, double dist, bool keepOriginal = false, Id reference = kNone);
+    // The faces of fs that face the other way than the rest of their region
+    // (selected faces in one plane joined by edges): in the region holding
+    // `reference` those opposite to it, elsewhere those opposite to the
+    // region's largest face.
+    std::set<Id> pushPullFlips(const std::set<Id>& fs, Id reference = kNone) const;
 
     // Applies a transform to a set of vertices, keeps texture mappings of fully
     // transformed faces attached, refreshes normals and welds coincident vertices.

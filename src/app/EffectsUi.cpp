@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "EffectsUi.h"
 
+#include "core/GearNotch.h"
+#include "core/Slicer.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -15,6 +18,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 
 namespace gs {
@@ -252,6 +256,140 @@ std::vector<EffectDef> buildRegistry() {
             p.detail = v["detail"].toInt();
             p.mergeParts = v["merge"].toBool();
             return effectSolidify(m, f, p, out, err);
+        };
+        r.push_back(std::move(d));
+    }
+    {
+        EffectDef d;
+        d.name = d.menuText = QStringLiteral("Gear Notches");
+        d.submenu = QStringLiteral("Shape");
+        d.icon = QStringLiteral("fx_gear");
+        d.tip = QStringLiteral("Teeth or notches along what is selected: a circle or any flat shape (its outline), "
+                               "a curve, the sides of a rectangle, a single line. Straight sides get their own row of "
+                               "teeth so corners stay clean; on a circle the teeth point out from the centre. "
+                               "Push/pull the toothed shape afterwards to make a gear.");
+        EffectParam profile;
+        profile.key = "profile";
+        profile.label = QStringLiteral("Tooth shape");
+        profile.type = EffectParam::Choice;
+        profile.choices = {QStringLiteral("Square"), QStringLiteral("Trapezoid"), QStringLiteral("Triangle (V)"),
+                           QStringLiteral("Sawtooth"), QStringLiteral("Rounded"), QStringLiteral("Gear (curved flanks)")};
+        profile.def = GearNotchParams::Gear;
+        EffectParam spacing;
+        spacing.key = "spacing";
+        spacing.label = QStringLiteral("Spacing by");
+        spacing.type = EffectParam::Choice;
+        spacing.choices = {QStringLiteral("Number of teeth"), QStringLiteral("Distance between teeth")};
+        spacing.def = 0;
+        EffectParam direction;
+        direction.key = "direction";
+        direction.label = QStringLiteral("Direction");
+        direction.type = EffectParam::Choice;
+        direction.choices = {QStringLiteral("Teeth outward"), QStringLiteral("Notches inward")};
+        direction.def = 0;
+        direction.tip = QStringLiteral("Outward: teeth stand out of the shape. Inward: notches are cut into it.");
+        d.params = {profile, spacing,
+                    whole("count", QStringLiteral("Teeth"), 1, 1000, 24),
+                    real("pitch", QStringLiteral("Distance between teeth"), 0.001, 100, 0.1, 3, QStringLiteral(" m"), true,
+                         QStringLiteral("Used when spacing by distance: one tooth this far from the next (adjusted to fit evenly).")),
+                    real("depth", QStringLiteral("Depth"), 0.0001, 10, 0.05, 4, QStringLiteral(" m"), true,
+                         QStringLiteral("Height of a tooth, or depth of a notch.")),
+                    real("width", QStringLiteral("Tooth width"), 2, 100, 50, 0, QStringLiteral(" %"), false,
+                         QStringLiteral("Share of each tooth's space the tooth takes at its base; the rest is the gap.")),
+                    real("tip", QStringLiteral("Tip width"), 0, 100, 50, 0, QStringLiteral(" %"), false,
+                         QStringLiteral("Width at the tip as a share of the base (Trapezoid and Gear).")),
+                    direction,
+                    real("phase", QStringLiteral("Offset"), 0, 100, 0, 0, QStringLiteral(" %"), false,
+                         QStringLiteral("Turns the teeth along a closed curve, in parts of one tooth.")),
+                    real("corner", QStringLiteral("Corner angle"), 1, 180, 30, 0, QStringLiteral("°"), false,
+                         QStringLiteral("A turn sharper than this is a corner: each side between corners gets its own teeth.")),
+                    whole("segments", QStringLiteral("Curve segments"), 2, 32, 6),
+                    flag("holes", QStringLiteral("Holes of selected faces too"), false,
+                         QStringLiteral("Teeth on the inner outlines as well (an internal gear).")),
+                    flag("flip", QStringLiteral("Other side (lines without a face)"), false)};
+        d.params[10].tip = QStringLiteral("Pieces of a rounded tooth or a curved flank.");
+        d.applyLines = [](Mesh& m, Selection& sel, const QVariantMap& v, QString& message, std::string* err) {
+            GearNotchParams p;
+            p.profile = (GearNotchParams::Profile)std::clamp(v["profile"].toInt(), 0, (int)GearNotchParams::Gear);
+            p.byCount = v["spacing"].toInt() == 0;
+            p.count = v["count"].toInt();
+            p.pitch = v["pitch"].toDouble();
+            p.depth = v["depth"].toDouble();
+            p.toothWidth = v["width"].toDouble() / 100;
+            p.tipWidth = v["tip"].toDouble() / 100;
+            p.inward = v["direction"].toInt() == 1;
+            p.phase = v["phase"].toDouble() / 100;
+            p.cornerAngle = v["corner"].toDouble();
+            p.curveSegments = v["segments"].toInt();
+            p.holes = v["holes"].toBool();
+            p.flip = v["flip"].toBool();
+            GearNotchResult r;
+            if (!gearNotch(m, sel.faces, sel.edges, p, &r, err)) return false;
+            sel.faces = r.faces;
+            sel.edges = r.edges;
+            message = QStringLiteral("%1 teeth on %2 %3").arg(r.teeth).arg(r.paths).arg(r.paths == 1 ? QStringLiteral("outline") : QStringLiteral("outlines"));
+            return true;
+        };
+        r.push_back(std::move(d));
+    }
+    {
+        EffectDef d;
+        d.name = d.menuText = QStringLiteral("Slicer");
+        d.submenu = QStringLiteral("Solid");
+        d.icon = QStringLiteral("fx_slicer");
+        d.tip = QStringLiteral("Cuts a solid (selected faces or components) into pieces no larger than the given size, "
+                               "for example a 3D printer's build plate, each piece a component of its own. "
+                               "Connectors on the cuts (pegs, keys or ribs, with matching sockets) line the pieces up "
+                               "and make the glued joints stronger.");
+        EffectParam conn;
+        conn.key = "connector";
+        conn.label = QStringLiteral("Connectors");
+        conn.type = EffectParam::Choice;
+        conn.choices = {QStringLiteral("None"), QStringLiteral("Round pegs"), QStringLiteral("Square keys"),
+                        QStringLiteral("Ribs (tongue and groove)")};
+        conn.def = 0;
+        conn.tip = QStringLiteral("Standing out of one piece's cut face, sunk into the next one's: the parts only fit one way and the glue holds on more surface.");
+        d.params = {real("w", QStringLiteral("Width (red, X)"), 0.001, 100, 0.22, 4, QStringLiteral(" m"), true,
+                         QStringLiteral("Largest piece along the red axis, e.g. the printer's build plate width.")),
+                    real("l", QStringLiteral("Length (green, Y)"), 0.001, 100, 0.22, 4, QStringLiteral(" m"), true),
+                    real("h", QStringLiteral("Height (blue, Z)"), 0.001, 100, 0.25, 4, QStringLiteral(" m"), true),
+                    flag("equal", QStringLiteral("Equal pieces"), true,
+                         QStringLiteral("Divide each axis into equal parts no larger than the size, instead of full-size parts and a remainder.")),
+                    conn,
+                    real("csize", QStringLiteral("Connector size"), 0.0005, 1, 0.008, 4, QStringLiteral(" m"), true,
+                         QStringLiteral("Peg diameter, key or rib width.")),
+                    real("clength", QStringLiteral("Connector length"), 0.0005, 1, 0.006, 4, QStringLiteral(" m"), true,
+                         QStringLiteral("How far it stands out of the cut, and how deep its socket is.")),
+                    real("clearance", QStringLiteral("Clearance"), 0, 0.01, 0.0002, 5, QStringLiteral(" m"), false,
+                         QStringLiteral("The socket is larger by this much all round so the parts fit after printing (0.1–0.3 mm is usual).")),
+                    real("margin", QStringLiteral("Wall around"), 0, 0.1, 0.003, 4, QStringLiteral(" m"), false,
+                         QStringLiteral("Solid material kept around each connector; where there is not that much room, none is placed.")),
+                    whole("percut", QStringLiteral("Connectors per cut"), 1, 16, 4),
+                    real("spread", QStringLiteral("Gap between pieces"), 0, 10, 0, 3, QStringLiteral(" m"), false,
+                         QStringLiteral("Moves the pieces apart to see them separately (0 = in place).")),};
+        d.applyModel = [](ModelState& st, Selection& sel, const QVariantMap& v, QString& message, std::string* err) {
+            SlicerParams p;
+            p.size = Vec3(v["w"].toDouble(), v["l"].toDouble(), v["h"].toDouble());
+            p.equal = v["equal"].toBool();
+            p.connector = (SlicerParams::Connector)std::clamp(v["connector"].toInt(), 0, (int)SlicerParams::Ribs);
+            p.connectorSize = v["csize"].toDouble();
+            p.connectorLength = v["clength"].toDouble();
+            p.clearance = v["clearance"].toDouble();
+            p.margin = v["margin"].toDouble();
+            p.perCut = v["percut"].toInt();
+            p.spread = v["spread"].toDouble();
+            SlicerResult r;
+            if (!sliceSelection(st, sel, p, &r, err)) return false;
+            message = QStringLiteral("%1 pieces (%2 × %3 × %4 cells of %5 × %6 × %7 mm)")
+                          .arg(r.pieces)
+                          .arg(r.nx)
+                          .arg(r.ny)
+                          .arg(r.nz)
+                          .arg(r.cell.x * 1000, 0, 'f', 1)
+                          .arg(r.cell.y * 1000, 0, 'f', 1)
+                          .arg(r.cell.z * 1000, 0, 'f', 1);
+            if (p.connector != SlicerParams::None) message += QStringLiteral(", %1 connectors").arg(r.connectors);
+            return true;
         };
         r.push_back(std::move(d));
     }

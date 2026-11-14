@@ -46,12 +46,10 @@ Color axisColorFor(const Vec3& n) {
 // ---------------------------------------------------------------------------
 
 void expandCurves(const Mesh& m, std::set<Id>& edges) {
-    std::set<Id> curves;
-    for (Id e : edges)
-        if (m.edges[e].alive && m.edges[e].curve != kNone) curves.insert(m.edges[e].curve);
-    if (curves.empty()) return;
-    for (Id e = 0; e < (Id)m.edges.size(); ++e)
-        if (m.edges[e].alive && curves.count(m.edges[e].curve)) edges.insert(e);
+    // A click on an edge takes the whole run it is part of (a circle, an arc,
+    // a smooth curve) up to where another edge divides it.
+    for (Id e : std::set<Id>(edges))
+        for (Id c : m.edgeChain(e)) edges.insert(c);
 }
 
 std::set<Id> selectionVertices(const Mesh& m, const Selection& s) {
@@ -647,6 +645,7 @@ void PushPullTool::mousePress(const MouseEvent& e) {
         faceVerts_.clear();
         for (Id g : faces_)
             for (Id v : mesh().faceVertices(g)) faceVerts_.insert(v);
+        flips_ = faces_.size() > 1 ? mesh().pushPullFlips(faces_, face_) : std::set<Id>{};
         refreshStatus();
         update();
         return;
@@ -767,7 +766,7 @@ void PushPullTool::commit(double dist, bool keep) {
         Id r = mesh().pushPull(face_, dist, keep);
         if (r != kNone) moved.push_back(r);
     } else {
-        moved = mesh().pushPullFaces(faces_, dist, keep);
+        moved = mesh().pushPullFaces(faces_, dist, keep, face_);
     }
     // Keep the pushed faces selected so they can be pushed again.
     if (hadSelection) {
@@ -818,8 +817,10 @@ void PushPullTool::buildPreview(Preview& pv) {
         if (fid < 0 || fid >= (Id)m.faces.size() || !m.faces[fid].alive) continue;
         pv.highlightFaces.insert(fid);
         const Face& F = m.faces[fid];
-        // Each face moves along its own normal; the drag measures along the picked one.
-        const Vec3 foff = F.normal * dist_;
+        // Each face moves along its own normal (pieces of the picked flat
+        // facing the other way get turned round); the drag measures along
+        // the picked one.
+        const Vec3 foff = F.normal * (flips_.count(fid) ? -dist_ : dist_);
         std::vector<std::vector<Id>> loops = {F.outer};
         for (const auto& h : F.holes) loops.push_back(h);
         for (const auto& L : loops) {

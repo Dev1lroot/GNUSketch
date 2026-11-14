@@ -2,6 +2,8 @@
 // GNUSketch - main application window.
 #pragma once
 
+#include <functional>
+
 #include "Inference.h"
 #include "Tool.h"
 #include "core/Document.h"
@@ -111,6 +113,18 @@ private:
     void importPlugin(FormatPlugin* f);
     void exportPlugin(FormatPlugin* f);
     void showPlugins();
+public:
+    // File > Export Selection: runs an export (a File > Export entry, or
+    // saving as .gsketch when empty) on a model holding only the selection.
+    // Returns false when nothing is selected.
+    bool exportSelection(const std::function<void()>& exportFn = {});
+    // What the exports write: the document, or the selection while
+    // exportSelection runs one.
+    const Document& exportDoc() const { return exportSource_ ? *exportSource_ : doc_; }
+private:
+    QString exportTitle(const QString& format) const;
+    const Document* exportSource_ = nullptr;
+    class QMenu* exportSelMenu_ = nullptr;
 
     void copySelection(bool cut);
     void paste();

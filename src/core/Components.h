@@ -77,6 +77,13 @@ ModelState extractDefinition(const ModelState& st, Id def);
 // Copies an instance with all inside it into another state, as a top-level one
 // (materials keep their numbers). defMap avoids copying a definition twice.
 Id copyInstanceInto(ModelState& dst, const ModelState& src, Id inst, std::map<Id, Id>& defMap);
+// A model holding only what is selected: the faces (with their edges) and
+// loose edges of the active mesh, the selected component instances with
+// everything inside them, and the selected lights and cameras; with only the
+// materials they use (renumbered). What Copy puts on the clipboard and
+// File > Export Selection writes. Coordinates are world coordinates, also
+// while a component is open.
+ModelState extractSelection(const ModelState& st, const Selection& sel);
 // Brings a definition of another model into the document, merging equal
 // materials. A definition with the same uid already there is reused, so
 // everything placed from one prefab stays linked. Returns the definition id.

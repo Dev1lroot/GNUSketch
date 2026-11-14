@@ -117,6 +117,10 @@ public:
     // belong to one curve (circle, arc) or turn by at most maxTurn degrees
     // (a circle whose curve was lost); a third edge at a point divides it.
     std::set<Id> edgeChain(Id e, double maxTurn = 30) const;
+    // The smooth surface face f is part of: the faces joined to it, one
+    // after another, across edges that are not drawn (soft or hidden), as a
+    // cylinder's side or a sphere. `inner` (if given) receives those edges.
+    std::set<Id> smoothSurface(Id f, std::set<Id>* inner = nullptr) const;
     // A ray from the face into its back side leaves a closed solid (odd hits).
     bool solidBehind(Id f) const;
     int aliveVertexCount() const;

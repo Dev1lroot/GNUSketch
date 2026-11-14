@@ -13,6 +13,17 @@ See the [README](https://github.com/Dev1lroot/GNUSketch#readme) and the
   desktop shortcut, opens .gsketch files); or unpack `GNUSketch-*-windows-x64.zip`
   anywhere and run `bin\gnusketch.exe`. Needs a graphics driver with OpenGL 3.3.
 
+### New in 0.3.2
+- Draw > Engineering: ISO metric screws and bolts (hex, socket cap, countersunk,
+  threaded rod), hex and square nuts and washers, M1 to M36, with real threads that
+  fit each other
+- Draw > Mechanical: involute spur gears and gear racks by module, tooth count and
+  pressure angle
+- Effects: Screw Thread (carve or raise a helical thread on a rod or in a hole),
+  Gear Notches (teeth along any outline), Slicer (cut a large model into printable
+  pieces with pegs, keys or ribs)
+- One click on a smooth surface (a cylinder's side, a sphere, a thread) selects all of it
+
 ### 0.3.1
 Packaging fixes for the first public builds of 0.3: the AppImage bundles everything
 Qt's X11 and SVG support need, and its libraries find each other wherever it runs.

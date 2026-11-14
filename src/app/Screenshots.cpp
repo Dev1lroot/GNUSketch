@@ -9,6 +9,7 @@
 #include "MainWindow.h"
 #include "Viewport.h"
 #include "core/GearNotch.h"
+#include "core/ScrewThread.h"
 #include "core/Slicer.h"
 #include "core/Components.h"
 #include "core/Effects.h"
@@ -764,6 +765,77 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
         paintAll(rack, red);
         place(m, rack, Mat4::translation({-1.2, -2.6, 0}));
     }, Vec3(-0.35, 0.8, -0.7));
+
+    // Screw Thread: a bolt (carved in), a nut (carved into its hole) and a
+    // rod with a raised square thread.
+    still(QStringLiteral("fx_screw"), [&](Mesh& m) {
+        const Id metal = addColor(doc, "Steel", Color::rgb8(90, 140, 210)), brass = addColor(doc, "Brass", Color::rgb8(214, 170, 70)),
+                 red = addColor(doc, "Red", Color::rgb8(200, 80, 70));
+        auto loop = [](int n, double r, double a0 = 0) {
+            std::vector<Vec3> pts;
+            for (int i = 0; i < n; ++i) pts.push_back(Vec3(r * std::cos(a0 + 2 * kPi * i / n), r * std::sin(a0 + 2 * kPi * i / n), 0));
+            return pts;
+        };
+        auto pullUp = [](Mesh& f, double h) {
+            for (Id g = 0; g < (Id)f.faces.size(); ++g)
+                if (f.faces[g].alive && std::fabs(f.faces[g].normal.z) > 0.99) {
+                    f.pushPull(g, h * f.faces[g].normal.z);
+                    return;
+                }
+        };
+        auto round = [](const Mesh& f, double rMax) {
+            std::set<Id> s;
+            for (Id g = 0; g < (Id)f.faces.size(); ++g)
+                if (f.faces[g].alive && std::fabs(f.faces[g].normal.z) < 0.5) {
+                    const Vec3 c = f.faceInteriorPoint(g);
+                    if (std::hypot(c.x, c.y) < rMax) s.insert(g);
+                }
+            return s;
+        };
+        auto flat = [] {
+            Mesh f;
+            f.groundFacesDown = false;
+            f.viewHint = Vec3(0, 0, 10);
+            return f;
+        };
+        Mesh bolt = flat();
+        bolt.drawPolyline(loop(48, 0.3), true, bolt.newCurveId());
+        pullUp(bolt, 2.2);
+        ScrewThreadParams bp;
+        bp.pitch = 0.16;
+        bp.depth = 0.1;
+        screwThread(bolt, round(bolt, 1), bp);
+        paintAll(bolt, metal);
+        place(m, bolt, Mat4::translation({0, 0, 0}));
+
+        Mesh nut = flat();
+        nut.drawPolyline(loop(6, 0.75, kPi / 6), true);
+        nut.drawPolyline(loop(48, 0.4), true, nut.newCurveId());
+        for (Id g = 0; g < (Id)nut.faces.size(); ++g)
+            if (nut.faces[g].alive && nut.faces[g].holes.empty()) nut.eraseFace(g);
+        nut.removeOrphanVertices();
+        pullUp(nut, 0.6);
+        ScrewThreadParams np;
+        np.pitch = 0.16;
+        np.depth = 0.1;
+        screwThread(nut, round(nut, 0.6), np);
+        paintAll(nut, brass);
+        place(m, nut, Mat4::translation({1.9, 0.2, 0}));
+
+        Mesh beam = flat();
+        beam.drawPolyline(loop(64, 0.35), true, beam.newCurveId());
+        pullUp(beam, 1.6);
+        ScrewThreadParams rp;
+        rp.profile = ScrewThreadParams::Square;
+        rp.inward = false;
+        rp.pitch = 0.25;
+        rp.depth = 0.1;
+        rp.starts = 2;
+        rp.segments = 64;
+        screwThread(beam, round(beam, 1), rp);
+        paintAll(beam, red);
+        place(m, beam, Mat4::translation({0.6, -2.0, 0}));
+    }, Vec3(-0.35, 0.8, -0.5));
 
     // Slicer: a ball cut to fit a small print bed, with pegs, pulled apart.
     {

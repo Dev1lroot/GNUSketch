@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(GNUSketch VERSION 0.3.1 LANGUAGES CXX)
+project(GNUSketch VERSION 0.3.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,6 +27,8 @@ add_library(gs_core SHARED
   src/core/RoundCorners.h src/core/RoundCorners.cpp
   src/core/GearNotch.h src/core/GearNotch.cpp
   src/core/Slicer.h src/core/Slicer.cpp
+  src/core/ScrewThread.h src/core/ScrewThread.cpp
+  src/core/MechParts.h src/core/MechParts.cpp
   src/core/FollowMe.h src/core/FollowMe.cpp
   src/core/ImageTrace.h src/core/ImageTrace.cpp
   src/core/Units.h src/core/Units.cpp
@@ -87,6 +89,7 @@ add_executable(gnusketch
   src/app/BendTool.h src/app/BendTool.cpp
   src/app/TextureTool.h src/app/TextureTool.cpp
   src/app/EffectsUi.h src/app/EffectsUi.cpp
+  src/app/PartDialogs.h src/app/PartDialogs.cpp
   src/app/SceneTools.h src/app/SceneTools.cpp
   src/app/Hierarchy.h src/app/Hierarchy.cpp
   src/app/EntityProperties.h src/app/EntityProperties.cpp

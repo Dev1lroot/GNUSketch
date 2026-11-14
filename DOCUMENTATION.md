@@ -60,6 +60,10 @@ Clicking one edge of a circle, an arc or any smooth curve (also an imported one)
 selects the whole curve, up to the points where another edge divides it: a line
 across a circle splits it into two arcs that select separately. A rectangle's sides
 stay single edges.
+Clicking a face of a smooth surface (a cylinder's side, a sphere, a screw thread)
+selects the whole surface: every face joined to it across edges that are not drawn
+(soft or hidden), with those edges. A drawn edge divides it. Double-click adds the
+surface's outline edges too.
 
 ### Primitives (Draw → Primitive…)
 ![Primitives](docs/media/primitives.png)
@@ -67,6 +71,36 @@ stay single edges.
 Box, sphere, geodesic sphere, cylinder, cone or frustum, torus, and the five Platonic
 solids. The dialog shows the face count live; the result follows the cursor until you
 click, as one component.
+
+### Standard parts (Draw → Engineering, Draw → Mechanical)
+
+Ready-made parts to standard sizes, generated from their dimensions (nothing is a
+stored model). Pick a size and the dialog shows the part's name, standard, main
+dimensions and face count; **Place** puts it on the cursor as one component named
+after it (e.g. *Hex Bolt M6 × 30*), and a click sets it down.
+
+* **Engineering → Screw / Bolt…**: hex bolt (ISO 4017, fully threaded), socket head
+  cap screw (ISO 4762), countersunk socket screw (ISO 10642, 90° head; its length is
+  overall, head included) or threaded rod (DIN 976). Sizes M1 to M36, length from the
+  ISO preferred lengths or any value typed in (mm), coarse or fine pitch, right- or
+  left-hand.
+* **Engineering → Nut…**: hexagonal (ISO 4032) or square (DIN 557; sizes outside
+  M5–M16 are approximate), M1 to M36, coarse or fine.
+* **Engineering → Washer…**: plain washer, ISO 7089.
+* **Mechanical → Spur Gear…**: involute spur gear from an ISO 54 module (or any
+  value), number of teeth, pressure angle (20° standard, 14.5°, 25°), face width,
+  bore and optional backlash. Pitch Ø = module × teeth, addendum 1 × module,
+  dedendum 1.25 × module. With fewer teeth than 2 / sin²(pressure angle) (17 at 20°)
+  the dialog notes that a cut gear would be undercut; the undercut is not modelled.
+* **Mechanical → Gear Rack…**: a straight rack of a number of teeth, to mesh with
+  spur gears of the same module and pressure angle.
+
+Threads are cut with the Screw Thread algorithm in the ISO 60° basic profile (depth
+5H/8 = 0.541 × pitch). A screw's crest is at the nominal diameter; a nut's hole is
+bored to the minor diameter and threaded out to the nominal one, so a screw and a
+nut of the same size and pitch fit exactly (no clearance). Untick **Model the
+thread** for a plain shank or hole when the polygons are not needed. Screws stand on
+their tip with the head up; nuts, washers, gears and racks lie flat.
 
 ## Modifying
 
@@ -163,6 +197,7 @@ and one undo step (Ctrl+F repeats the last one).
 | ![Voxelate](docs/media/fx_voxelate.png) | **Voxelate** rebuilds the geometry from cubes on a world grid, solid or as a shell. |
 | ![De-triangulate](docs/media/fx_detriangulate.png) | **De-triangulate** joins triangles (imported STL, 3MF…) into polygons: flat parts become single faces, curved ones optionally quads. |
 | ![Gear Notches](docs/media/fx_gear.png) | **Gear Notches** (Effects → Shape) puts teeth or notches on whatever is selected: a circle or any flat shape (its outline), a curve, a rectangle's sides, a single line. Settings: tooth shape (square, trapezoid, triangle, sawtooth, rounded, gear with curved flanks), number of teeth or distance between them, depth, tooth and tip width, teeth outward or notches inward, offset along a closed curve, corner angle (each straight side between corners gets its own whole number of teeth, so corners stay clean), holes too, and which side of a free line. Push/pull the result into a gear, a notched plate or a rack. Work on the flat shape before push/pull; overlapping teeth are refused with a message. |
+| ![Screw Thread](docs/media/fx_screw.png) | **Screw Thread** (Effects → Shape) winds a helical thread around a round surface: click the side of a rod for a bolt or a carved beam, or the inside of a round hole for a nut, then apply. **Carve in** cuts grooves into the material, **raise out** stands ridges out of it; both go by the side the faces face, so carving into a rod makes it thinner and carving into a hole's wall makes the hole wider. Settings: profile (V, ISO metric 60°, square, trapezoid/Acme, buttress, rounded/knuckle), pitch, depth (ISO metric: about 0.61 × pitch), number of starts, right- or left-hand, segments around. The flat faces at the ends (a rod's caps, the faces a hole goes through) are reshaped to meet the thread, so a solid stays closed; any other face joined to the surface is refused with a message. Crest and root lines are drawn, the flanks are smooth, and one click selects the whole thread. |
 | ![Slicer](docs/media/fx_slicer.png) | **Slicer** (Effects → Solid) cuts a solid, its selected faces or components, into pieces no larger than a width, length and height: a giant model into parts that fit a 3D printer's build plate. Each piece becomes a component in place (or pulled apart by a gap). Equal pieces divides every axis evenly; otherwise full-size parts and a remainder. **Connectors**: round pegs, square keys or ribs (tongue and groove) stand out of one cut face and sink into a matching socket, larger by the clearance, in the next piece, so the glued parts only fit one way and hold on more surface. They are placed only where the solid leaves the set wall around them. The model must be closed (Solidify can close it). |
 | ![Hollow](docs/media/hollow.png) | **Hollow** makes a closed solid hollow with walls of an exact thickness, for any shape. **Solidify** leaves one clean solid: overlapping parts merge, inner walls, sealed hollows and loose sheets go. |
 
@@ -309,6 +344,9 @@ precision and length snapping.
   keeps its pentagons) that follows the cursor until a click places it. Sizes are
   in the model's units; curved surfaces get soft, smooth-shaded edges. Explode it to
   merge it with loose geometry.
+* **Standard parts** (Draw → Engineering, Draw → Mechanical): ISO metric screws,
+  bolts, threaded rods, hex and square nuts and washers (M1–M36) with real threads,
+  involute spur gears and racks by module; see *Standard parts* above.
 * **Round Corners** (Tools menu, tool set, right-click) rounds the selected edges
   with a radius in mm and a number of segments, with a live preview. Edges between
   two faces get a rounded strip with mitred or spherical corners; corners of

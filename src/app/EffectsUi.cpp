@@ -2,6 +2,7 @@
 #include "EffectsUi.h"
 
 #include "core/GearNotch.h"
+#include "core/ScrewThread.h"
 #include "core/Slicer.h"
 
 #include <QCheckBox>
@@ -328,6 +329,68 @@ std::vector<EffectDef> buildRegistry() {
             sel.faces = r.faces;
             sel.edges = r.edges;
             message = QStringLiteral("%1 teeth on %2 %3").arg(r.teeth).arg(r.paths).arg(r.paths == 1 ? QStringLiteral("outline") : QStringLiteral("outlines"));
+            return true;
+        };
+        r.push_back(std::move(d));
+    }
+    {
+        EffectDef d;
+        d.name = d.menuText = QStringLiteral("Screw Thread");
+        d.submenu = QStringLiteral("Shape");
+        d.icon = QStringLiteral("fx_screw");
+        d.tip = QStringLiteral("A helical thread on a round surface: click the side of a rod for a bolt or a carved beam, "
+                               "or the inside of a round hole for a nut. Carve in cuts grooves into the material, "
+                               "raise out stands ridges out of it; the flat ends are reshaped to meet the thread.");
+        EffectParam profile;
+        profile.key = "profile";
+        profile.label = QStringLiteral("Profile");
+        profile.type = EffectParam::Choice;
+        profile.choices = {QStringLiteral("V (sharp)"), QStringLiteral("Metric (ISO 60°)"), QStringLiteral("Square"),
+                           QStringLiteral("Trapezoid (Acme)"), QStringLiteral("Buttress"), QStringLiteral("Rounded (knuckle)")};
+        profile.def = ScrewThreadParams::Metric;
+        EffectParam direction;
+        direction.key = "direction";
+        direction.label = QStringLiteral("Direction");
+        direction.type = EffectParam::Choice;
+        direction.choices = {QStringLiteral("Carve in (grooves)"), QStringLiteral("Raise out (ridges)")};
+        direction.def = 0;
+        direction.tip = QStringLiteral("By the side the faces face: carving into a rod makes it thinner, carving into a "
+                                       "hole's wall makes the hole wider (a nut). Raising out does the opposite.");
+        EffectParam hand;
+        hand.key = "hand";
+        hand.label = QStringLiteral("Hand");
+        hand.type = EffectParam::Choice;
+        hand.choices = {QStringLiteral("Right-hand"), QStringLiteral("Left-hand")};
+        hand.def = 0;
+        d.params = {profile, direction,
+                    real("pitch", QStringLiteral("Pitch"), 0.0001, 10, 0.01, 4, QStringLiteral(" m"), true,
+                         QStringLiteral("Distance from one turn of the thread to the next.")),
+                    real("depth", QStringLiteral("Depth"), 0.00001, 5, 0.006, 5, QStringLiteral(" m"), true,
+                         QStringLiteral("From the root of the thread to its crest (ISO metric: about 0.61 × pitch).")),
+                    whole("starts", QStringLiteral("Starts"), 1, 8, 1),
+                    hand,
+                    whole("segments", QStringLiteral("Segments around"), 6, 360, 48),
+                    whole("steps", QStringLiteral("Rounded profile steps"), 3, 32, 8)};
+        d.params[4].tip = QStringLiteral("Threads wound side by side: each advances starts × pitch per turn.");
+        d.params[6].tip = QStringLiteral("Pieces around the circumference. More is smoother but makes more polygons.");
+        d.applyLines = [](Mesh& m, Selection& sel, const QVariantMap& v, QString& message, std::string* err) {
+            ScrewThreadParams p;
+            p.profile = (ScrewThreadParams::Profile)std::clamp(v["profile"].toInt(), 0, (int)ScrewThreadParams::Rounded);
+            p.inward = v["direction"].toInt() == 0;
+            p.pitch = v["pitch"].toDouble();
+            p.depth = v["depth"].toDouble();
+            p.starts = v["starts"].toInt();
+            p.leftHand = v["hand"].toInt() == 1;
+            p.segments = v["segments"].toInt();
+            p.roundSteps = v["steps"].toInt();
+            ScrewThreadResult r;
+            if (!screwThread(m, sel.faces, p, &r, err)) return false;
+            sel.faces = r.faces;
+            sel.edges.clear();
+            message = QStringLiteral("Thread on Ø %1 mm × %2 mm: %3 turns")
+                          .arg(r.radius * 2000, 0, 'f', 2)
+                          .arg(r.length * 1000, 0, 'f', 1)
+                          .arg(r.turns, 0, 'f', 1);
             return true;
         };
         r.push_back(std::move(d));

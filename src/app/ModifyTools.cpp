@@ -182,7 +182,9 @@ void SelectTool::mouseRelease(const MouseEvent& e) {
         s.edges.insert(pr.edge);
         expandCurves(mesh(), s.edges);
     } else if (pr.face != kNone) {
-        s.faces.insert(pr.face);
+        // A face of a smooth surface (a cylinder's side, a sphere) takes the
+        // whole surface: the faces joined across edges that are not drawn.
+        s.faces = mesh().smoothSurface(pr.face, &s.edges);
     }
     if (s.empty() && (e.mods & (Qt::ControlModifier | Qt::ShiftModifier))) return;
     if (s.empty() && doc().editingComponent()) {
@@ -223,8 +225,9 @@ void SelectTool::mouseDoubleClick(const MouseEvent& e) {
             for (Id f : m.edgeFaces(ed))
                 if (m.faces[f].alive) s.faces.insert(f);
     } else if (pr.face != kNone) {
-        s.faces.insert(pr.face);
-        for (Id ed : m.faceEdges(pr.face)) s.edges.insert(ed);
+        s.faces = m.smoothSurface(pr.face);
+        for (Id f : s.faces)
+            for (Id ed : m.faceEdges(f)) s.edges.insert(ed);
     } else {
         return;
     }

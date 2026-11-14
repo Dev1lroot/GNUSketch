@@ -7,9 +7,11 @@
 #include "core/Effects.h"
 #include "core/Walker.h"
 #include "core/Mesh.h"
+#include "core/MechParts.h"
 #include "core/Primitives.h"
 #include "core/RoundCorners.h"
 #include "core/GearNotch.h"
+#include "core/ScrewThread.h"
 #include "core/Slicer.h"
 #include "core/Solids.h"
 #include "core/Terrain.h"
@@ -4141,6 +4143,408 @@ int main() {
             CHECK(m.removeDegenerateFaces() >= 2);
             CHECK_EQ(m.aliveFaceCount(), 1);
             CHECK(std::fabs(totalArea(m) - 1) < 1e-9);
+        });
+    }
+
+    // ---- smooth surfaces and screw threads ---------------------------------------
+    {
+        auto circleAt = [](Mesh& m, double r, int n, double cx = 0, double cy = 0) {
+            std::vector<Vec3> pts;
+            for (int i = 0; i < n; ++i)
+                pts.push_back(Vec3(cx + r * std::cos(2 * kPi * i / n), cy + r * std::sin(2 * kPi * i / n), 0));
+            m.drawPolyline(pts, true, m.newCurveId());
+        };
+        auto sideFaces = [](const Mesh& m) {
+            std::set<Id> s;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && std::fabs(m.faces[f].normal.z) < 0.5) s.insert(f);
+            return s;
+        };
+        auto closed = [](const Mesh& m) {
+            for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+                if (!m.edges[e].alive) continue;
+                int n = 0;
+                int dir = 0;
+                for (Id f : m.edgeFaces(e))
+                    if (m.faces[f].alive) {
+                        ++n;
+                        dir += m.faceEdgeDirection(f, m.edges[e].v[0], m.edges[e].v[1]);
+                    }
+                if (n != 2 || dir != 0) return false; // closed, and the faces agree on their front
+            }
+            return true;
+        };
+        // A rod: a circle pulled up.
+        auto rod = [&](Mesh& m, double r, double h, int n = 24) {
+            circleAt(m, r, n);
+            const Id f = onlyFace(m);
+            m.pushPull(f, h * (m.faces[f].normal.z > 0 ? 1 : -1));
+        };
+        // A plate with a round hole through it.
+        auto plate = [&](Mesh& m, double r, double h, int n = 24) {
+            rect(m, -0.1, -0.1, 0.1, 0.1);
+            circleAt(m, r, n);
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && m.faces[f].holes.empty()) m.eraseFace(f);
+            m.removeOrphanVertices();
+            const Id f = onlyFace(m);
+            m.pushPull(f, h * (m.faces[f].normal.z > 0 ? 1 : -1));
+        };
+        auto radialRange = [](const Mesh& m, const std::set<Id>& fs, double& lo, double& hi) {
+            lo = 1e9;
+            hi = 0;
+            for (Id f : fs)
+                for (Id v : m.faceVertices(f)) {
+                    const Vec3 p = m.pos(v);
+                    const double d = std::hypot(p.x, p.y);
+                    lo = std::min(lo, d);
+                    hi = std::max(hi, d);
+                }
+        };
+
+        test("clicking a smooth surface takes the faces joined by soft edges", [&] {
+            Mesh m;
+            rod(m, 0.05, 0.1);
+            const std::set<Id> side = sideFaces(m);
+            CHECK_EQ((int)side.size(), 24);
+            std::set<Id> inner;
+            const std::set<Id> got = m.smoothSurface(*side.begin(), &inner);
+            CHECK(got == side);
+            CHECK_EQ((int)inner.size(), 24); // the soft edges between them, not the circles
+            // A cap is flat with drawn edges all round: only itself.
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && !side.count(f)) CHECK_EQ((int)m.smoothSurface(f).size(), 1);
+            // Shown again, an edge divides the surface.
+            for (Id e : inner) {
+                m.edges[e].soft = m.edges[e].smooth = false;
+                break;
+            }
+            CHECK_EQ((int)m.smoothSurface(*side.begin()).size(), 24); // still joined the other way round
+            int shown = 0;
+            for (Id e : inner)
+                if (shown++ == 12) m.edges[e].soft = m.edges[e].smooth = false;
+            CHECK((int)m.smoothSurface(*side.begin()).size() < 24);
+        });
+
+        test("screw thread: carved into a rod, raised out of it, into a nut's hole", [&] {
+            const double r = 0.05, h = 0.1;
+            for (int prof = 0; prof <= ScrewThreadParams::Rounded; ++prof)
+                for (int inward = 0; inward < 2; ++inward) {
+                    Mesh m;
+                    rod(m, r, h);
+                    const double v0 = solidVolume(m);
+                    ScrewThreadParams p;
+                    p.profile = (ScrewThreadParams::Profile)prof;
+                    p.inward = inward;
+                    p.pitch = 0.01;
+                    p.depth = 0.006;
+                    ScrewThreadResult res;
+                    std::string err;
+                    const bool ok = screwThread(m, sideFaces(m), p, &res, &err);
+                    CHECK(ok);
+                    if (!ok) { std::printf("    %s\n", err.c_str()); continue; }
+                    CHECK(std::fabs(res.radius - r) < 1e-6 && std::fabs(res.length - h) < 1e-9);
+                    CHECK(std::fabs(res.turns - 10) < 1e-9);
+                    CHECK(closed(m));
+                    const double v1 = solidVolume(m);
+                    CHECK(inward ? (v1 < v0 && v1 > v0 * 0.7) : (v1 > v0 && v1 < v0 * 1.3));
+                    double lo, hi;
+                    radialRange(m, res.faces, lo, hi);
+                    if (inward) CHECK(hi <= r + 1e-9 && lo < r - 0.005);
+                    else CHECK(lo >= r * std::cos(kPi / 24) - 1e-9 && hi > r + 0.005 && hi <= r + 0.006 + 1e-9);
+                    // Crest and root lines are drawn, the rest is smooth.
+                    int hard = 0, soft = 0;
+                    std::set<Id> es;
+                    for (Id f : res.faces)
+                        for (Id e : m.faceEdges(f)) es.insert(e);
+                    for (Id e : es) (m.edges[e].soft ? soft : hard)++;
+                    CHECK(soft > hard);
+                    CHECK(prof == ScrewThreadParams::Rounded ? hard == 2 * 48 : hard > 2 * 48);
+                    // One click on the thread takes it all (the strips between
+                    // crest and root lines join at the ends).
+                    CHECK(m.smoothSurface(*res.faces.begin()) == res.faces);
+                }
+            // A nut: carving into the hole's wall widens it.
+            {
+                Mesh m;
+                plate(m, 0.03, 0.04);
+                const double v0 = solidVolume(m);
+                const std::set<Id> hole = [&] {
+                    std::set<Id> s;
+                    for (Id f : sideFaces(m)) {
+                        const Vec3 c = m.faceInteriorPoint(f);
+                        if (std::hypot(c.x, c.y) < 0.05) s.insert(f);
+                    }
+                    return s;
+                }();
+                CHECK_EQ((int)hole.size(), 24);
+                ScrewThreadParams p;
+                p.pitch = 0.005;
+                p.depth = 0.003;
+                ScrewThreadResult res;
+                std::string err;
+                CHECK(screwThread(m, hole, p, &res, &err));
+                CHECK(closed(m));
+                CHECK(solidVolume(m) < v0 && solidVolume(m) > 0);
+                double lo, hi;
+                radialRange(m, res.faces, lo, hi);
+                CHECK(lo >= 0.03 * std::cos(kPi / 24) - 1e-9 && hi > 0.0325 && hi <= 0.033 + 1e-9);
+                // The faces of the thread face into the hole.
+                for (Id f : res.faces) {
+                    const Vec3 c = m.faceInteriorPoint(f);
+                    CHECK(m.faces[f].normal.dot(Vec3(c.x, c.y, 0)) < 0);
+                    break;
+                }
+            }
+            // The whole rod selected (caps too), left-hand, two starts.
+            {
+                Mesh m;
+                rod(m, r, h);
+                std::set<Id> all;
+                for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                    if (m.faces[f].alive) all.insert(f);
+                ScrewThreadParams p;
+                p.starts = 2;
+                p.leftHand = true;
+                ScrewThreadResult res;
+                CHECK(screwThread(m, all, p, &res));
+                CHECK(closed(m));
+                CHECK(std::fabs(res.turns - 5) < 1e-9);
+            }
+            // Not round: nothing changes.
+            {
+                Mesh m;
+                rect(m, 0, 0, 1, 1);
+                m.pushPull(onlyFace(m), -1);
+                const int n = m.aliveFaceCount();
+                std::set<Id> all;
+                for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                    if (m.faces[f].alive) all.insert(f);
+                std::string err;
+                CHECK(!screwThread(m, all, ScrewThreadParams(), nullptr, &err));
+                CHECK(!err.empty() && m.aliveFaceCount() == n);
+            }
+        });
+    }
+
+    // ---- engineering parts: fasteners and gears -------------------------------------
+    {
+        auto closedSolid = [](const Mesh& m) {
+            for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+                if (!m.edges[e].alive) continue;
+                int n = 0, dir = 0;
+                for (Id f : m.edgeFaces(e))
+                    if (m.faces[f].alive) {
+                        ++n;
+                        dir += m.faceEdgeDirection(f, m.edges[e].v[0], m.edges[e].v[1]);
+                    }
+                if (n != 2 || dir != 0) return false;
+            }
+            return true;
+        };
+        auto bounds = [](const Mesh& m, Vec3& mn, Vec3& mx) {
+            bool any;
+            m.bounds(mn, mx, any);
+        };
+        test("fasteners: every size and kind is a closed solid on the ground", [&] {
+            const auto& sizes = metricSizes();
+            CHECK_EQ(metricSizeIndex("M6"), 8);
+            CHECK_EQ(metricSizeIndex("M7"), -1);
+            for (int k = 0; k < kFastenerKindCount; ++k)
+                for (int i = 0; i < (int)sizes.size(); ++i) {
+                    FastenerParams p;
+                    p.kind = FastenerKind(k);
+                    p.size = i;
+                    p.length = 4 * sizes[i].d * 0.001;
+                    p.segments = 24;
+                    Mesh m;
+                    std::string name, err;
+                    const bool ok = buildFastener(p, m, &name, &err);
+                    CHECK(ok);
+                    if (!ok) {
+                        std::printf("    %s %s: %s\n", fastenerKindName(p.kind), sizes[i].name, err.c_str());
+                        continue;
+                    }
+                    CHECK(closedSolid(m));
+                    CHECK(solidVolume(m) > 0);
+                    CHECK(name.find(sizes[i].name) != std::string::npos);
+                    Vec3 mn, mx;
+                    bounds(m, mn, mx);
+                    CHECK(std::fabs(mn.z) < 1e-12);
+                    CHECK(std::fabs(mn.x + mx.x) < 1e-6 && std::fabs(mn.y + mx.y) < 1e-6);
+                }
+        });
+        test("fasteners: an M6 hex bolt and nut have ISO sizes and mate", [&] {
+            FastenerParams p;
+            p.size = metricSizeIndex("M6");
+            p.length = 0.03;
+            Mesh bolt;
+            std::string name;
+            CHECK(buildFastener(p, bolt, &name));
+            CHECK(name == "Hex Bolt M6 × 30");
+            Vec3 mn, mx;
+            bounds(bolt, mn, mx);
+            CHECK(std::fabs(mx.z - 0.034) < 1e-9);                  // 30 under the head + k 4
+            CHECK(std::fabs((mx.x - mn.x) - 0.010) < 1e-9);         // 10 across flats
+            CHECK(std::fabs((mx.y - mn.y) - 0.020 / std::sqrt(3.0)) < 1e-9); // across corners
+            const double depth = metricThreadDepth(0.001);
+            CHECK(std::fabs(depth - 0.000541266) < 1e-8);
+            // The shank: crest at 3 mm, root at 3 mm less the thread depth.
+            double lo = 1e9, hi = 0;
+            for (Id v = 0; v < (Id)bolt.vertices.size(); ++v)
+                if (bolt.vertices[v].alive && bolt.pos(v).z < 0.029) {
+                    const double r = std::hypot(bolt.pos(v).x, bolt.pos(v).y);
+                    lo = std::min(lo, r);
+                    hi = std::max(hi, r);
+                }
+            CHECK(hi <= 0.003 + 1e-9 && hi > 0.003 - 1e-6);
+            CHECK(std::fabs(lo - (0.003 - depth)) < 1e-6);
+            // A plain shank is much lighter.
+            Mesh plain;
+            p.thread = false;
+            CHECK(buildFastener(p, plain));
+            CHECK(plain.aliveFaceCount() * 20 < bolt.aliveFaceCount());
+
+            p.kind = FastenerKind::HexNut;
+            p.thread = true;
+            Mesh nut;
+            CHECK(buildFastener(p, nut, &name));
+            CHECK(name == "Hex Nut M6");
+            bounds(nut, mn, mx);
+            CHECK(std::fabs(mx.z - 0.0052) < 1e-9);
+            lo = 1e9, hi = 0;
+            for (Id v = 0; v < (Id)nut.vertices.size(); ++v)
+                if (nut.vertices[v].alive) {
+                    const double r = std::hypot(nut.pos(v).x, nut.pos(v).y);
+                    if (r < 0.004) {
+                        lo = std::min(lo, r);
+                        hi = std::max(hi, r);
+                    }
+                }
+            // The hole: minor diameter D1 = d - 1.0825 P, roots at d (where the bolt's crest is).
+            CHECK(std::fabs(lo - (0.003 - depth)) < 1e-6);
+            CHECK(hi <= 0.003 + 1e-9 && hi > 0.003 - 1e-6);
+
+            p.kind = FastenerKind::SquareNut;
+            Mesh sq;
+            CHECK(buildFastener(p, sq));
+            bounds(sq, mn, mx);
+            CHECK(std::fabs((mx.x - mn.x) - 0.010) < 1e-9 && std::fabs((mx.y - mn.y) - 0.010) < 1e-9);
+            CHECK(std::fabs(mx.z - 0.005) < 1e-9);
+        });
+        test("fasteners: fine pitch, left hand, countersunk length, bad sizes", [&] {
+            FastenerParams p;
+            p.size = metricSizeIndex("M8");
+            p.kind = FastenerKind::ThreadedRod;
+            p.length = 0.02;
+            p.finePitch = true;
+            p.leftHand = true;
+            Mesh m;
+            std::string name, err;
+            CHECK(buildFastener(p, m, &name, &err));
+            CHECK(name == "Threaded Rod M8×1 × 20 LH");
+            CHECK(closedSolid(m));
+            p.kind = FastenerKind::Countersunk;
+            p.finePitch = p.leftHand = false;
+            p.length = 0.004; // less than the M8 head
+            Mesh c;
+            CHECK(!buildFastener(p, c, &name, &err) && !err.empty());
+            p.length = 0.02;
+            CHECK(buildFastener(p, c, &name, &err));
+            Vec3 mn, mx;
+            bounds(c, mn, mx);
+            CHECK(std::fabs(mx.z - 0.02) < 1e-9);                  // overall length
+            CHECK(std::fabs((mx.x - mn.x) - 0.01792) < 1e-4);       // head Ø 17.92
+            p.kind = FastenerKind::SocketCap;
+            p.length = 0.0001;
+            CHECK(!buildFastener(p, c, &name, &err));
+            p.size = 99;
+            CHECK(!buildFastener(p, c, &name, &err));
+            p.size = 0;
+            p.kind = FastenerKind::Washer;
+            Mesh w;
+            CHECK(buildFastener(p, w, &name));
+            CHECK(name == "Washer M1" && closedSolid(w));
+        });
+        test("gears: involute spur gear sizes, symmetry, tooth thickness", [&] {
+            for (int z : {8, 12, 20, 41, 42, 60, 120})
+                for (double pa : {14.5, 20.0, 25.0}) {
+                    GearParams p;
+                    p.module = 0.001;
+                    p.teeth = z;
+                    p.pressureAngle = pa;
+                    p.bore = z >= 12 ? 0.003 : 0;
+                    Mesh m;
+                    GearInfo gi;
+                    std::string name, err;
+                    const bool ok = buildGear(p, m, &name, &gi, &err);
+                    CHECK(ok);
+                    if (!ok) {
+                        std::printf("    z%d %g°: %s\n", z, pa, err.c_str());
+                        continue;
+                    }
+                    CHECK(closedSolid(m));
+                    CHECK(std::fabs(gi.pitchDiameter - 0.001 * z) < 1e-12);
+                    CHECK(std::fabs(gi.outsideDiameter - 0.001 * (z + 2)) < 1e-12);
+                    CHECK(std::fabs(gi.rootDiameter - 0.001 * (z - 2.5)) < 1e-12);
+                    double lo = 1e9, hi = 0;
+                    for (Id v = 0; v < (Id)m.vertices.size(); ++v)
+                        if (m.vertices[v].alive) {
+                            const double r = std::hypot(m.pos(v).x, m.pos(v).y);
+                            if (r > 0.002) lo = std::min(lo, r);
+                            hi = std::max(hi, r);
+                        }
+                    CHECK(std::fabs(hi - gi.outsideDiameter / 2) < 1e-9);
+                    CHECK(std::fabs(lo - gi.rootDiameter / 2) < 1e-9);
+                    // Tooth thickness on the pitch circle: half the circular pitch.
+                    p.flankSteps = 64;
+                    std::vector<Vec2> o = spurGearOutline(p);
+                    const double r = gi.pitchDiameter / 2;
+                    std::vector<double> cross;
+                    for (size_t i = 0; i < o.size(); ++i) {
+                        const Vec2 a = o[i], b = o[(i + 1) % o.size()];
+                        const double ra = std::hypot(a.x, a.y), rb = std::hypot(b.x, b.y);
+                        if ((ra - r) * (rb - r) > 0 || ra == rb) continue;
+                        const double t = (r - ra) / (rb - ra);
+                        const Vec2 q = a + (b - a) * t;
+                        const double ang = std::atan2(q.y, q.x);
+                        if (std::fabs(ang) < kPi / z) cross.push_back(ang);
+                    }
+                    CHECK_EQ((int)cross.size(), 2);
+                    if (cross.size() == 2) CHECK(std::fabs(std::fabs(cross[1] - cross[0]) * r - kPi * 0.001 / 2) < 1e-6);
+                    CHECK(gi.undercut == (z < 2 / std::pow(std::sin(pa * kPi / 180), 2)));
+                    CHECK(name == "Spur Gear m1 z" + std::to_string(z));
+                }
+            GearParams p;
+            p.teeth = 6;
+            p.pressureAngle = 35;
+            Mesh m;
+            std::string err;
+            CHECK(!buildGear(p, m, nullptr, nullptr, &err) && !err.empty()); // pointed teeth
+            p.teeth = 20;
+            p.pressureAngle = 20;
+            p.bore = 0.05;
+            CHECK(!buildGear(p, m, nullptr, nullptr, &err)); // bore bigger than the gear
+        });
+        test("gears: a rack is a closed solid of n circular pitches", [&] {
+            GearParams p;
+            p.kind = GearKind::Rack;
+            p.module = 0.002;
+            p.teeth = 10;
+            Mesh m;
+            std::string name;
+            GearInfo gi;
+            CHECK(buildGear(p, m, &name, &gi));
+            CHECK(closedSolid(m));
+            CHECK(name == "Gear Rack m2 × 10");
+            Vec3 mn, mx;
+            bool any;
+            m.bounds(mn, mx, any);
+            CHECK(std::fabs((mx.x - mn.x) - 10 * kPi * 0.002) < 1e-9);
+            CHECK(std::fabs((mx.y - mn.y) - (3 + 1) * 0.002) < 1e-9); // 3m to the pitch line + addendum
+            CHECK(std::fabs(mx.z - 0.008) < 1e-12 && std::fabs(mn.z) < 1e-12);
+            // 4 faces per tooth on top (2 flanks, a tip, a root) plus the ends and bottom.
+            CHECK(m.aliveFaceCount() > 40);
         });
     }
 

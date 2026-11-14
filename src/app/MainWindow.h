@@ -28,6 +28,8 @@ namespace gs {
 
 class FormatPlugin;
 struct PrimitiveParams;
+struct PartChoice;
+enum class PartFamily;
 
 class Viewport;
 class EntityInfoPanel;
@@ -60,6 +62,9 @@ public:
     bool startPrefabPlacement(const QString& path);
     // Builds a primitive as a new component and attaches it to the cursor.
     bool startPrimitivePlacement(const PrimitiveParams& params);
+    // Builds a standard part (screw, nut, washer, gear, rack) as a new
+    // component and attaches it to the cursor.
+    bool startPartPlacement(const PartChoice& part);
     // Records the open component's geometry as a state. False if none is open.
     bool recordState(const QString& name);
     EntityProperties* entityProperties();
@@ -139,6 +144,9 @@ private:
     void modelInfo();
     void roundCorners();
     void insertPrimitive();
+    void insertPart(PartFamily family);
+    // A new component of the mesh, following the cursor; one undo step.
+    bool startMeshPlacement(Mesh mesh, const std::string& name);
     // The new instance (inside an open operation) follows the cursor until a
     // click places it; commits or cancels the operation.
     bool attachToCursor(Id inst);

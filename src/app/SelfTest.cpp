@@ -53,12 +53,14 @@
 #include "Animator.h"
 #include "SceneTools.h"
 #include <QMenu>
+#include <QLabel>
 #include <QMenuBar>
 #include <QToolBar>
 #include <QDockWidget>
 #include <QFileInfo>
 #include "core/Components.h"
 #include "core/Primitives.h"
+#include "PartDialogs.h"
 #include "core/Solids.h"
 #include "io/ImageUtil.h"
 #include "io/NativeFormat.h"
@@ -2354,6 +2356,68 @@ int runSelfTest(MainWindow& w) {
             d.check(!w.startPrimitivePlacement(pp) && !doc.inOp() && doc.state.instances.size() == n + 1, "bad sizes are refused");
             vp->setTool(ToolId::Select);
         }
+        // Standard parts: Draw > Engineering and Draw > Mechanical.
+        {
+            QMenu* engineering = nullptr;
+            QMenu* mechanical = nullptr;
+            for (QAction* top : w.menuBar()->actions())
+                if (top->menu() && top->text() == QStringLiteral("&Draw"))
+                    for (QAction* a : top->menu()->actions()) {
+                        if (a->text() == QStringLiteral("&Engineering")) engineering = a->menu();
+                        if (a->text() == QStringLiteral("&Mechanical")) mechanical = a->menu();
+                    }
+            d.check(engineering && engineering->actions().size() == 3 && mechanical && mechanical->actions().size() == 2,
+                    "Draw has Engineering (screw, nut, washer) and Mechanical (gear, rack) menus");
+            const size_t n = doc.state.instances.size(), defs = doc.state.defs.size();
+            PartChoice part;
+            part.fastener.kind = FastenerKind::HexNut;
+            part.fastener.size = metricSizeIndex("M8");
+            d.check(w.startPartPlacement(part) && doc.state.instances.size() == n + 1 && doc.inOp(), "a nut attaches to the cursor");
+            const QPointF at = d.screen(Vec3(3, -2, 0));
+            d.move(at);
+            d.click(at);
+            d.pump();
+            d.check(!doc.inOp() && doc.undoName() == "Add Hex Nut M8", "a click places the nut as one undo step");
+            d.check(doc.state.defs[defs].name == "Hex Nut M8" && isSolid(doc.state.defs[defs].mesh), "a closed, threaded M8 nut component");
+            part = PartChoice();
+            part.gear = true;
+            part.gearParams.teeth = 24;
+            d.check(w.startPartPlacement(part) && doc.inOp(), "a gear attaches to the cursor");
+            d.move(at);
+            d.click(at);
+            d.pump();
+            d.check(!doc.inOp() && doc.undoName() == "Add Spur Gear m1 z24" && isSolid(doc.state.defs[defs + 1].mesh),
+                    "a click places the gear");
+            part.gearParams.teeth = 3;
+            d.check(!w.startPartPlacement(part) && !doc.inOp() && doc.state.instances.size() == n + 2, "bad gears are refused");
+            // Through the dialog: a socket cap screw M4 × 16.
+            QAction* screwAct = w.findChild<QAction*>(QStringLiteral("part_screw"));
+            QString shownInfo;
+            QTimer::singleShot(0, &w, [&] {
+                auto* dlg = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                if (!dlg) return;
+                auto* type = dlg->findChild<QComboBox*>(QStringLiteral("partType"));
+                auto* size = dlg->findChild<QComboBox*>(QStringLiteral("partSize"));
+                auto* length = dlg->findChild<QComboBox*>(QStringLiteral("partLength"));
+                if (type) type->setCurrentIndex(type->findData(int(FastenerKind::SocketCap)));
+                if (size) size->setCurrentIndex(metricSizeIndex("M4"));
+                if (length) length->setEditText(QStringLiteral("16"));
+                if (auto* info = dlg->findChild<QLabel*>(QStringLiteral("partInfo"))) shownInfo = info->text();
+                dlg->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+            });
+            if (screwAct) screwAct->trigger();
+            d.pump();
+            std::printf("  part dialog: '%s'\n", qPrintable(shownInfo));
+            d.check(shownInfo.contains(QStringLiteral("Socket Cap Screw M4 × 16")) && shownInfo.contains(QStringLiteral("ISO 4762")),
+                    "the screw dialog shows the part it will make");
+            d.check(doc.inOp() && doc.state.instances.size() == n + 3, "Place attaches the screw to the cursor");
+            d.move(at);
+            d.click(at);
+            d.pump();
+            d.check(!doc.inOp() && doc.undoName() == "Add Socket Cap Screw M4 × 16" && isSolid(doc.state.defs.back().mesh),
+                    "a click places the screw");
+            vp->setTool(ToolId::Select);
+        }
         pb->close();
         vp->setTool(ToolId::Select);
 
@@ -3684,7 +3748,7 @@ int runSelfTest(MainWindow& w) {
 
     // --- Plugins: a browser with vendor and license, each one toggleable --------
     {
-        d.check(QApplication::applicationVersion() == QLatin1String("0.3.1"), "version 0.3.1");
+        d.check(QApplication::applicationVersion() == QLatin1String("0.3.2"), "version 0.3.2");
         QStringList names;
         bool details = true;
         for (const PluginInfo& p : Plugins::installed()) {
@@ -4016,6 +4080,74 @@ int runSelfTest(MainWindow& w) {
             d.check(d.mesh().aliveFaceCount() == 0 && d.mesh().aliveEdgeCount() >= 8 * 4 && !doc.selection.edges.empty(),
                     "the line gets 8 teeth (and stays a line)");
             d.check(d.mesh().findVertex(Vec3(-1, -1, 0)) != kNone && d.mesh().findVertex(Vec3(1, -1, 0)) != kNone, "its ends stay where they were");
+        }
+        doc.reset();
+        doc.modified = false;
+    }
+
+    // A cylinder: one click on its side takes the whole smooth surface; then
+    // Effects > Shape > Screw Thread carves a thread into it.
+    {
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        d.pump();
+        vp->setStandardView(Vec3(-0.3, 0.6, -0.75));
+        vp->camera().target = Vec3(0, 0, 1);
+        d.pump();
+        vp->setTool(ToolId::Circle);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.click(d.screen(Vec3(1, 0, 0)));
+        vp->setTool(ToolId::PushPull);
+        const QPointF fc = d.screen(Vec3(0.2, -0.2, 0));
+        d.click(fc);
+        d.move(fc - QPointF(0, 50));
+        d.type("2000");
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        std::set<Id> side;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive && std::fabs(d.mesh().faces[f].normal.z) < 0.5) side.insert(f);
+        const Vec3 front = Vec3(0.3, -0.6, 0).normalized();
+        d.click(d.screen(front * 0.995 + Vec3(0, 0, 1)));
+        std::printf("  cylinder: %zu side faces, %zu selected, %zu edges selected\n", side.size(), doc.selection.faces.size(),
+                    doc.selection.edges.size());
+        d.check(side.size() >= 12 && doc.selection.faces == side, "one click on a cylinder's side selects the whole smooth side");
+        d.check(doc.selection.edges.size() == side.size(), "with the soft edges between its faces, not the circles");
+        QAction* screw = w.findChild<QAction*>(QStringLiteral("effect_screw_thread"));
+        d.check(screw != nullptr && screw->isEnabled(), "Effects has Screw Thread, enabled by the selection");
+        if (screw) {
+            bool shown = false;
+            QTimer::singleShot(0, &w, [&] {
+                auto* dlg = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                if (!dlg) return;
+                shown = true;
+                const auto spins = dlg->findChildren<QDoubleSpinBox*>(); // pitch, depth, ...
+                if (spins.size() >= 2) {
+                    spins[0]->setValue(0.25);
+                    spins[1]->setValue(0.1);
+                }
+                waitMs(250);
+                dlg->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+            });
+            screw->trigger();
+            d.pump();
+            double rMin = 1e9;
+            int open = 0;
+            const Mesh& m = d.mesh();
+            for (const Vertex& v : m.vertices)
+                if (v.alive) rMin = std::min(rMin, std::hypot(v.p.x, v.p.y));
+            for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+                if (!m.edges[e].alive) continue;
+                int n = 0;
+                for (Id f : m.edgeFaces(e)) n += m.faces[f].alive ? 1 : 0;
+                open += n != 2;
+            }
+            std::printf("  screw: %d faces, inner radius %.3f, status '%s'\n", m.aliveFaceCount(), rMin,
+                        qPrintable(w.statusBar()->currentMessage()));
+            d.check(shown && doc.undoName() == "Screw Thread", "the dialog cuts the thread as one undo step");
+            d.check(open == 0 && rMin < 0.92 && rMin > 0.89, "the rod stays closed, grooves 10 cm deep");
+            d.check(w.statusBar()->currentMessage().contains(QStringLiteral("8.0 turns")), "the status bar counts the turns");
         }
         doc.reset();
         doc.modified = false;

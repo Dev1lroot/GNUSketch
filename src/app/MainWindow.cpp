@@ -29,6 +29,7 @@
 #include "io/PrintExport.h"
 #include "io/PrintImport.h"
 #include "Theme.h"
+#include "PartDialogs.h"
 #include "PluginBrowser.h"
 #include "Properties.h"
 #include "Animator.h"
@@ -247,6 +248,16 @@ void MainWindow::buildActions() {
         ->setStatusTip(QStringLiteral("Round the selected edges or corners with a radius and number of segments."));
     act("primitive", "", QStringLiteral("&Primitive…"), QKeySequence(), [this] { insertPrimitive(); })
         ->setStatusTip(QStringLiteral("Make a sphere, cylinder, torus, dodecahedron or other solid and place it with a click."));
+    act("part_screw", "part_screw", QStringLiteral("&Screw / Bolt…"), QKeySequence(), [this] { insertPart(PartFamily::Screw); })
+        ->setStatusTip(QStringLiteral("An ISO metric hex bolt, socket cap or countersunk screw, or a threaded rod, M1 to M36, with a real thread."));
+    act("part_nut", "part_nut", QStringLiteral("&Nut…"), QKeySequence(), [this] { insertPart(PartFamily::Nut); })
+        ->setStatusTip(QStringLiteral("An ISO metric hexagonal or square nut, M1 to M36, threaded to fit the screws."));
+    act("part_washer", "part_washer", QStringLiteral("&Washer…"), QKeySequence(), [this] { insertPart(PartFamily::Washer); })
+        ->setStatusTip(QStringLiteral("A plain ISO 7089 washer, M1 to M36."));
+    act("part_gear", "fx_gear", QStringLiteral("Spur &Gear…"), QKeySequence(), [this] { insertPart(PartFamily::SpurGear); })
+        ->setStatusTip(QStringLiteral("An involute spur gear from a standard module, a tooth count and a pressure angle."));
+    act("part_rack", "part_rack", QStringLiteral("Gear &Rack…"), QKeySequence(), [this] { insertPart(PartFamily::Rack); })
+        ->setStatusTip(QStringLiteral("A straight gear rack that meshes with spur gears of the same module and pressure angle."));
     act("traceimage", "traceimage", QStringLiteral("&Trace Image…"), QKeySequence(), [this] { traceImage(); })
         ->setStatusTip(QStringLiteral("Turn the alpha cutout or the dark/light shapes of a face's image into outline geometry."));
     act("exportgltf", "", QStringLiteral("glTF 2.0 (*.gltf)…"), QKeySequence(), [this] { exportGltf(); });
@@ -592,6 +603,10 @@ void MainWindow::buildMenus() {
     shapes->addAction(toolActions_[ToolId::Polygon]);
     draw->addSeparator();
     draw->addAction(acts_["primitive"]);
+    QMenu* engineering = draw->addMenu(Icons::get("part_screw"), QStringLiteral("&Engineering"));
+    for (const char* k : {"part_screw", "part_nut", "part_washer"}) engineering->addAction(acts_[k]);
+    QMenu* mechanical = draw->addMenu(Icons::get("fx_gear"), QStringLiteral("&Mechanical"));
+    for (const char* k : {"part_gear", "part_rack"}) mechanical->addAction(acts_[k]);
 
     QMenu* tools = menuBar()->addMenu(QStringLiteral("&Tools"));
     for (ToolId id : {ToolId::Select, ToolId::Eraser, ToolId::Paint}) tools->addAction(toolActions_[id]);
@@ -2080,9 +2095,12 @@ bool MainWindow::startPrimitivePlacement(const PrimitiveParams& params) {
         statusLabel_->setText(QString::fromStdString(err));
         return false;
     }
+    return startMeshPlacement(std::move(mesh), primitiveName(params.kind));
+}
+
+bool MainWindow::startMeshPlacement(Mesh mesh, const std::string& name) {
     viewport_->cancelTool();
     viewport_->setTool(ToolId::Move);
-    const std::string name = primitiveName(params.kind);
     doc_.beginOp("Add " + name);
     ComponentDef def;
     def.name = uniqueComponentName(doc_.state, name);
@@ -2096,8 +2114,28 @@ bool MainWindow::startPrimitivePlacement(const PrimitiveParams& params) {
     doc_.state.instances.push_back(in);
     if (!attachToCursor((Id)doc_.state.instances.size() - 1)) return false;
     statusLabel_->setText(QStringLiteral("Click to place the %1. Explode it to merge it with the model's geometry.")
-                              .arg(QString::fromStdString(name).toLower()));
+                              .arg(QString::fromStdString(name)));
     return true;
+}
+
+bool MainWindow::startPartPlacement(const PartChoice& part) {
+    Mesh mesh;
+    std::string name, err;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const bool ok = part.gear ? buildGear(part.gearParams, mesh, &name, nullptr, &err)
+                              : buildFastener(part.fastener, mesh, &name, &err);
+    QApplication::restoreOverrideCursor();
+    if (!ok) {
+        statusLabel_->setText(QString::fromStdString(err));
+        return false;
+    }
+    return startMeshPlacement(std::move(mesh), name);
+}
+
+void MainWindow::insertPart(PartFamily family) {
+    viewport_->cancelTool();
+    PartChoice part;
+    if (runPartDialog(this, family, part)) startPartPlacement(part);
 }
 
 void MainWindow::insertPrimitive() {

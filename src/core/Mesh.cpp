@@ -1196,6 +1196,29 @@ std::vector<Id> Mesh::overwriteLine(const std::vector<Id>& lineEdges, Id curve) 
     return out;
 }
 
+std::set<Id> Mesh::smoothSurface(Id f, std::set<Id>* inner) const {
+    std::set<Id> out;
+    if (f < 0 || f >= (Id)faces.size() || !faces[f].alive) return out;
+    std::vector<Id> stack = {f};
+    out.insert(f);
+    while (!stack.empty()) {
+        const Id g = stack.back();
+        stack.pop_back();
+        for (Id e : faceEdges(g)) {
+            const Edge& E = edges[e];
+            if (!E.alive || !(E.soft || E.hidden)) continue;
+            bool joins = false;
+            for (Id h : edgeFaces(e)) {
+                if (h == g || !faces[h].alive || faces[h].hidden) continue;
+                joins = true;
+                if (out.insert(h).second) stack.push_back(h);
+            }
+            if (joins && inner) inner->insert(e);
+        }
+    }
+    return out;
+}
+
 std::set<Id> Mesh::edgeChain(Id e0, double maxTurn) const {
     std::set<Id> chain;
     if (e0 < 0 || e0 >= (Id)edges.size() || !edges[e0].alive) return chain;

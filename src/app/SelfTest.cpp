@@ -49,6 +49,7 @@
 #include "io/PrintExport.h"
 #include "EffectsUi.h"
 #include "Properties.h"
+#include <QCheckBox>
 #include <QComboBox>
 #include "Animator.h"
 #include "SceneTools.h"
@@ -2366,8 +2367,8 @@ int runSelfTest(MainWindow& w) {
                         if (a->text() == QStringLiteral("&Engineering")) engineering = a->menu();
                         if (a->text() == QStringLiteral("&Mechanical")) mechanical = a->menu();
                     }
-            d.check(engineering && engineering->actions().size() == 3 && mechanical && mechanical->actions().size() == 2,
-                    "Draw has Engineering (screw, nut, washer) and Mechanical (gear, rack) menus");
+            d.check(engineering && engineering->actions().size() == 3 && mechanical && mechanical->actions().size() == 3,
+                    "Draw has Engineering (screw, nut, washer) and Mechanical (gear, rack, bevel gear) menus");
             const size_t n = doc.state.instances.size(), defs = doc.state.defs.size();
             PartChoice part;
             part.fastener.kind = FastenerKind::HexNut;
@@ -2416,6 +2417,156 @@ int runSelfTest(MainWindow& w) {
             d.pump();
             d.check(!doc.inOp() && doc.undoName() == "Add Socket Cap Screw M4 × 16" && isSolid(doc.state.defs.back().mesh),
                     "a click places the screw");
+            // A second gear fitted to the first (selected): chosen by size, put
+            // right next to it, meshing.
+            const Id firstGear = (Id)n + 1;
+            GearParams kept;
+            d.check(gearFromComponent(doc.state.defs[defs + 1].extra, doc.state.defs[defs + 1].name, kept) && kept.teeth == 24 &&
+                        std::fabs(kept.module - 0.001) < 1e-12,
+                    "a gear keeps its parameters with its component");
+            doc.selection.clear();
+            doc.selection.instances.insert(firstGear);
+            doc.notifySelection();
+            QAction* gearAct = w.findChild<QAction*>(QStringLiteral("part_gear"));
+            bool fitted = false, moduleLocked = false;
+            shownInfo.clear();
+            QTimer::singleShot(0, &w, [&] {
+                auto* dlg = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                if (!dlg) return;
+                auto* fit = dlg->findChild<QComboBox*>(QStringLiteral("gearFitTo"));
+                auto* mode = dlg->findChild<QComboBox*>(QStringLiteral("gearMode"));
+                auto* diameter = dlg->findChild<QDoubleSpinBox*>(QStringLiteral("gearDiameter"));
+                auto* module = dlg->findChild<QComboBox*>(QStringLiteral("gearModule"));
+                auto* beside = dlg->findChild<QCheckBox*>(QStringLiteral("gearPlaceMeshing"));
+                fitted = fit && fit->currentIndex() == 1 && fit->isVisibleTo(dlg) && beside && beside->isVisibleTo(dlg) && beside->isChecked();
+                if (mode) mode->setCurrentIndex(0);
+                if (module) {
+                    module->setEditText(QStringLiteral("3")); // ignored: the fitted gear sets it
+                    moduleLocked = !module->isEnabled();
+                }
+                if (diameter) diameter->setValue(42); // 40 teeth of module 1 are 42 mm across the tips
+                if (auto* info = dlg->findChild<QLabel*>(QStringLiteral("partInfo"))) shownInfo = info->text();
+                dlg->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+            });
+            if (gearAct) gearAct->trigger();
+            d.pump();
+            std::printf("  gear dialog: '%s'\n", qPrintable(shownInfo));
+            d.check(fitted && moduleLocked, "the gear dialog fits to the selected gear, its module taken from it");
+            d.check(shownInfo.contains(QStringLiteral("Spur Gear m1 z40")) && shownInfo.contains(QStringLiteral("centres 32.00 mm apart")),
+                    "the dialog says how many teeth the size gives and how far apart the centres are");
+            const Id second = (Id)doc.state.instances.size() - 1;
+            const Vec3 c1 = doc.state.instances[firstGear].xf.transformPoint({0, 0, 0}),
+                       c2 = doc.state.instances[second].xf.transformPoint({0, 0, 0});
+            d.check(!doc.inOp() && doc.undoName() == "Add Spur Gear m1 z40" && doc.selection.instances.count(second) &&
+                        std::fabs((c2 - c1).length() - 0.032) < 1e-9 && std::fabs(c2.z - c1.z) < 1e-12,
+                    "Place puts it 32 mm from the first gear's centre, as one undo step");
+            // A pair of bevel gears for shafts at right angles, as one component.
+            {
+                PartChoice bevel;
+                bevel.gear = true;
+                bevel.gearParams.kind = GearKind::Bevel;
+                bevel.gearParams.teeth = 20;
+                bevel.gearParams.mateTeeth = 30;
+                bevel.gearParams.faceWidth = 0;
+                bevel.gearParams.bore = 0.004;
+                bevel.pair = true;
+                const size_t defs0 = doc.state.defs.size(), inst0 = doc.state.instances.size();
+                d.check(w.startPartPlacement(bevel) && doc.inOp() && doc.state.defs.size() == defs0 + 3 &&
+                            doc.state.instances.size() == inst0 + 3,
+                        "a bevel gear pair attaches to the cursor (two gears in a group)");
+                d.move(at + QPointF(80, 0));
+                d.click(at + QPointF(80, 0));
+                d.pump();
+                const ModelState& st = doc.state;
+                const Id group = (Id)defs0 + 2;
+                int inside = 0;
+                for (const Instance& in : st.instances) inside += in.alive && in.parent == group;
+                GearParams g1, g2;
+                d.check(!doc.inOp() && doc.undoName() == "Add Bevel Gear Pair m1 z20-30" && inside == 2 &&
+                            isSolid(st.defs[defs0].mesh) && isSolid(st.defs[defs0 + 1].mesh) &&
+                            gearFromComponent(st.defs[defs0 + 1].extra, st.defs[defs0 + 1].name, g2) && g2.kind == GearKind::Bevel &&
+                            g2.teeth == 30 && g2.mateTeeth == 20,
+                        "a click places the pair: two closed bevel gears made for each other");
+            }
+            vp->setTool(ToolId::Select);
+        }
+        // The Eraser: a brush of a size set in Properties (or with [ and ]),
+        // and nothing behind a face is erased, loose or a component.
+        {
+            vp->setTool(ToolId::Select);
+            vp->cancelTool();
+            doc.reset();
+            d.pump();
+            vp->setPerspective(true);
+            vp->camera().eye = Vec3(0, -5, 1);
+            vp->camera().target = Vec3(0, 0, 1);
+            Mesh& em = d.mesh();
+            em.drawPolyline({{-1, 0, 0}, {1, 0, 0}, {1, 0, 2}, {-1, 0, 2}}, true);
+            em.drawPolyline({{0, 0, 0}, {0, 0, 2}}, false);           // splits the wall: a useless edge
+            em.drawPolyline({{-0.6, 1, 1.4}, {0.6, 1, 1.4}}, false);   // a loose line behind the wall
+            em.touch();
+            Mesh box;
+            box.drawPolyline({{-0.3, 1.5, 0.6}, {0.3, 1.5, 0.6}, {0.3, 1.5, 1.4}, {-0.3, 1.5, 1.4}}, true);
+            box.touch();
+            ComponentDef cd;
+            cd.name = "Behind";
+            cd.mesh = std::move(box);
+            doc.state.defs.push_back(std::move(cd));
+            Instance bi;
+            bi.def = (Id)doc.state.defs.size() - 1;
+            doc.state.instances.push_back(bi);
+            const Id behind = (Id)doc.state.instances.size() - 1;
+            em.touch();
+            d.pump();
+            const int wallFaces = em.aliveFaceCount();
+            vp->setTool(ToolId::Eraser);
+            EraserSettings::instance().setRadius(8);
+            d.move(d.screen(Vec3(-0.5, 0, 1)));
+            d.key(Qt::Key_BracketRight);
+            auto* sizeBox = w.findChild<QDoubleSpinBox*>(QStringLiteral("eraserSize"));
+            d.check(EraserSettings::instance().radius() == 10 && sizeBox && sizeBox->value() == 10,
+                    "] makes the eraser brush larger, and Properties shows its size");
+            if (sizeBox) sizeBox->setValue(60);
+            d.check(EraserSettings::instance().radius() == 60, "the brush size is set in Properties");
+            QImage shot = vp->grabFramebuffer();
+            d.check(!shot.isNull(), "the brush circle draws");
+            // A small brush over bare wall, in front of the component: nothing
+            // to erase there (the component is out of sight).
+            EraserSettings::instance().setRadius(6);
+            d.drag(d.screen(Vec3(-0.25, 0, 1.0)), d.screen(Vec3(-0.1, 0, 1.0)));
+            d.pump();
+            d.check(doc.state.instances[behind].alive && d.mesh().aliveFaceCount() == wallFaces,
+                    "a stroke over a bare face erases nothing behind it");
+            EraserSettings::instance().setRadius(60);
+            // A broad stroke over the wall, across the dividing edge.
+            d.drag(d.screen(Vec3(-0.5, 0, 1.0)), d.screen(Vec3(0.5, 0, 1.0))); // the brush (0.2 m) stays off the sides
+            d.pump();
+            const Mesh& after = d.mesh();
+            std::printf("  eraser: wall faces %d -> %d, edges %d, 60 px = %.2f m at the wall\n", wallFaces, after.aliveFaceCount(),
+                        after.aliveEdgeCount(), 60 * vp->camera().pixelSize(Vec3(0, 0, 1)));
+            d.check(after.findEdge(after.findVertex(Vec3(0, 0, 0)), after.findVertex(Vec3(0, 0, 2))) == kNone &&
+                        after.aliveFaceCount() == wallFaces - 1,
+                    "the brush erases the edge on the wall (its two faces merge)");
+            d.check(after.findVertex(Vec3(-0.6, 1, 1.4)) != kNone && after.findVertex(Vec3(0.6, 1, 1.4)) != kNone,
+                    "a line behind the wall is not erased through it");
+            d.check(doc.state.instances[behind].alive, "a component behind the wall is not erased through it");
+            // In front, the component goes.
+            doc.reset();
+            d.pump();
+            Mesh box2;
+            box2.drawPolyline({{-0.3, 0, 0.6}, {0.3, 0, 0.6}, {0.3, 0, 1.4}, {-0.3, 0, 1.4}}, true);
+            box2.touch();
+            ComponentDef cd2;
+            cd2.name = "Front";
+            cd2.mesh = std::move(box2);
+            doc.state.defs.push_back(std::move(cd2));
+            Instance fi;
+            fi.def = (Id)doc.state.defs.size() - 1;
+            doc.state.instances.push_back(fi);
+            d.pump();
+            EraserSettings::instance().setRadius(8);
+            d.drag(d.screen(Vec3(-0.1, 0, 1.0)), d.screen(Vec3(0.1, 0, 1.0)));
+            d.check(!doc.state.instances.back().alive, "a component in view is erased");
             vp->setTool(ToolId::Select);
         }
         pb->close();
@@ -3748,7 +3899,7 @@ int runSelfTest(MainWindow& w) {
 
     // --- Plugins: a browser with vendor and license, each one toggleable --------
     {
-        d.check(QApplication::applicationVersion() == QLatin1String("0.3.2"), "version 0.3.2");
+        d.check(QApplication::applicationVersion() == QLatin1String("0.3.3"), "version 0.3.3");
         QStringList names;
         bool details = true;
         for (const PluginInfo& p : Plugins::installed()) {
@@ -4023,11 +4174,11 @@ int runSelfTest(MainWindow& w) {
                 return shown;
             };
             const bool shown = throughDialog([&](QDialog* dlg) {
-                // Spin boxes in order: teeth, distance, depth, ...
+                // Spin boxes in order: module, pressure angle, teeth, distance, depth, ...
                 const auto spins = dlg->findChildren<QDoubleSpinBox*>();
-                if (spins.size() >= 3) {
-                    spins[0]->setValue(16);
-                    spins[2]->setValue(0.1);
+                if (spins.size() >= 5) {
+                    spins[2]->setValue(16);
+                    spins[4]->setValue(0.1);
                 }
                 waitMs(250);
             });
@@ -4057,6 +4208,43 @@ int runSelfTest(MainWindow& w) {
             }
             d.check(open == 0 && d.mesh().aliveFaceCount() > 16 * 4, "push/pull makes it a closed gear");
 
+            // A standard tooth size: the circle (2 m across) becomes an involute
+            // gear of module 50 mm with 40 teeth; only the module's rows show.
+            vp->setTool(ToolId::Select);
+            vp->cancelTool();
+            doc.reset();
+            d.pump();
+            vp->setTool(ToolId::Circle);
+            d.click(d.screen(Vec3(0, 0, 0)));
+            d.click(d.screen(Vec3(1, 0, 0)));
+            vp->setTool(ToolId::Select);
+            d.click(d.screen(Vec3(0.3, 0.3, 0)));
+            bool teethRowHidden = false, moduleRowShown = false;
+            throughDialog([&](QDialog* dlg) {
+                const auto combos = dlg->findChildren<QComboBox*>();
+                const auto spins = dlg->findChildren<QDoubleSpinBox*>();
+                if (combos.size() >= 2 && spins.size() >= 5) {
+                    combos[1]->setCurrentIndex(2);
+                    spins[0]->setValue(50);
+                    teethRowHidden = !spins[2]->isVisibleTo(dlg) && !spins[4]->isVisibleTo(dlg);
+                    moduleRowShown = spins[0]->isVisibleTo(dlg);
+                }
+                waitMs(250);
+            });
+            rMax = 0;
+            double rMin = 10;
+            for (const Vertex& v : d.mesh().vertices)
+                if (v.alive) {
+                    rMax = std::max(rMax, std::hypot(v.p.x, v.p.y));
+                    rMin = std::min(rMin, std::hypot(v.p.x, v.p.y));
+                }
+            std::printf("  module gear: radius %.4f..%.4f, status '%s'\n", rMin, rMax, qPrintable(w.statusBar()->currentMessage()));
+            d.check(teethRowHidden && moduleRowShown, "a standard tooth size shows its own settings, not the free ones");
+            d.check(d.mesh().aliveFaceCount() == 1 && std::fabs(rMax - 1.05) < 1e-6 && std::fabs(rMin - 0.9375) < 1e-6 &&
+                        w.statusBar()->currentMessage().contains(QStringLiteral("40 teeth")) &&
+                        w.statusBar()->currentMessage().contains(QStringLiteral("pitch Ø 2000.00 mm")),
+                    "the circle becomes a 40-tooth gear of module 50 (tips at r + m, roots at r - 1.25 m)");
+
             // One line, selected by clicking it.
             vp->setTool(ToolId::Select);
             vp->cancelTool();
@@ -4070,10 +4258,12 @@ int runSelfTest(MainWindow& w) {
             d.click(d.screen(Vec3(0, -1, 0)));
             d.check(doc.selection.edges.size() == 1 && gear->isEnabled(), "a single line enables Gear Notches");
             throughDialog([&](QDialog* dlg) {
+                const auto combos = dlg->findChildren<QComboBox*>();
+                if (combos.size() >= 2) combos[1]->setCurrentIndex(0); // back to a number of teeth
                 const auto spins = dlg->findChildren<QDoubleSpinBox*>();
-                if (spins.size() >= 3) {
-                    spins[0]->setValue(8);
-                    spins[2]->setValue(0.1);
+                if (spins.size() >= 5) {
+                    spins[2]->setValue(8);
+                    spins[4]->setValue(0.1);
                 }
                 waitMs(250);
             });
@@ -4399,6 +4589,177 @@ int runGlProbe() {
     std::printf("gl-probe: glError=0x%x, %d distinct colours -> %s\n", err, int(colors.size()),
                 err == GL_NO_ERROR && colors.size() > 10 ? "OK" : "FAILED");
     return err == GL_NO_ERROR && colors.size() > 10 ? 0 : 1;
+}
+
+// Renders a saved model off-screen while orbiting around it and reports the
+// time per frame with each render setting (for finding what is slow).
+int runRenderBench(const QString& path, int frames) {
+    QOpenGLContext ctx;
+    ctx.setFormat(QSurfaceFormat::defaultFormat());
+    QOffscreenSurface surface;
+    if (!ctx.create()) return std::printf("render-bench: no OpenGL 3.3 context\n"), 1;
+    surface.setFormat(ctx.format());
+    surface.create();
+    if (!ctx.makeCurrent(&surface)) return std::printf("render-bench: cannot make the context current\n"), 1;
+    auto* f = ctx.functions();
+    std::printf("render-bench: %s\n", (const char*)f->glGetString(GL_RENDERER));
+    Document doc;
+    QString err;
+    if (!loadNative(doc, path, nullptr, &err)) return std::printf("render-bench: %s\n", qPrintable(err)), 1;
+    // GS_BENCH_COPIES=n: the model n×n times side by side (a bigger scene).
+    const int copies = std::clamp(qEnvironmentVariableIntValue("GS_BENCH_COPIES"), 1, 64);
+    if (copies > 1) {
+        Vec3 bmn, bmx;
+        bool bany = false;
+        modelBounds(doc.state, bmn, bmx, bany);
+        const Vec3 step = (bmx - bmn) * 1.1;
+        const size_t n0 = doc.state.instances.size();
+        for (int gx = 0; gx < copies; ++gx)
+            for (int gy = 0; gy < copies; ++gy) {
+                if (!gx && !gy) continue;
+                for (size_t i = 0; i < n0; ++i) {
+                    Instance in = doc.state.instances[i];
+                    if (in.parent != kNone) continue;
+                    in.xf = Mat4::translation(Vec3(step.x * gx, step.y * gy, 0)) * in.xf;
+                    doc.state.instances.push_back(in);
+                }
+            }
+    }
+    int faces = 0, tris = 0, edges = 0;
+    for (const Instance& in : doc.state.instances)
+        if (in.alive) {
+            const Mesh& m = doc.state.defs[in.def].mesh;
+            faces += m.aliveFaceCount();
+            edges += m.aliveEdgeCount();
+            for (Id fi = 0; fi < (Id)m.faces.size(); ++fi)
+                if (m.faces[fi].alive) tris += (int)m.faceVertices(fi).size() - 2;
+        }
+    faces += doc.mesh().aliveFaceCount();
+    std::printf("render-bench: %zu instances, %zu definitions; drawn: %d faces (~%d triangles), %d edges\n", doc.state.instances.size(),
+                doc.state.defs.size(), faces, tris, edges);
+    const int W = 1920, H = 1080;
+    QOpenGLFramebufferObjectFormat ff;
+    ff.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+    ff.setSamples(4);
+    QOpenGLFramebufferObject fbo(W, H, ff);
+    Renderer r;
+    QString log;
+    if (!r.initialize(&log)) return std::printf("render-bench: renderer failed: %s\n", qPrintable(log)), 1;
+    fbo.bind();
+    Camera cam;
+    cam.setViewport(W, H);
+    Vec3 mn, mx;
+    bool any = false;
+    modelBounds(doc.state, mn, mx, any);
+    if (any) {
+        cam.setSceneRadius((mn + mx) * 0.5, (mx - mn).length() * 0.5);
+        cam.zoomExtents(mn, mx);
+    }
+    Preview pv;
+    const RenderStyle saved = doc.style;
+    struct Config {
+        const char* name;
+        std::function<void(RenderStyle&)> set;
+    };
+    const std::vector<Config> configs = {
+        {"as saved", [](RenderStyle&) {}},
+        {"shaded, edges", [](RenderStyle& s) { s.shadows = s.cinematic = s.ambientOcclusion = false; s.edges = true; }},
+        {"shaded, no edges", [](RenderStyle& s) { s.shadows = s.cinematic = s.ambientOcclusion = false; s.edges = s.profiles = false; }},
+        {"+ shadows", [](RenderStyle& s) { s.shadows = true; s.cinematic = s.ambientOcclusion = false; }},
+        {"+ ambient occlusion", [](RenderStyle& s) { s.shadows = true; s.ambientOcclusion = true; s.cinematic = false; }},
+        {"+ cinematic", [](RenderStyle& s) { s.shadows = true; s.ambientOcclusion = true; s.cinematic = true; }},
+    };
+    for (const Config& c : configs) {
+        doc.style = saved;
+        c.set(doc.style);
+        r.render(doc, cam, pv, 1.0); // warm up (uploads)
+        f->glFinish();
+        QElapsedTimer t;
+        double cpu = 0, worst = 0;
+        t.start();
+        for (int i = 0; i < frames; ++i) {
+            cam.orbit(4, 0);
+            QElapsedTimer ft;
+            ft.start();
+            r.render(doc, cam, pv, 1.0);
+            cpu += ft.nsecsElapsed() / 1e6;
+            f->glFinish();
+            worst = std::max(worst, ft.nsecsElapsed() / 1e6);
+        }
+        const double total = t.nsecsElapsed() / 1e6 / frames;
+        std::printf("render-bench: %-22s %7.2f ms/frame (%5.0f fps), CPU in render() %6.2f ms, worst %6.2f ms\n", c.name, total,
+                    1000 / total, cpu / frames, worst);
+    }
+    // Close up: most of the model outside the view.
+    {
+        doc.style = saved;
+        doc.style.shadows = doc.style.cinematic = doc.style.ambientOcclusion = false;
+        Camera close = cam;
+        close.eye = close.target + (cam.eye - cam.target) * 0.12;
+        r.render(doc, close, pv, 1.0);
+        f->glFinish();
+        QElapsedTimer t;
+        t.start();
+        for (int i = 0; i < frames; ++i) {
+            close.orbit(4, 0);
+            r.render(doc, close, pv, 1.0);
+            f->glFinish();
+        }
+        const double total = t.nsecsElapsed() / 1e6 / frames;
+        std::printf("render-bench: %-22s %7.2f ms/frame (%5.0f fps)\n", "close-up, edges", total, 1000 / total);
+    }
+    r.cleanup();
+    fbo.release();
+    return 0;
+}
+
+// Moves the mouse over the open model with each tool (and orbits with the
+// middle button) and times the event handling and the repaint separately.
+int runInteractBench(MainWindow& w) {
+    auto* vp = w.findChild<Viewport*>();
+    if (!vp) return 1;
+    w.resize(1600, 1000);
+    QApplication::processEvents();
+    vp->zoomExtents();
+    const int W = vp->width(), H = vp->height();
+    std::printf("interact-bench: viewport %dx%d\n", W, H);
+    auto send = [&](QEvent::Type t, QPointF p, Qt::MouseButton b, Qt::MouseButtons bs) {
+        QMouseEvent e(t, p, vp->mapToGlobal(p.toPoint()), b, bs, Qt::NoModifier);
+        QApplication::sendEvent(vp, &e);
+    };
+    const int N = 150;
+    auto run = [&](const char* name, ToolId tool, bool orbit) {
+        vp->setTool(tool);
+        QApplication::processEvents();
+        if (orbit) send(QEvent::MouseButtonPress, QPointF(W * 0.5, H * 0.5), Qt::MiddleButton, Qt::MiddleButton);
+        double ev = 0, paint = 0, worstEv = 0;
+        for (int i = 0; i < N; ++i) {
+            // A slow sweep across the model, back and forth.
+            const double t = double(i) / N;
+            const QPointF p(W * (0.15 + 0.7 * t), H * (0.3 + 0.4 * std::sin(t * 6.28)));
+            QElapsedTimer c;
+            c.start();
+            send(QEvent::MouseMove, p, Qt::NoButton, orbit ? Qt::MiddleButton : Qt::NoButton);
+            const double e = c.nsecsElapsed() / 1e6;
+            ev += e;
+            worstEv = std::max(worstEv, e);
+            c.restart();
+            vp->repaint();
+            paint += c.nsecsElapsed() / 1e6;
+        }
+        if (orbit) send(QEvent::MouseButtonRelease, QPointF(W * 0.5, H * 0.5), Qt::MiddleButton, Qt::NoButton);
+        std::printf("interact-bench: %-12s mouse move %6.2f ms (worst %6.2f), repaint %6.2f ms\n", name, ev / N, worstEv, paint / N);
+    };
+    run("warm-up", ToolId::Select, false);
+    run("orbit", ToolId::Select, true);
+    run("select", ToolId::Select, false);
+    run("line", ToolId::Line, false);
+    run("push/pull", ToolId::PushPull, false);
+    run("move", ToolId::Move, false);
+    run("paint", ToolId::Paint, false);
+    run("tape", ToolId::Tape, false);
+    vp->setTool(ToolId::Select);
+    return 0;
 }
 
 } // namespace gs

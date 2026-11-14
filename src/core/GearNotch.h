@@ -37,10 +37,26 @@ struct GearNotchParams {
     bool holes = false;     // selected faces: their holes get teeth too
     bool flip = false;      // lines bounding no face: teeth on the other side
     int curveSegments = 6;  // pieces of a rounded or curved flank
+    // Standard teeth (meters, 0 = off): the module sets the tooth size, so the
+    // result meshes with any gear or rack of the same module and pressure
+    // angle. The path is the pitch line (where meshing gears touch); teeth are
+    // ISO 53 rack teeth (spacing π·module, module above the line, 1.25 below),
+    // and spacing, depth, profile and widths above are not used. A circle
+    // with the teeth outward becomes an exact involute spur gear; with
+    // fitCircles its radius changes to the nearest whole number of teeth
+    // (pitch diameter = module × teeth), otherwise the spacing stretches.
+    double module = 0;
+    double pressureAngle = 20; // degrees
+    bool fitCircles = true;
+    // Share of the depth that lies under the path, the rest above it (0: the
+    // path is the root of the teeth). Set from the module when that is on.
+    double baseline = 0;
 };
 
 struct GearNotchResult {
     int paths = 0, teeth = 0;
+    int circles = 0;           // circles made into involute gears (module on)
+    double pitchDiameter = 0;  // of the last one, meters
     std::set<Id> faces, edges; // the faces rebuilt and the edges of the new outlines
 };
 

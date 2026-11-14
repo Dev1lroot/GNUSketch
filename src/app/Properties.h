@@ -14,6 +14,8 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QDoubleSpinBox;
+class QSlider;
 
 namespace gs {
 
@@ -71,6 +73,20 @@ private:
     bool updating_ = false;
 };
 
+// The Eraser's brush size (Properties panel while the Eraser is equipped).
+class EraserBrushSettings : public QWidget {
+    Q_OBJECT
+public:
+    EraserBrushSettings(Viewport* vp, QWidget* parent = nullptr);
+    void refresh();
+
+private:
+    Viewport* vp_;
+    QSlider* slider_;
+    QDoubleSpinBox* size_;
+    bool updating_ = false;
+};
+
 class PropertiesPanel : public QWidget {
     Q_OBJECT
 public:
@@ -95,6 +111,7 @@ private:
     PlacementSettings* placement_;
     ScaleSettings* scale_;
     UnitsSettings* units_;
+    EraserBrushSettings* eraser_;
     QLabel* title_;
     QLabel* hint_;
     QPushButton* entityBtn_;

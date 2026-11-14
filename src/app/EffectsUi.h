@@ -30,6 +30,10 @@ struct EffectParam {
     bool logScale = false; // slider moves in ratios (for ranges over several decades)
     QStringList choices;
     QString tip;
+    // Shown only while the Choice parameter `showKey` is one of `showWhen`
+    // (empty key: always).
+    QString showKey;
+    QList<int> showWhen;
 };
 
 struct EffectDef {

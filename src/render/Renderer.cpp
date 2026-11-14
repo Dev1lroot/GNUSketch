@@ -763,12 +763,32 @@ constexpr int kNearUnit = 14; // and 15: the near shadow map (compare and raw de
 constexpr int kRtUnit = 11;   // 11..13: the ray tracing buffers (3..10 are a material's maps)
 const Vec3 kLightDir = Vec3(-0.3, -0.6, 0.75).normalized(); // the plain modelling light
 
-void setColor(QOpenGLShaderProgram* p, const char* name, const Color& c) { p->setUniformValue(name, c.r, c.g, c.b, c.a); }
+// Uniform locations by program and name (the names are string literals, so
+// their addresses are stable). Looking a location up by name asks the driver
+// each time; the faces of every instance set some thirty uniforms per frame.
+// Forgotten whenever a program is linked or freed (a new one could take the
+// old one's address).
+std::map<std::pair<const QOpenGLShaderProgram*, const char*>, int>& ulocCache() {
+    static std::map<std::pair<const QOpenGLShaderProgram*, const char*>, int> c;
+    return c;
+}
+int uloc(QOpenGLShaderProgram* p, const char* name) {
+    auto& c = ulocCache();
+    const auto key = std::make_pair((const QOpenGLShaderProgram*)p, name);
+    auto it = c.find(key);
+    if (it != c.end()) return it->second;
+    const int l = p->uniformLocation(name);
+    c.emplace(key, l);
+    return l;
+}
+void forgetUniformLocations() { ulocCache().clear(); }
+
+void setColor(QOpenGLShaderProgram* p, const char* name, const Color& c) { p->setUniformValue(uloc(p, name), c.r, c.g, c.b, c.a); }
 
 void setMat(QOpenGLShaderProgram* p, const char* name, const Mat4& m) {
     float f[16];
     m.toFloat(f);
-    p->setUniformValue(name, QMatrix4x4(f).transposed());
+    p->setUniformValue(uloc(p, name), QMatrix4x4(f).transposed());
 }
 
 constexpr int kFaceStride = 18; // floats per face vertex
@@ -797,6 +817,7 @@ bool Renderer::initialize(QString* log) {
         if (gs) ok = ok && prog->addShaderFromSourceCode(QOpenGLShader::Geometry, gs);
         ok = ok && prog->addShaderFromSourceCode(QOpenGLShader::Fragment, fs);
         ok = ok && prog->link();
+        forgetUniformLocations();
         if (!ok && log) *log += prog->log() + "\n";
         return ok;
     };
@@ -897,6 +918,7 @@ void Renderer::cleanup() {
     glDeleteTextures(1, &shadowTex_);
     shadowFbo_ = shadowTex_ = 0;
     freeAoTargets();
+    forgetUniformLocations();
     surfaceProgs_.clear();
     surfaceLogs_.clear();
     surfaceProps_.clear();
@@ -979,6 +1001,7 @@ bool Renderer::compileSurfaceShader(const std::string& source, QString* log) {
         bool ok = prog->addShaderFromSourceCode(QOpenGLShader::Vertex, kFaceVS);
         ok = ok && prog->addShaderFromSourceCode(QOpenGLShader::Fragment, fs.constData());
         ok = ok && prog->link();
+        forgetUniformLocations();
         if (!ok) {
             surfaceLogs_[source] = prog->log().trimmed();
             prog.reset();
@@ -1006,10 +1029,34 @@ Renderer::MeshGpu& Renderer::meshGpu(const Document& doc, Id def) {
     const Mesh& m = def == kNone ? doc.state.mesh : doc.state.defs[def].mesh;
     if (g.revision != m.revision || g.matRevision != doc.materialsRevision) {
         buildMesh(g, m, doc);
+        m.bounds(g.bmin, g.bmax, g.bany);
         g.revision = m.revision;
         g.matRevision = doc.materialsRevision;
     }
     return g;
+}
+
+bool Renderer::outsideView(const MeshGpu& g, const Mat4& xf, const Mat4& viewProj) const {
+    if (!g.bany) return true;
+    // Outside when all eight corners are beyond the same clip plane.
+    const Mat4 m = viewProj * xf;
+    int out[6] = {};
+    for (int i = 0; i < 8; ++i) {
+        const Vec3 c((i & 1) ? g.bmax.x : g.bmin.x, (i & 2) ? g.bmax.y : g.bmin.y, (i & 4) ? g.bmax.z : g.bmin.z);
+        double w;
+        const Vec3 p = m.transformPoint(c, &w);
+        // transformPoint divides by w: undo it for the clip-space test.
+        const double x = p.x * w, y = p.y * w, z = p.z * w;
+        out[0] += x < -w;
+        out[1] += x > w;
+        out[2] += y < -w;
+        out[3] += y > w;
+        out[4] += z < -w;
+        out[5] += z > w;
+    }
+    for (int k = 0; k < 6; ++k)
+        if (out[k] == 8) return true;
+    return false;
 }
 
 void Renderer::buildMesh(MeshGpu& g, const Mesh& m, const Document& doc) {
@@ -1225,10 +1272,10 @@ void Renderer::drawLines(const std::vector<float>& data, const Camera& cam, floa
     if (data.empty()) return;
     lineProg_->bind();
     setMat(lineProg_.get(), "uMVP", cam.viewProjection());
-    lineProg_->setUniformValue("uViewport", QVector2D((float)vpW_, (float)vpH_));
-    lineProg_->setUniformValue("uWidth", (float)(width * dpr));
-    lineProg_->setUniformValue("uDash", (int)dash);
-    lineProg_->setUniformValue("uDpr", (float)dpr);
+    lineProg_->setUniformValue(uloc(lineProg_.get(), "uViewport"), QVector2D((float)vpW_, (float)vpH_));
+    lineProg_->setUniformValue(uloc(lineProg_.get(), "uWidth"), (float)(width * dpr));
+    lineProg_->setUniformValue(uloc(lineProg_.get(), "uDash"), (int)dash);
+    lineProg_->setUniformValue(uloc(lineProg_.get(), "uDpr"), (float)dpr);
     glBindVertexArray(dynVao_);
     glBindBuffer(GL_ARRAY_BUFFER, dynVbo_);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(data.size() * sizeof(float)), data.data(), GL_STREAM_DRAW);
@@ -1241,7 +1288,7 @@ void Renderer::drawOverlayFaces(const std::vector<float>& tris, const Camera& ca
     flatProg_->bind();
     setMat(flatProg_.get(), "uMVP", cam.viewProjection());
     setColor(flatProg_.get(), "uColor", c);
-    flatProg_->setUniformValue("uStipple", stipple);
+    flatProg_->setUniformValue(uloc(flatProg_.get(), "uStipple"), stipple);
     glBindVertexArray(flatVao_);
     glBindBuffer(GL_ARRAY_BUFFER, flatVbo_);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(tris.size() * sizeof(float)), tris.data(), GL_STREAM_DRAW);
@@ -1259,12 +1306,12 @@ void Renderer::drawBackground(const Document& doc, const Camera& cam) {
     setColor(skyProg_.get(), "uHorizon", st.horizonColor);
     setColor(skyProg_.get(), "uGround", st.groundColor);
     setColor(skyProg_.get(), "uBg", st.background);
-    skyProg_->setUniformValue("uUseSky", st.sky);
-    skyProg_->setUniformValue("uUseGround", st.ground);
-    skyProg_->setUniformValue("uSunOn", sunOn_);
-    skyProg_->setUniformValue("uSunDir", QVector3D((float)lightDir_.x, (float)lightDir_.y, (float)lightDir_.z));
-    skyProg_->setUniformValue("uSunColor", QVector3D((float)sunColor_.x, (float)sunColor_.y, (float)sunColor_.z));
-    skyProg_->setUniformValue("uDaylight", (float)daylight_);
+    skyProg_->setUniformValue(uloc(skyProg_.get(), "uUseSky"), st.sky);
+    skyProg_->setUniformValue(uloc(skyProg_.get(), "uUseGround"), st.ground);
+    skyProg_->setUniformValue(uloc(skyProg_.get(), "uSunOn"), sunOn_);
+    skyProg_->setUniformValue(uloc(skyProg_.get(), "uSunDir"), QVector3D((float)lightDir_.x, (float)lightDir_.y, (float)lightDir_.z));
+    skyProg_->setUniformValue(uloc(skyProg_.get(), "uSunColor"), QVector3D((float)sunColor_.x, (float)sunColor_.y, (float)sunColor_.z));
+    skyProg_->setUniformValue(uloc(skyProg_.get(), "uDaylight"), (float)daylight_);
     setShadowUniforms(skyProg_.get());
     glBindVertexArray(skyVao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1295,21 +1342,21 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
         float n[9];
         for (int r = 0; r < 3; ++r)
             for (int c = 0; c < 3; ++c) n[r * 3 + c] = (float)inv.at(c, r); // row-major
-        faceProg_->setUniformValue("uNrm", QMatrix3x3(n));
+        faceProg_->setUniformValue(uloc(faceProg_.get(), "uNrm"), QMatrix3x3(n));
     }
-    faceProg_->setUniformValue("uFade", fade > 0 ? 0.55f : 0.0f);
-    faceProg_->setUniformValue("uMode", mode);
+    faceProg_->setUniformValue(uloc(faceProg_.get(), "uFade"), fade > 0 ? 0.55f : 0.0f);
+    faceProg_->setUniformValue(uloc(faceProg_.get(), "uMode"), mode);
     setColor(faceProg_.get(), "uBg", st.background);
     setColor(faceProg_.get(), "uMonoF", Color::rgb8(255, 255, 255));
     setColor(faceProg_.get(), "uMonoB", st.backColor);
     const Vec3& L = lightDir_;
-    faceProg_->setUniformValue("uLight", QVector3D((float)L.x, (float)L.y, (float)L.z));
-    faceProg_->setUniformValue("uSunOn", sunOn_);
-    faceProg_->setUniformValue("uSunColor", QVector3D((float)sunColor_.x, (float)sunColor_.y, (float)sunColor_.z));
-    faceProg_->setUniformValue("uSkyAmbient", QVector3D((float)skyAmbient_.x, (float)skyAmbient_.y, (float)skyAmbient_.z));
-    faceProg_->setUniformValue("uGroundAmbient", QVector3D((float)groundAmbient_.x, (float)groundAmbient_.y, (float)groundAmbient_.z));
-    faceProg_->setUniformValue("uSamF", 0);
-    faceProg_->setUniformValue("uSamB", 1);
+    faceProg_->setUniformValue(uloc(faceProg_.get(), "uLight"), QVector3D((float)L.x, (float)L.y, (float)L.z));
+    faceProg_->setUniformValue(uloc(faceProg_.get(), "uSunOn"), sunOn_);
+    faceProg_->setUniformValue(uloc(faceProg_.get(), "uSunColor"), QVector3D((float)sunColor_.x, (float)sunColor_.y, (float)sunColor_.z));
+    faceProg_->setUniformValue(uloc(faceProg_.get(), "uSkyAmbient"), QVector3D((float)skyAmbient_.x, (float)skyAmbient_.y, (float)skyAmbient_.z));
+    faceProg_->setUniformValue(uloc(faceProg_.get(), "uGroundAmbient"), QVector3D((float)groundAmbient_.x, (float)groundAmbient_.y, (float)groundAmbient_.z));
+    faceProg_->setUniformValue(uloc(faceProg_.get(), "uSamF"), 0);
+    faceProg_->setUniformValue(uloc(faceProg_.get(), "uSamB"), 1);
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(1.0f, 1.0f);
     // A mirroring transform flips the triangle winding.
@@ -1342,9 +1389,9 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
                     continue;
                 }
                 faceProg_->bind();
-                faceProg_->setUniformValue("uAlpha", alpha);
-                faceProg_->setUniformValue("uTexF", front && b.texFront);
-                faceProg_->setUniformValue("uTexB", !front && b.texBack);
+                faceProg_->setUniformValue(uloc(faceProg_.get(), "uAlpha"), alpha);
+                faceProg_->setUniformValue(uloc(faceProg_.get(), "uTexF"), front && b.texFront);
+                faceProg_->setUniformValue(uloc(faceProg_.get(), "uTexB"), !front && b.texBack);
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, b.texFront ? textureFor(b.matFront) : 0);
                 glActiveTexture(GL_TEXTURE1);
@@ -1360,9 +1407,9 @@ void Renderer::drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera
             }
             continue;
         }
-        faceProg_->setUniformValue("uAlpha", alpha);
-        faceProg_->setUniformValue("uTexF", b.texFront && mode == 1);
-        faceProg_->setUniformValue("uTexB", b.texBack && mode == 1);
+        faceProg_->setUniformValue(uloc(faceProg_.get(), "uAlpha"), alpha);
+        faceProg_->setUniformValue(uloc(faceProg_.get(), "uTexF"), b.texFront && mode == 1);
+        faceProg_->setUniformValue(uloc(faceProg_.get(), "uTexB"), b.texBack && mode == 1);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, b.texFront ? textureFor(b.matFront) : 0);
         glActiveTexture(GL_TEXTURE1);
@@ -1394,47 +1441,47 @@ void Renderer::drawSurfaceSide(const Batch& b, const Material& mat, Id matId, co
         float n[9];
         for (int r = 0; r < 3; ++r)
             for (int c = 0; c < 3; ++c) n[r * 3 + c] = (float)inv.at(c, r); // row-major
-        p->setUniformValue("uNrm", QMatrix3x3(n));
+        p->setUniformValue(uloc(p, "uNrm"), QMatrix3x3(n));
     }
     setShadowUniforms(p);
     setLightUniforms(p);
     auto vec3 = [](const Vec3& v) { return QVector3D((float)v.x, (float)v.y, (float)v.z); };
     auto rgb = [](const Color& c, float k = 1.0f) { return QVector3D(c.r * k, c.g * k, c.b * k); };
-    p->setUniformValue("uFade", fade > 0 ? 0.55f : 0.0f);
-    p->setUniformValue("uAlpha", alpha);
+    p->setUniformValue(uloc(p, "uFade"), fade > 0 ? 0.55f : 0.0f);
+    p->setUniformValue(uloc(p, "uAlpha"), alpha);
     if (const int timeLoc = p->uniformLocation("_Time"); timeLoc >= 0) { // only when the shader really reads it
         p->setUniformValue(timeLoc, (float)(clock_.elapsed() * 0.001));
         animated_ = true;
     }
-    p->setUniformValue("uEye", vec3(cam.eye));
-    p->setUniformValue("uForward", vec3(cam.forward()));
-    p->setUniformValue("uPerspective", cam.perspective);
-    p->setUniformValue("uLight", vec3(lightDir_));
-    p->setUniformValue("uSunOn", sunOn_);
-    p->setUniformValue("uSunColor", vec3(sunColor_));
-    p->setUniformValue("uSkyAmbient", vec3(skyAmbient_));
-    p->setUniformValue("uGroundAmbient", vec3(groundAmbient_));
+    p->setUniformValue(uloc(p, "uEye"), vec3(cam.eye));
+    p->setUniformValue(uloc(p, "uForward"), vec3(cam.forward()));
+    p->setUniformValue(uloc(p, "uPerspective"), cam.perspective);
+    p->setUniformValue(uloc(p, "uLight"), vec3(lightDir_));
+    p->setUniformValue(uloc(p, "uSunOn"), sunOn_);
+    p->setUniformValue(uloc(p, "uSunColor"), vec3(sunColor_));
+    p->setUniformValue(uloc(p, "uSkyAmbient"), vec3(skyAmbient_));
+    p->setUniformValue(uloc(p, "uGroundAmbient"), vec3(groundAmbient_));
     const float keep = sunOn_ ? (float)(0.14 + 0.86 * daylight_) : 1.0f;
-    p->setUniformValue("uEnvSky", rgb(st.skyColor, keep));
-    p->setUniformValue("uEnvHorizon", rgb(st.horizonColor, keep));
-    p->setUniformValue("uEnvGround", rgb(st.groundColor, keep));
-    p->setUniformValue("uHasBase", mat.hasTexture());
-    p->setUniformValue("uBaseStrength", mat.baseStrength);
-    p->setUniformValue("uFlipY", mat.flipNormalY);
-    p->setUniformValue("uEmission", rgb(mat.emission));
-    p->setUniformValue("uBlend", mat.blend);
+    p->setUniformValue(uloc(p, "uEnvSky"), rgb(st.skyColor, keep));
+    p->setUniformValue(uloc(p, "uEnvHorizon"), rgb(st.horizonColor, keep));
+    p->setUniformValue(uloc(p, "uEnvGround"), rgb(st.groundColor, keep));
+    p->setUniformValue(uloc(p, "uHasBase"), mat.hasTexture());
+    p->setUniformValue(uloc(p, "uBaseStrength"), mat.baseStrength);
+    p->setUniformValue(uloc(p, "uFlipY"), mat.flipNormalY);
+    p->setUniformValue(uloc(p, "uEmission"), rgb(mat.emission));
+    p->setUniformValue(uloc(p, "uBlend"), mat.blend);
     GLint has[MapSlotCount];
     GLfloat strength[MapSlotCount];
     for (int i = 0; i < MapSlotCount; ++i) {
         has[i] = mat.maps[i].tex.valid() ? 1 : 0;
         strength[i] = mat.maps[i].strength;
     }
-    p->setUniformValueArray("uHas", has, MapSlotCount);
-    p->setUniformValueArray("uStrength", strength, MapSlotCount, 1);
+    p->setUniformValueArray(uloc(p, "uHas"), has, MapSlotCount);
+    p->setUniformValueArray(uloc(p, "uStrength"), strength, MapSlotCount, 1);
     // Texture units: 2 is the shadow map, the maps follow it.
     static const char* const kSamplers[MapSlotCount] = {"_NormalMap", "_MetallicMap", "_RoughnessMap", "_OcclusionMap",
                                                         "_HeightMap", "_EmissionMap", "_OpacityMap"};
-    p->setUniformValue("_BaseMap", 3);
+    p->setUniformValue(uloc(p, "_BaseMap"), 3);
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D, textureFor(matId));
     for (int i = 0; i < MapSlotCount; ++i) {
@@ -1495,12 +1542,12 @@ void Renderer::updateLights(const ModelState& ms) {
 }
 
 void Renderer::setLightUniforms(QOpenGLShaderProgram* p) {
-    p->setUniformValue("uLightCount", lightCount_);
+    p->setUniformValue(uloc(p, "uLightCount"), lightCount_);
     if (lightCount_ == 0) return;
-    p->setUniformValueArray("uLightPos", lightPos_, lightCount_, 3);
-    p->setUniformValueArray("uLightDir", lightAim_, lightCount_, 3);
-    p->setUniformValueArray("uLightColor", lightColor_, lightCount_, 3);
-    p->setUniformValueArray("uLightParam", lightParam_, lightCount_, 4);
+    p->setUniformValueArray(uloc(p, "uLightPos"), lightPos_, lightCount_, 3);
+    p->setUniformValueArray(uloc(p, "uLightDir"), lightAim_, lightCount_, 3);
+    p->setUniformValueArray(uloc(p, "uLightColor"), lightColor_, lightCount_, 3);
+    p->setUniformValueArray(uloc(p, "uLightParam"), lightParam_, lightCount_, 4);
 }
 
 void Renderer::drawObjects(const Document& doc, const Camera& cam, double dpr) {
@@ -1594,34 +1641,34 @@ void Renderer::updateSun(const RenderStyle& st) {
 }
 
 void Renderer::setShadowUniforms(QOpenGLShaderProgram* p) {
-    p->setUniformValue("uShadows", shadowsOn_);
+    p->setUniformValue(uloc(p, "uShadows"), shadowsOn_);
     setMat(p, "uLightVP", lightVP_);
-    p->setUniformValue("uShadowBias", (float)shadowBias_);
-    p->setUniformValue("uShadowMap", 2);
+    p->setUniformValue(uloc(p, "uShadowBias"), (float)shadowBias_);
+    p->setUniformValue(uloc(p, "uShadowMap"), 2);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, shadowTex_);
     // Near map (Game Mode): always on units of their own so the shadow and
     // plain samplers never share a unit, even when it is off.
-    p->setUniformValue("uNearOn", nearOn_);
+    p->setUniformValue(uloc(p, "uNearOn"), nearOn_);
     setMat(p, "uNearVP", nearVP_);
-    p->setUniformValue("uNearBias", (float)nearBias_);
-    p->setUniformValue("uPenumbra", (float)penumbra_);
-    p->setUniformValue("uShadowSearch", (float)shadowSearch_);
-    p->setUniformValue("uNearMap", kNearUnit);
-    p->setUniformValue("uNearDepth", kNearUnit + 1);
+    p->setUniformValue(uloc(p, "uNearBias"), (float)nearBias_);
+    p->setUniformValue(uloc(p, "uPenumbra"), (float)penumbra_);
+    p->setUniformValue(uloc(p, "uShadowSearch"), (float)shadowSearch_);
+    p->setUniformValue(uloc(p, "uNearMap"), kNearUnit);
+    p->setUniformValue(uloc(p, "uNearDepth"), kNearUnit + 1);
     glActiveTexture(GL_TEXTURE0 + kNearUnit);
     glBindTexture(GL_TEXTURE_2D, nearTex_ ? nearTex_ : shadowTex_);
     glActiveTexture(GL_TEXTURE0 + kNearUnit + 1);
     glBindTexture(GL_TEXTURE_2D, nearTex_ ? nearTex_ : shadowTex_);
     glBindSampler(kNearUnit + 1, rawSampler_);
     // Ray traced shadows: buffers on units of their own (always bound, even off).
-    p->setUniformValue("uRtOn", rtOn_);
-    p->setUniformValue("uRtEps", (float)rtEps_);
-    p->setUniformValue("uRtSun", QVector3D((float)lightDir_.x, (float)lightDir_.y, (float)lightDir_.z));
-    p->setUniformValue("uRtSunRadius", (float)std::tan(0.6 * kPi / 180));
-    p->setUniformValue("uRtLights", rtOn_ ? std::min(lightCount_, 8) : 0);
-    p->setUniformValue("uRtLightSize", (float)std::clamp(rayScene_.radius() * 0.004, 0.02, 0.15));
-    p->setUniformValue("uRtInstBase", rtInstBase_);
+    p->setUniformValue(uloc(p, "uRtOn"), rtOn_);
+    p->setUniformValue(uloc(p, "uRtEps"), (float)rtEps_);
+    p->setUniformValue(uloc(p, "uRtSun"), QVector3D((float)lightDir_.x, (float)lightDir_.y, (float)lightDir_.z));
+    p->setUniformValue(uloc(p, "uRtSunRadius"), (float)std::tan(0.6 * kPi / 180));
+    p->setUniformValue(uloc(p, "uRtLights"), rtOn_ ? std::min(lightCount_, 8) : 0);
+    p->setUniformValue(uloc(p, "uRtLightSize"), (float)std::clamp(rayScene_.radius() * 0.004, 0.02, 0.15));
+    p->setUniformValue(uloc(p, "uRtInstBase"), rtInstBase_);
     static const char* const kRtNames[3] = {"uRtNodes", "uRtTris", "uRtScene"};
     for (int k = 0; k < 3; ++k) {
         p->setUniformValue(kRtNames[k], kRtUnit + k);
@@ -1690,14 +1737,14 @@ void Renderer::drawLightRays(const std::vector<std::pair<const MeshGpu*, Mat4>>&
     setShadowUniforms(volumeProg_.get());
     setLightUniforms(volumeProg_.get());
     setMat(volumeProg_.get(), "uInvVP", cam.viewProjection().inverted());
-    volumeProg_->setUniformValue("uEye", QVector3D((float)cam.eye.x, (float)cam.eye.y, (float)cam.eye.z));
-    volumeProg_->setUniformValue("uDensity", (float)(0.015 * st.lightRays));
-    volumeProg_->setUniformValue("uLampDensity", (float)(0.35 * st.lightRays));
-    volumeProg_->setUniformValue("uMaxDist", (float)std::clamp(rayScene_.radius() * 3.0, 20.0, 150.0));
-    volumeProg_->setUniformValue("uSunShafts", shadowsOn_ && sunOn_ && lightDir_.z > 0.02);
-    volumeProg_->setUniformValue("uSunCol", QVector3D((float)sunColor_.x, (float)sunColor_.y, (float)sunColor_.z));
-    volumeProg_->setUniformValue("uVolLights", std::min(lightCount_, 4));
-    volumeProg_->setUniformValue("uDepth", 0);
+    volumeProg_->setUniformValue(uloc(volumeProg_.get(), "uEye"), QVector3D((float)cam.eye.x, (float)cam.eye.y, (float)cam.eye.z));
+    volumeProg_->setUniformValue(uloc(volumeProg_.get(), "uDensity"), (float)(0.015 * st.lightRays));
+    volumeProg_->setUniformValue(uloc(volumeProg_.get(), "uLampDensity"), (float)(0.35 * st.lightRays));
+    volumeProg_->setUniformValue(uloc(volumeProg_.get(), "uMaxDist"), (float)std::clamp(rayScene_.radius() * 3.0, 20.0, 150.0));
+    volumeProg_->setUniformValue(uloc(volumeProg_.get(), "uSunShafts"), shadowsOn_ && sunOn_ && lightDir_.z > 0.02);
+    volumeProg_->setUniformValue(uloc(volumeProg_.get(), "uSunCol"), QVector3D((float)sunColor_.x, (float)sunColor_.y, (float)sunColor_.z));
+    volumeProg_->setUniformValue(uloc(volumeProg_.get(), "uVolLights"), std::min(lightCount_, 4));
+    volumeProg_->setUniformValue(uloc(volumeProg_.get(), "uDepth"), 0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, aoDepthTex_);
     glDisable(GL_DEPTH_TEST);
@@ -1860,9 +1907,9 @@ void Renderer::drawAmbientOcclusion(const std::vector<std::pair<const MeshGpu*, 
     aoProg_->bind();
     setMat(aoProg_.get(), "uProj", proj);
     setMat(aoProg_.get(), "uInvProj", proj.inverted());
-    aoProg_->setUniformValue("uRadius", (float)radius);
-    aoProg_->setUniformValue("uTexel", QVector2D(1.0f / vpW_, 1.0f / vpH_));
-    aoProg_->setUniformValue("uDepth", 0);
+    aoProg_->setUniformValue(uloc(aoProg_.get(), "uRadius"), (float)radius);
+    aoProg_->setUniformValue(uloc(aoProg_.get(), "uTexel"), QVector2D(1.0f / vpW_, 1.0f / vpH_));
+    aoProg_->setUniformValue(uloc(aoProg_.get(), "uDepth"), 0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, aoDepthTex_);
     glBindVertexArray(skyVao_);
@@ -1872,10 +1919,10 @@ void Renderer::drawAmbientOcclusion(const std::vector<std::pair<const MeshGpu*, 
     glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
     aoBlendProg_->bind();
     setMat(aoBlendProg_.get(), "uInvProj", proj.inverted());
-    aoBlendProg_->setUniformValue("uTexel", QVector2D(1.0f / vpW_, 1.0f / vpH_));
-    aoBlendProg_->setUniformValue("uStrength", 0.85f);
-    aoBlendProg_->setUniformValue("uDepth", 0);
-    aoBlendProg_->setUniformValue("uAo", 1);
+    aoBlendProg_->setUniformValue(uloc(aoBlendProg_.get(), "uTexel"), QVector2D(1.0f / vpW_, 1.0f / vpH_));
+    aoBlendProg_->setUniformValue(uloc(aoBlendProg_.get(), "uStrength"), 0.85f);
+    aoBlendProg_->setUniformValue(uloc(aoBlendProg_.get(), "uDepth"), 0);
+    aoBlendProg_->setUniformValue(uloc(aoBlendProg_.get(), "uAo"), 1);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, aoTex_);
     glEnable(GL_BLEND);
@@ -1915,6 +1962,9 @@ void Renderer::collectEdges(const Mesh& m, const Mat4& model, const Document& do
         return n.dot(viewDir) > 0;
     };
     const bool drawEdges = st.edges || st.faceStyle == RenderStyle::Wireframe;
+    // Nothing of this mesh would be drawn: no edges, no hidden ones, no selection.
+    const bool anySelected = active && (!doc.selection.edges.empty() || !preview.highlightEdges.empty());
+    if (!drawEdges && !st.showHidden && !anySelected) return;
     Color edgeColor = st.edgeColor;
     // Faded geometry keeps its edges, just dimmer than the open component's.
     if (faded) edgeColor = Color(edgeColor.r * 0.5f + 0.42f, edgeColor.g * 0.5f + 0.42f, edgeColor.b * 0.5f + 0.42f, 0.9f);
@@ -2009,10 +2059,16 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
         Id inst, def;
         Mat4 xf;
         bool active;
+        bool seen = true; // inside the view (else only a shadow caster)
     };
     std::vector<Placed> placed;
+    const Mat4 viewProj = cam.viewProjection();
     for (const PlacedInstance& p : placedInstances(ms))
-        if (p.inst != ms.editing) placed.push_back({p.inst, p.def, p.xf, p.active});
+        if (p.inst != ms.editing) {
+            Placed q{p.inst, p.def, p.xf, p.active};
+            q.seen = !outsideView(meshGpu(doc, p.def), p.xf, viewProj);
+            placed.push_back(q);
+        }
     const MeshGpu& activeGpu = meshGpu(doc, editDef);
     const Mesh& active = ms.activeMesh();
 
@@ -2054,11 +2110,11 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     drawBackground(doc, cam);
     drawMeshFaces(activeGpu, doc, cam, Mat4(), 0.0f);
     for (const Placed& p : placed)
-        if (p.active) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.0f);
+        if (p.active && p.seen) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.0f);
     {
         std::vector<std::pair<const MeshGpu*, Mat4>> meshes{{&activeGpu, Mat4()}};
         for (const Placed& p : placed)
-            if (p.active) meshes.push_back({&meshGpu(doc, p.def), p.xf});
+            if (p.active && p.seen) meshes.push_back({&meshGpu(doc, p.def), p.xf});
         const bool ao = st.ambientOcclusion && !st.xray && st.faceStyle != RenderStyle::Wireframe;
         if (ao) drawAmbientOcclusion(meshes, cam);
         if (cinematic && !st.xray) drawLightRays(meshes, cam, st, ao);
@@ -2087,7 +2143,8 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     EdgeLists el;
     collectEdges(active, Mat4(), doc, cam, preview, true, false, el);
     if (editing) collectEdges(ms.mesh, Mat4(), doc, cam, preview, false, true, el);
-    for (const Placed& p : placed) collectEdges(ms.defs[p.def].mesh, p.xf, doc, cam, preview, false, !p.active, el);
+    for (const Placed& p : placed)
+        if (p.seen) collectEdges(ms.defs[p.def].mesh, p.xf, doc, cam, preview, false, !p.active, el);
 
     // Component boxes: selected / hovered instances, and the open one.
     std::vector<float> boxes, openBox;
@@ -2121,7 +2178,7 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
         // Faded rest of the model, translucent over the open component.
         drawMeshFaces(meshGpu(doc, kNone), doc, cam, Mat4(), 0.35f);
         for (const Placed& p : placed)
-            if (!p.active) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.35f);
+            if (!p.active && p.seen) drawMeshFaces(meshGpu(doc, p.def), doc, cam, p.xf, 0.35f);
         glEnable(GL_BLEND);
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // the framebuffer itself stays opaque
         glDepthMask(GL_FALSE);

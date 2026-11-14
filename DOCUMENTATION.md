@@ -95,6 +95,37 @@ after it (e.g. *Hex Bolt M6 × 30*), and a click sets it down.
 * **Mechanical → Gear Rack…**: a straight rack of a number of teeth, to mesh with
   spur gears of the same module and pressure angle.
 
+See **[GEARS.md](GEARS.md)** for a guide with animated examples of every kind of
+junction (spur pairs, trains, rack and pinion, bevel gears, drivetrains).
+
+**Gears that fit each other, without the engineering.** Gears mesh when they share
+the tooth size (the module) and pressure angle; only their size may differ, and the
+number of teeth follows from the size. The gear and rack dialogs work that way by
+default (**Choose by: Size**): pick a tooth size and type roughly how wide the gear
+(or how long the rack) should be. It is rounded to whole teeth, and the dialog shows
+the tooth count and real diameters. **Module and number of teeth (engineering)**
+brings back the tooth count, pressure angle, backlash and flank pieces.
+
+Every gear placed this way remembers its parameters. **Fit to** lists the model's
+gears; choosing one takes its module and pressure angle (and thickness), so only the
+size is left to choose, and the dialog shows the centre distance and speed ratio.
+Select a gear before opening the dialog and it is fitted to that one; with **Place it
+next to the selected gear, meshing** the new gear goes right beside it, at the exact
+centre distance and turned so the teeth interlock: to its right (+X in its own
+axes) for a gear, under it for a rack; a gear fitted to a rack sits on top of it.
+Gears placed by earlier versions are recognised by their names (taken as 20°).
+
+* **Mechanical → Bevel Gear…**: a straight bevel gear for shafts at right angles. A
+  bevel gear is made for one mate: give its size (or teeth) and the other gear's;
+  equal sizes make a 1:1 **miter** pair with the teeth at 45°, others a reduction
+  (cone angle = atan(teeth / mate's teeth)). The teeth are involute on the back cone
+  (Tredgold's approximation) and narrow evenly towards the cone's tip; the module is
+  that of the large end, the tooth length (face width) at most half the cone distance
+  (Auto: a third). **Place both gears** puts the gear and its mate together, meshing,
+  as one component (Explode it to move them separately). With a bevel gear selected,
+  **Fit to** makes its mate and places it on the selected gear, the two shafts at
+  right angles and the cones' tips together.
+
 Threads are cut with the Screw Thread algorithm in the ISO 60° basic profile (depth
 5H/8 = 0.541 × pitch). A screw's crest is at the nominal diameter; a nut's hole is
 bored to the minor diameter and threaded out to the nominal one, so a screw and a
@@ -153,7 +184,12 @@ the angle and `24s` for the segments.
 ### Eraser (E), Paint Bucket (B), Tape Measure (T), Position Texture (Ctrl+U)
 
 The Eraser removes edges and the faces they bound; the edge between two faces in one
-plane joins them into one face (also with Delete). Shift hides, Ctrl softens. The
+plane joins them into one face (also with Delete). Shift hides, Ctrl softens. It is a
+round brush, drawn as a circle around the cursor: every visible edge it touches goes.
+Set its size (in screen pixels) in the Properties panel while the Eraser is equipped,
+with `[` and `]`, or by typing a size. It only erases what you can see: edges, lines and
+components behind a face stay, so cleaning up a wall never reaches what is behind it
+(turn on X-ray or back edges to erase behind faces). The
 Paint Bucket fills faces with the current material (Ctrl: connected, Shift: all
 matching, Alt: pick up). The Tape Measure measures and drops guides, and can resize
 the whole model to a typed length. Position Texture moves, scales, rotates and skews
@@ -196,7 +232,7 @@ and one undo step (Ctrl+F repeats the last one).
 | ![Remesh to hexagons](docs/media/fx_remesh.png) | **Remesh** to quads, hexagons or triangles of a set size, following the creases. **Subdivide**, **Triangulate**, **Merge Flat Faces**. |
 | ![Voxelate](docs/media/fx_voxelate.png) | **Voxelate** rebuilds the geometry from cubes on a world grid, solid or as a shell. |
 | ![De-triangulate](docs/media/fx_detriangulate.png) | **De-triangulate** joins triangles (imported STL, 3MF…) into polygons: flat parts become single faces, curved ones optionally quads. |
-| ![Gear Notches](docs/media/fx_gear.png) | **Gear Notches** (Effects → Shape) puts teeth or notches on whatever is selected: a circle or any flat shape (its outline), a curve, a rectangle's sides, a single line. Settings: tooth shape (square, trapezoid, triangle, sawtooth, rounded, gear with curved flanks), number of teeth or distance between them, depth, tooth and tip width, teeth outward or notches inward, offset along a closed curve, corner angle (each straight side between corners gets its own whole number of teeth, so corners stay clean), holes too, and which side of a free line. Push/pull the result into a gear, a notched plate or a rack. Work on the flat shape before push/pull; overlapping teeth are refused with a message. |
+| ![Gear Notches](docs/media/fx_gear.png) | **Gear Notches** (Effects → Shape) puts teeth or notches on whatever is selected: a circle or any flat shape (its outline), a curve, a rectangle's sides, a single line. Settings: tooth shape (square, trapezoid, triangle, sawtooth, rounded, gear with curved flanks), number of teeth or distance between them, depth, tooth and tip width, teeth outward or notches inward, offset along a closed curve, corner angle (each straight side between corners gets its own whole number of teeth, so corners stay clean), holes too, and which side of a free line. Push/pull the result into a gear, a notched plate or a rack. Work on the flat shape before push/pull; overlapping teeth are refused with a message. **Spacing by: Standard tooth size** makes real gear teeth of a module instead (only the module, pressure angle and *Resize circles* show): the selected line or circle is the pitch line, a circle is resized to the nearest whole number of teeth and becomes an exact involute gear (the same shape as Draw → Mechanical → Spur Gear), straight sides get rack teeth exactly π × module apart. Everything with the same tooth size meshes, whether drawn here or placed from Draw → Mechanical. |
 | ![Screw Thread](docs/media/fx_screw.png) | **Screw Thread** (Effects → Shape) winds a helical thread around a round surface: click the side of a rod for a bolt or a carved beam, or the inside of a round hole for a nut, then apply. **Carve in** cuts grooves into the material, **raise out** stands ridges out of it; both go by the side the faces face, so carving into a rod makes it thinner and carving into a hole's wall makes the hole wider. Settings: profile (V, ISO metric 60°, square, trapezoid/Acme, buttress, rounded/knuckle), pitch, depth (ISO metric: about 0.61 × pitch), number of starts, right- or left-hand, segments around. The flat faces at the ends (a rod's caps, the faces a hole goes through) are reshaped to meet the thread, so a solid stays closed; any other face joined to the surface is refused with a message. Crest and root lines are drawn, the flanks are smooth, and one click selects the whole thread. |
 | ![Slicer](docs/media/fx_slicer.png) | **Slicer** (Effects → Solid) cuts a solid, its selected faces or components, into pieces no larger than a width, length and height: a giant model into parts that fit a 3D printer's build plate. Each piece becomes a component in place (or pulled apart by a gap). Equal pieces divides every axis evenly; otherwise full-size parts and a remainder. **Connectors**: round pegs, square keys or ribs (tongue and groove) stand out of one cut face and sink into a matching socket, larger by the clearance, in the next piece, so the glued parts only fit one way and hold on more surface. They are placed only where the solid leaves the set wall around them. The model must be closed (Solidify can close it). |
 | ![Hollow](docs/media/hollow.png) | **Hollow** makes a closed solid hollow with walls of an exact thickness, for any shape. **Solidify** leaves one clean solid: overlapping parts merge, inner walls, sealed hollows and loose sheets go. |
@@ -346,7 +382,7 @@ precision and length snapping.
   merge it with loose geometry.
 * **Standard parts** (Draw → Engineering, Draw → Mechanical): ISO metric screws,
   bolts, threaded rods, hex and square nuts and washers (M1–M36) with real threads,
-  involute spur gears and racks by module; see *Standard parts* above.
+  involute spur gears, racks and bevel gears by module; see *Standard parts* above.
 * **Round Corners** (Tools menu, tool set, right-click) rounds the selected edges
   with a radius in mm and a number of segments, with a live preview. Edges between
   two faces get a rounded strip with mitred or spherical corners; corners of

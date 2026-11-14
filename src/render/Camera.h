@@ -24,7 +24,7 @@ public:
 
     Mat4 view() const;
     Mat4 projection() const;
-    Mat4 viewProjection() const { return projection() * view(); }
+    Mat4 viewProjection() const { return cachedViewProjection(); }
     void clipPlanes(double& zn, double& zf) const;
     void setSceneRadius(const Vec3& center, double radius) { sceneCenter_ = center; sceneRadius_ = radius; }
 
@@ -51,6 +51,18 @@ private:
     Vec3 sceneCenter_;
     double sceneRadius_ = 10;
     double orthoHeight() const;
+    // project() is called per vertex while snapping: the matrix is rebuilt
+    // only when something it depends on changed (the fields are public).
+    struct ProjCache {
+        bool valid = false;
+        Vec3 eye, target, up, sceneCenter;
+        double fovY = 0, sceneRadius = 0;
+        bool perspective = false;
+        int width = 0, height = 0;
+        Mat4 vp;
+    };
+    mutable ProjCache proj_;
+    const Mat4& cachedViewProjection() const;
 };
 
 } // namespace gs

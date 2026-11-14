@@ -963,8 +963,8 @@ void InstructorPanel::showTool(ToolId id) {
     case ToolId::Select: i = {"Select", "Selects entities to modify with other tools or commands.",
         "Click an entity. Drag left-to-right for a window selection (fully inside), right-to-left for a crossing selection (touching). Double-click a face to add its edges, triple-click for everything connected.",
         "Ctrl: add &nbsp; Shift: toggle &nbsp; Ctrl+Shift: subtract &nbsp; Ctrl+A: select all &nbsp; Ctrl+T: select none"}; break;
-    case ToolId::Eraser: i = {"Eraser", "Erases edges. Erasing an edge between two coplanar faces merges them.",
-        "Click edges, or press and drag over several edges and release.", "Shift: hide &nbsp; Ctrl: soften/smooth &nbsp; Ctrl+Shift: unsoften"}; break;
+    case ToolId::Eraser: i = {"Eraser", "Erases edges with a round brush (the circle around the cursor). Erasing an edge between two coplanar faces merges them. Only what you can see is erased: edges and components behind a face are safe unless X-ray is on.",
+        "Click edges, or press and drag over several edges and release. Set the brush size in the Properties panel, with [ and ], or by typing a size in pixels.", "Shift: hide &nbsp; Ctrl: soften/smooth &nbsp; Ctrl+Shift: unsoften &nbsp; [ ]: brush size"}; break;
     case ToolId::Paint: i = {"Paint Bucket", "Applies the current material to faces.",
         "Choose a material in the Materials panel, then click faces. You can also drag an image file from your file manager straight onto a face: it becomes a texture fitted to that face.",
         "Ctrl: fill connected faces &nbsp; Shift: replace material everywhere &nbsp; Alt: sample material &nbsp; Ctrl while dropping an image: tile at real-world size"}; break;

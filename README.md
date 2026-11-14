@@ -23,6 +23,7 @@ code, formats or artwork); models are stored as open, documented JSON.
 
 **[Documentation: every tool with a moving picture →](DOCUMENTATION.md)** ·
 **[Animation tutorial →](ANIMATION.md)** ·
+**[Gears: meshing gears, racks and bevel pairs →](GEARS.md)** ·
 **[Downloads (Linux AppImage, Windows) →](https://github.com/Dev1lroot/GNUSketch/releases)**
 
 ## What it does
@@ -30,7 +31,7 @@ code, formats or artwork); models are stored as open, documented JSON.
 | | |
 |---|---|
 | ![Push/Pull](docs/media/pushpull.gif) | **Direct modelling.** Lines split and close into faces; faces are true n-gons with holes. Push/Pull, Move, Rotate, Scale with grips, Offset, Follow Me, Round Corners, Bend, Solid Tools (union, subtract, intersect, trim, split). Inference snaps to endpoints, midpoints, edges, faces, axes, parallels and intersections; lengths can snap to steps, and typed values are exact. |
-| ![Bend](docs/media/bend.gif) | **Shapes beyond boxes.** Bend anything around an axis, ten parametric primitives, standard parts (ISO metric screws, nuts and washers with real threads, involute spur gears and racks), terrain sculpting with brushes, and effects: Noise, Blur, Decimate, Remesh to quads/hexagons/triangles, Voxelate, De-triangulate, Gear Notches, Screw Thread, Hollow and Solidify. |
+| ![Bend](docs/media/bend.gif) | **Shapes beyond boxes.** Bend anything around an axis, ten parametric primitives, standard parts (ISO metric screws, nuts and washers with real threads, involute spur gears, racks and bevel gears that mesh, see [GEARS.md](GEARS.md)), terrain sculpting with brushes, and effects: Noise, Blur, Decimate, Remesh to quads/hexagons/triangles, Voxelate, De-triangulate, Gear Notches, Screw Thread, Hollow and Solidify. |
 | ![Animator](docs/media/animator.gif) | **Alive models.** Components with animation states, an Animator timeline with keyframes and motion tweens, entities scripted in JavaScript (doors, buttons, actors), rigid-body physics, and Game Mode to walk around in first person. |
 | ![PBR materials](docs/media/pbr.png) | **Look and light.** PBR materials with maps and custom GLSL surface shaders, sun with shadows, point, spot and directional lights, ambient occlusion, and optional cinematic lighting: ray traced soft shadows and light rays. |
 | ![Hollow](docs/media/hollow.png) | **Made to be built.** Real units with chosen precision, 3D printing export and import (3MF, AMF, STL, PLY, OFF), Hollow with an exact wall thickness, Solidify for clean printable solids, the Slicer to cut a large model into parts that fit the build plate (with pegs, keys or ribs to glue them), OBJ (n-gons) and glTF 2.0 export. |
@@ -122,6 +123,8 @@ was read, tags, props and animations included.
 
 [DOCUMENTATION.md](DOCUMENTATION.md) describes every tool, effect and panel with
 pictures, and has the in-depth reference (geometry model, inference, file formats).
+[GEARS.md](GEARS.md) is the guide to gears: spur pairs, trains, rack and pinion,
+bevel gears at right angles, with animations.
 `TESTING.md` is the manual test checklist. The pictures are rendered by GNUSketch
 itself: `tools/readme-media.sh` (a virtual screen; needs Python with Pillow).
 

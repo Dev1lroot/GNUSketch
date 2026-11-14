@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace gs {
 
@@ -280,8 +281,12 @@ std::vector<EffectDef> buildRegistry() {
         spacing.key = "spacing";
         spacing.label = QStringLiteral("Spacing by");
         spacing.type = EffectParam::Choice;
-        spacing.choices = {QStringLiteral("Number of teeth"), QStringLiteral("Distance between teeth")};
+        spacing.choices = {QStringLiteral("Number of teeth"), QStringLiteral("Distance between teeth"),
+                           QStringLiteral("Standard tooth size (fits other gears)")};
         spacing.def = 0;
+        spacing.tip = QStringLiteral("Standard tooth size: real gear teeth of the module below. Everything made with the same "
+                                     "tooth size (here or with Draw > Mechanical) meshes; a circle is resized to a whole number "
+                                     "of teeth, so only its size decides how many it gets.");
         EffectParam direction;
         direction.key = "direction";
         direction.label = QStringLiteral("Direction");
@@ -290,6 +295,15 @@ std::vector<EffectDef> buildRegistry() {
         direction.def = 0;
         direction.tip = QStringLiteral("Outward: teeth stand out of the shape. Inward: notches are cut into it.");
         d.params = {profile, spacing,
+                    real("module", QStringLiteral("Tooth size (module)"), 0.05, 100, 1, 3, QStringLiteral(" mm"), true,
+                         QStringLiteral("Standard tooth size: a gear's pitch diameter is module × teeth, teeth are π × module "
+                                        "apart. Gears and racks of the same module (and pressure angle) mesh.")),
+                    real("angle", QStringLiteral("Pressure angle"), 10, 35, 20, 1, QStringLiteral("°"), false,
+                         QStringLiteral("Slope of the tooth flanks with a standard tooth size: 20° is the usual one.")),
+                    flag("fit", QStringLiteral("Resize circles to whole teeth"), true,
+                         QStringLiteral("With a standard tooth size: a circle is taken as the pitch circle and resized to "
+                                        "module × teeth, the nearest whole number of teeth, so it meshes exactly. Off: it keeps "
+                                        "its size and the teeth stretch to fit.")),
                     whole("count", QStringLiteral("Teeth"), 1, 1000, 24),
                     real("pitch", QStringLiteral("Distance between teeth"), 0.001, 100, 0.1, 3, QStringLiteral(" m"), true,
                          QStringLiteral("Used when spacing by distance: one tooth this far from the next (adjusted to fit evenly).")),
@@ -308,11 +322,27 @@ std::vector<EffectDef> buildRegistry() {
                     flag("holes", QStringLiteral("Holes of selected faces too"), false,
                          QStringLiteral("Teeth on the inner outlines as well (an internal gear).")),
                     flag("flip", QStringLiteral("Other side (lines without a face)"), false)};
-        d.params[10].tip = QStringLiteral("Pieces of a rounded tooth or a curved flank.");
+        for (EffectParam& e : d.params) {
+            if (e.key == QLatin1String("segments")) e.tip = QStringLiteral("Pieces of a rounded tooth or a curved flank.");
+            // A standard tooth size decides the shape, spacing and depth itself.
+            static const QMap<QString, QList<int>> when = {
+                {QStringLiteral("profile"), {0, 1}}, {QStringLiteral("count"), {0}},     {QStringLiteral("pitch"), {1}},
+                {QStringLiteral("depth"), {0, 1}},   {QStringLiteral("width"), {0, 1}},  {QStringLiteral("tip"), {0, 1}},
+                {QStringLiteral("module"), {2}},     {QStringLiteral("angle"), {2}},     {QStringLiteral("fit"), {2}}};
+            if (when.contains(e.key)) {
+                e.showKey = QStringLiteral("spacing");
+                e.showWhen = when[e.key];
+            }
+        }
         d.applyLines = [](Mesh& m, Selection& sel, const QVariantMap& v, QString& message, std::string* err) {
             GearNotchParams p;
             p.profile = (GearNotchParams::Profile)std::clamp(v["profile"].toInt(), 0, (int)GearNotchParams::Gear);
             p.byCount = v["spacing"].toInt() == 0;
+            if (v["spacing"].toInt() == 2) {
+                p.module = v["module"].toDouble() * 0.001;
+                p.pressureAngle = v["angle"].toDouble();
+                p.fitCircles = v["fit"].toBool();
+            }
             p.count = v["count"].toInt();
             p.pitch = v["pitch"].toDouble();
             p.depth = v["depth"].toDouble();
@@ -329,6 +359,12 @@ std::vector<EffectDef> buildRegistry() {
             sel.faces = r.faces;
             sel.edges = r.edges;
             message = QStringLiteral("%1 teeth on %2 %3").arg(r.teeth).arg(r.paths).arg(r.paths == 1 ? QStringLiteral("outline") : QStringLiteral("outlines"));
+            if (p.module > 0 && r.circles == 1)
+                message += QStringLiteral(": a gear of module %1, pitch Ø %2 mm, outside Ø %3 mm")
+                               .arg(p.module * 1000, 0, 'g', 4)
+                               .arg(r.pitchDiameter * 1000, 0, 'f', 2)
+                               .arg((r.pitchDiameter + 2 * p.module) * 1000, 0, 'f', 2);
+            else if (p.module > 0) message += QStringLiteral(" (module %1)").arg(p.module * 1000, 0, 'g', 4);
             return true;
         };
         r.push_back(std::move(d));
@@ -494,6 +530,13 @@ EffectDialog::EffectDialog(const EffectDef& def, const QVariantMap& values, Prev
     }
     auto* form = new QFormLayout();
     top->addLayout(form);
+    // Rows that depend on a choice come and go with it.
+    struct Conditional {
+        QWidget* row;
+        QString key;
+        QList<int> when;
+    };
+    auto conditional = std::make_shared<std::vector<Conditional>>();
     auto schedule = [this] { timer_.start(); };
 
     for (const EffectParam& p : def.params) {
@@ -583,6 +626,19 @@ EffectDialog::EffectDialog(const EffectDef& def, const QVariantMap& values, Prev
         }
         }
         if (tipWidget && !p.tip.isEmpty()) tipWidget->setToolTip(p.tip);
+        if (tipWidget && !p.showKey.isEmpty()) conditional->push_back({tipWidget, p.showKey, p.showWhen});
+    }
+    if (!conditional->empty()) {
+        // The choices start from their defaults when nothing was kept.
+        for (const EffectParam& p : def.params)
+            if (p.type == EffectParam::Choice && !values_.contains(p.key)) values_[p.key] = (int)p.def;
+        auto update = [this, form, conditional] {
+            for (const Conditional& c : *conditional) form->setRowVisible(c.row, c.when.contains(values_.value(c.key).toInt()));
+            adjustSize();
+        };
+        update();
+        // After the combo's own slot has stored its value.
+        for (QComboBox* combo : findChildren<QComboBox*>()) connect(combo, &QComboBox::currentIndexChanged, this, update);
     }
 
     message_ = new QLabel(this);

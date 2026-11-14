@@ -3,6 +3,7 @@
 # Renders the README pictures on a private virtual X server (nothing shows on
 # the desktop) and assembles the animated GIFs into docs/.
 # Usage: tools/readme-media.sh [build-dir]   (needs python3 with Pillow)
+# GS_SHOTS=gears tools/readme-media.sh renders only the pictures of GEARS.md.
 set -e
 BUILD_DIR="${1:-build}"
 FRAMES="$(mktemp -d)"
@@ -24,8 +25,11 @@ for f in sorted(glob.glob(os.path.join(src, "*.png"))):
 def small(im, width):
     return im if im.width <= width else im.resize((width, int(im.height * width / im.width)), Image.LANCZOS)
 for name, files in seqs.items():
-    frames = [small(Image.open(f).convert("RGB"), 560).convert("P", palette=Image.ADAPTIVE, colors=128) for f in files]
-    frames += [frames[-1]] * 12  # hold the result
+    width, colors = (440, 96) if name.startswith("gears_") else (560, 128)
+    frames = [small(Image.open(f).convert("RGB"), width).convert("P", palette=Image.ADAPTIVE, colors=colors) for f in files]
+    # Hold the result, except turning gears: those loop round seamlessly.
+    if not (name.startswith("gears_") and name != "gears_fit"):
+        frames += [frames[-1]] * 12
     frames[0].save(os.path.join(out, name + ".gif"), save_all=True, append_images=frames[1:], duration=70, loop=0, optimize=True)
     print("docs/media/%s.gif" % name, len(files), "frames")
 for f in stills:

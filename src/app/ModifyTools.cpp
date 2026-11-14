@@ -10,6 +10,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QSettings>
 
 #include <cmath>
 #include <functional>
@@ -321,32 +322,59 @@ void SelectTool::paintOverlay(QPainter& p) {
 // Eraser
 // ===========================================================================
 
+EraserSettings& EraserSettings::instance() {
+    static EraserSettings s;
+    return s;
+}
+
+EraserSettings::EraserSettings() {
+    radius_ = std::clamp(QSettings().value("eraser/radius", kDefault).toDouble(), kMin, kMax);
+}
+
+void EraserSettings::setRadius(double px) {
+    px = std::clamp(px, kMin, kMax);
+    if (px == radius_) return;
+    radius_ = px;
+    QSettings().setValue("eraser/radius", radius_);
+    emit changed();
+}
+
 QString EraserTool::status() const {
-    return QStringLiteral("Select objects to delete, or drag over them. Shift = hide, Ctrl = soften/smooth, Ctrl+Shift = unsoften.");
+    return QStringLiteral("Click or drag over edges to delete them (brush %1 px: [ and ] or type a size). "
+                          "Shift = hide, Ctrl = soften/smooth, Ctrl+Shift = unsoften.")
+        .arg(EraserSettings::instance().radius(), 0, 'g', 4);
+}
+
+void EraserTool::markSpot(double x, double y, bool ctrl, bool unsoften) {
+    const double r = EraserSettings::instance().radius();
+    bool any = false;
+    for (Id ed : engine().edgesInBrush(x, y, r, unsoften)) {
+        marked_.insert(ed);
+        any = true;
+    }
+    if (any) return;
+    // A component only when it is what shows under the brush's centre: not
+    // through a face in front of it.
+    if (!ctrl)
+        if (Id inst = engine().pickInstanceInFront(x, y); inst != kNone) {
+            markedInstances_.insert(inst);
+            return;
+        }
+    int g = engine().pickGuide(x, y, std::max(6.0, r));
+    if (g >= 0) markedGuides_.insert(g);
 }
 
 void EraserTool::markAt(const MouseEvent& e) {
-    Id ed = engine().pickEdge(e.x, e.y, 7.0);
-    if (ed == kNone && (e.ctrl() && e.shift())) {
-        // Allow picking soft edges when unsoftening.
-        double best = 7.0;
-        const Mesh& m = mesh();
-        for (Id i = 0; i < (Id)m.edges.size(); ++i) {
-            if (!m.edges[i].alive || !m.edges[i].soft) continue;
-            Vec3 a = m.pos(m.edges[i].v[0]), b = m.pos(m.edges[i].v[1]);
-            Ray r = cam().ray(e.x, e.y);
-            double s, t;
-            Vec3 q = closestLineLine(a, b - a, r.origin, r.dir, s, t) ? lerp(a, b, std::clamp(s, 0.0, 1.0)) : a;
-            double d = engine().pixelDistance(q, e.x, e.y);
-            if (d < best) { best = d; ed = i; }
-        }
+    // Along the stroke, so a quick drag leaves no gaps.
+    const QPointF to(e.x, e.y);
+    const double step = std::max(1.0, EraserSettings::instance().radius() * 0.75);
+    const double len = std::hypot(to.x() - last_.x(), to.y() - last_.y());
+    const int n = std::min(200, std::max(1, (int)std::ceil(len / step)));
+    for (int i = 1; i <= n; ++i) {
+        const QPointF q = last_ + (to - last_) * (double(i) / n);
+        markSpot(q.x(), q.y(), e.ctrl(), e.ctrl() && e.shift());
     }
-    if (ed != kNone) marked_.insert(ed);
-    else if (Id inst = engine().pickInstance(e.x, e.y); inst != kNone && !(e.ctrl())) markedInstances_.insert(inst);
-    else {
-        int g = engine().pickGuide(e.x, e.y, 6.0);
-        if (g >= 0) markedGuides_.insert(g);
-    }
+    last_ = to;
 }
 
 void EraserTool::mousePress(const MouseEvent& e) {
@@ -363,15 +391,58 @@ void EraserTool::mousePress(const MouseEvent& e) {
     marked_.clear();
     markedInstances_.clear();
     markedGuides_.clear();
-    markAt(e);
+    hover_.clear();
+    last_ = QPointF(e.x, e.y);
+    markSpot(e.x, e.y, e.ctrl(), e.ctrl() && e.shift());
     update();
 }
 
 void EraserTool::mouseMove(const MouseEvent& e) {
     lastMouse_ = e;
+    inside_ = true;
     if (erasing_) markAt(e);
-    else hover_ = engine().pickEdge(e.x, e.y, 7.0);
+    else {
+        const auto under = engine().edgesInBrush(e.x, e.y, EraserSettings::instance().radius(), e.ctrl() && e.shift());
+        hover_ = std::set<Id>(under.begin(), under.end());
+    }
     update();
+}
+
+bool EraserTool::keyPress(QKeyEvent* e) {
+    // [ and ] make the brush smaller and larger.
+    if (e->key() == Qt::Key_BracketLeft || e->key() == Qt::Key_BracketRight) {
+        EraserSettings& s = EraserSettings::instance();
+        const double r = s.radius();
+        s.setRadius(e->key() == Qt::Key_BracketRight ? std::max(r + 1, std::round(r * 1.25)) : std::min(r - 1, std::round(r / 1.25)));
+        update();
+        return true;
+    }
+    return Tool::keyPress(e);
+}
+
+bool EraserTool::vcbEnter(const QString& text) {
+    QString t = text.trimmed();
+    t.remove(QStringLiteral("px"), Qt::CaseInsensitive);
+    bool ok = false;
+    const double v = t.trimmed().replace(QLatin1Char(','), QLatin1Char('.')).toDouble(&ok);
+    if (!ok || v <= 0) return false;
+    EraserSettings::instance().setRadius(v);
+    update();
+    return true;
+}
+
+void EraserTool::paintOverlay(QPainter& p) {
+    if (!inside_) return;
+    const double r = EraserSettings::instance().radius();
+    const QPointF c(lastMouse_.x, lastMouse_.y);
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setBrush(erasing_ ? QColor(255, 80, 60, 40) : Qt::NoBrush);
+    p.setPen(QPen(QColor(255, 255, 255, 200), 3));
+    p.drawEllipse(c, r, r);
+    p.setPen(QPen(erasing_ ? QColor(220, 40, 30) : QColor(30, 30, 30), 1.2));
+    p.drawEllipse(c, r, r);
+    p.restore();
 }
 
 void EraserTool::mouseRelease(const MouseEvent& e) {
@@ -412,8 +483,8 @@ void EraserTool::buildPreview(Preview& pv) {
     if (erasing_) {
         pv.highlightEdges = marked_;
         pv.highlightInstances = markedInstances_;
-    } else if (hover_ != kNone) {
-        pv.highlightEdges.insert(hover_);
+    } else {
+        pv.highlightEdges.insert(hover_.begin(), hover_.end());
     }
     for (int g : markedGuides_) {
         if (g >= (int)doc().state.guides.size()) continue;

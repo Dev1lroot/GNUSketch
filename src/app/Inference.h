@@ -10,6 +10,7 @@
 #include "render/Renderer.h"
 
 #include <map>
+#include <unordered_map>
 #include <optional>
 #include <set>
 #include <string>
@@ -74,6 +75,13 @@ public:
     bool faceUnder(double px, double py, const std::set<Id>* excludeVerts, Vec3& point, Vec3& normal) const;
     Id pickEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts = nullptr) const;
     int pickGuide(double px, double py, double tolPx) const;
+    // Loose edges (of the mesh being edited) with a visible part within
+    // radiusPx of the cursor: an eraser brush. What is behind a face (loose or
+    // of a component) is left out unless X-ray or back edges show it. Soft
+    // edges count with includeSoft (or when hidden geometry is shown).
+    std::vector<Id> edgesInBrush(double px, double py, double radiusPx, bool includeSoft = false) const;
+    // The component under the cursor if nothing loose is in front of it.
+    Id pickInstanceInFront(double px, double py) const;
     // Closest component instance at the level being edited under the cursor;
     // normalOut receives the world normal of the face hit (zero for an edge).
     Id pickInstance(double px, double py, double* tOut = nullptr, Vec3* normalOut = nullptr) const;
@@ -108,7 +116,34 @@ private:
         Plane plane; // world
         bool active = false; // a face of the mesh being edited (face is its id there)
     };
-    std::vector<FaceRef> worldFaces(const std::set<Id>* excludeVerts) const;
+    // Faces of the mesh being edited and of every placement whose box could
+    // come within tolPx of the cursor (the others cannot be hit or snapped to).
+    std::vector<FaceRef> worldFaces(const std::set<Id>* excludeVerts, double px, double py, double tolPx) const;
+    // Bounding boxes of a mesh and of each of its faces (in its own
+    // coordinates), cached until the mesh changes: what is nowhere near the
+    // cursor is skipped without testing its faces, edges and vertices.
+    struct Box {
+        Vec3 mn, mx;
+    };
+    struct MeshBoxes {
+        uint64_t revision = 0;
+        bool any = false;
+        Box all;
+        std::vector<Box> faces;
+    };
+    const MeshBoxes& boxesOf(const Mesh& m) const;
+    // The box, placed by xf, projects within tolPx of the cursor (true when
+    // it reaches behind the camera: not worth working out).
+    bool boxNearCursor(const Box& b, const Mat4& xf, double px, double py, double tolPx) const;
+    static bool rayHitsBox(const Box& b, const Ray& r);
+    // A placement could have a point at p (world), within tol.
+    bool boxContains(const Box& b, const Mat4& xf, const Vec3& p, double tol) const;
+    // Any of a placement (its mesh's box, placed) projects within tolPx of the cursor.
+    bool nearCursor(const PlacedInstance& p, double px, double py, double tolPx) const {
+        const MeshBoxes& b = boxesOf(sourceMesh(p));
+        return b.any && boxNearCursor(b.all, p.xf, px, py, tolPx);
+    }
+    mutable std::unordered_map<const Mesh*, MeshBoxes> boxes_;
     bool rayHitsFace(const FaceRef& f, const Ray& r, double& t) const;
     bool faceContains(const FaceRef& f, const Vec3& worldP) const;
     // Where the face-face intersection line under the cursor runs inside both

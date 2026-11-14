@@ -78,7 +78,7 @@ bool buildFastener(const FastenerParams& p, Mesh& out, std::string* name = nullp
 // ISO 54 module series (millimetres), first choice and second choice mixed.
 const std::vector<double>& standardModules();
 
-enum class GearKind { Spur, Rack };
+enum class GearKind { Spur, Rack, Bevel };
 
 struct GearParams {
     GearKind kind = GearKind::Spur;
@@ -91,6 +91,10 @@ struct GearParams {
     double backlash = 0;        // meters, taken off each tooth's thickness at the pitch line
     int flankSteps = 6;         // pieces of each involute flank
     int boreSegments = 32;
+    // Bevel: the teeth of the gear it meshes with (shafts at 90°; the same
+    // count makes a 45° miter pair). faceWidth is then measured along the
+    // cone, 0 = a third of the cone distance.
+    int mateTeeth = 0;
 };
 
 struct GearInfo {
@@ -98,7 +102,17 @@ struct GearInfo {
     double pitch = 0;           // circular pitch π·m, meters
     double length = 0;          // rack: length, meters
     bool undercut = false;      // spur: too few teeth for the pressure angle (real hobbed gears get undercut)
+    double coneAngle = 0;       // bevel: pitch cone half-angle, degrees
+    double coneDistance = 0;    // bevel: apex to the large end along the pitch cone, meters
+    double faceWidth = 0;       // bevel: tooth length along the cone, meters
 };
+
+// A bevel gear's cones (meters, radians), in its own coordinates: axis Z, the
+// large end on the ground, the apex up at apexHeight.
+struct BevelGeometry {
+    double coneAngle = 0, pitchRadius = 0, coneDistance = 0, faceWidth = 0, apexHeight = 0;
+};
+BevelGeometry bevelGeometry(const GearParams& p);
 
 // The outline of a spur gear (CCW, centred on the origin, in meters) with a
 // flag per point for whether the outline turns smoothly there.
@@ -107,5 +121,23 @@ std::vector<Vec2> spurGearOutline(const GearParams& p, std::vector<char>* smooth
 
 bool buildGear(const GearParams& p, Mesh& out, std::string* name = nullptr, GearInfo* info = nullptr,
                std::string* err = nullptr);
+
+// Sizing by eye: gears of one module and pressure angle all mesh, so a gear
+// set keeps those and only the size changes, the tooth count following it.
+// Teeth of a spur gear whose pitch diameter comes closest to `diameter`
+// (at least 6), and of a rack closest to `length` long (at least 1).
+int gearTeethForDiameter(double module, double diameter);
+int rackTeethForLength(double module, double length);
+// Distance between the centres of two meshing spur gears (meters).
+double gearCentreDistance(double module, int teethA, int teethB);
+
+// Where `b` goes to mesh with `a`, in a's own coordinates (as buildGear
+// makes them): a second spur gear to the right (+X) of a spur gear, turned so
+// a tooth of one sits in a gap of the other; a rack under a spur gear; a spur
+// gear on top of a rack, over the tooth nearest its middle; a bevel gear's mate
+// on a shaft at right angles (along +X), the cones' apexes together. False
+// when the two cannot mesh (different module or pressure angle, two racks, a
+// bevel gear with anything but the mate it was made for).
+bool gearMeshPlacement(const GearParams& a, const GearParams& b, Mat4& out, std::string* err = nullptr);
 
 } // namespace gs

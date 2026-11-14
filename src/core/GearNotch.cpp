@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "GearNotch.h"
+#include "MechParts.h"
 
 #include <algorithm>
 #include <cmath>
@@ -118,10 +119,31 @@ bool simplePath(const std::vector<Vec3>& pts, bool closed, const Vec3& normal) {
     return true;
 }
 
+// With a module: ISO 53 basic rack teeth (π·m apart, m above the pitch
+// line, 1.25·m below it, flanks at the pressure angle) instead of the free
+// spacing and shape.
+GearNotchParams standardTeeth(const GearNotchParams& in) {
+    GearNotchParams p = in;
+    if (!(p.module > 0)) return p;
+    const double m = p.module, ta = std::tan(std::clamp(p.pressureAngle, 10.0, 35.0) * kPi / 180);
+    p.profile = GearNotchParams::Trapezoid;
+    p.byCount = false;
+    p.pitch = kPi * m;
+    p.depth = 2.25 * m;
+    p.baseline = 1.25 / 2.25;
+    // Half-widths across a tooth's space (1 = one pitch): a quarter at the
+    // pitch line, wider by tan α per unit height below it.
+    const double bw = 0.25 + 1.25 * ta / kPi, tw = std::max(0.01, 0.25 - ta / kPi);
+    p.toothWidth = std::min(1.0, 2 * bw);
+    p.tipWidth = tw / (p.toothWidth / 2);
+    return p;
+}
+
 } // namespace
 
 std::vector<NotchPoint> notchPath(const std::vector<Vec3>& pts, bool closed, const std::vector<Vec3>& side,
-                                  const GearNotchParams& p, int* teeth) {
+                                  const GearNotchParams& pIn, int* teeth) {
+    const GearNotchParams p = standardTeeth(pIn);
     std::vector<NotchPoint> out;
     if (teeth) *teeth = 0;
     const int n = (int)pts.size();
@@ -166,6 +188,7 @@ std::vector<NotchPoint> notchPath(const std::vector<Vec3>& pts, bool closed, con
         const double len = s[i + 1] - s[i];
         const double f = len > 0 ? (sv - s[i]) / len : 0;
         const Vec3 base = pts[i] + (pts[(i + 1) % n] - pts[i]) * f;
+        h -= p.baseline;
         if (h == 0) return base;
         const Vec3 nrm = (endSide(i, false) * (1 - f) + endSide(i, true) * f).normalized();
         return base + nrm * (h * p.depth * dir);
@@ -189,10 +212,17 @@ std::vector<NotchPoint> notchPath(const std::vector<Vec3>& pts, bool closed, con
         for (size_t i = 0; i < cuts.size(); ++i) runs.push_back({cuts[i], i + 1 < cuts.size() ? cuts[i + 1] : cuts[0] + L});
     }
     const double pitch = p.byCount ? L / std::max(1, p.count) : std::max(1e-6, p.pitch);
+    // Standard teeth on open stretches (rack-like): never stretched, so they
+    // keep meshing; as many as fit.
+    const bool exactPitch = p.module > 0 && !(closed && cuts.empty());
     std::vector<int> per;
     long long total = 0;
     for (const auto& [a, b] : runs) {
-        const int k = std::max(1, (int)std::lround((b - a) / pitch));
+        const int k = exactPitch ? (int)std::floor((b - a) / pitch + 1e-9) : std::max(1, (int)std::lround((b - a) / pitch));
+        if (exactPitch && k < 1) {
+            per.push_back(0);
+            continue;
+        }
         per.push_back(k);
         total += k;
     }
@@ -204,10 +234,19 @@ std::vector<NotchPoint> notchPath(const std::vector<Vec3>& pts, bool closed, con
     const bool shift = closed && cuts.empty();
     std::vector<std::pair<double, double>> keys;
     for (size_t r = 0; r < runs.size(); ++r) {
-        const double a = runs[r].first, c = (runs[r].second - a) / per[r];
+        double a = runs[r].first, c = (runs[r].second - a) / per[r];
+        if (exactPitch) {
+            // Whole teeth at the exact spacing, centred; what is left over at
+            // the ends stays on the path, so corners and line ends stay put.
+            c = pitch;
+            const double len = runs[r].second - runs[r].first;
+            a += (len - per[r] * c) / 2;
+            keys.push_back({runs[r].first, p.baseline});
+        }
         const double off = shift ? std::fmod(std::fmod(p.phase, 1.0) + 1.0, 1.0) * c : 0;
         for (int k = 0; k < per[r]; ++k)
             for (const auto& [u, h] : prof) keys.push_back({a + off + (k + u) * c, h});
+        if (exactPitch) keys.push_back({runs[r].second, p.baseline});
     }
 
     // Path vertices along the stretches at one height (the root between teeth,
@@ -246,8 +285,11 @@ std::vector<NotchPoint> notchPath(const std::vector<Vec3>& pts, bool closed, con
     return out;
 }
 
-bool gearNotch(Mesh& m, const std::set<Id>& faces, const std::set<Id>& edgesIn, const GearNotchParams& p,
+bool gearNotch(Mesh& m, const std::set<Id>& faces, const std::set<Id>& edgesIn, const GearNotchParams& pIn,
                GearNotchResult* out, std::string* error) {
+    const GearNotchParams p = standardTeeth(pIn);
+    int circles = 0;
+    double lastPitchDiameter = 0;
     auto fail = [&](const char* msg) {
         if (error) *error = msg;
         return false;
@@ -378,7 +420,75 @@ bool gearNotch(Mesh& m, const std::set<Id>& faces, const std::set<Id>& edgesIn, 
         for (int i = 0; i < M; ++i) side[i] = (pts[(i + 1) % n] - pts[i]).cross(N).normalized() * sign;
         int teeth = 0;
         Plan plan;
-        plan.pts = notchPath(pts, P.closed, side, p, &teeth);
+        // Standard teeth on a circle: resized to a whole number of teeth (the
+        // circle is the pitch circle); teeth outward make an involute gear.
+        bool involute = false;
+        if (p.module > 0 && p.fitCircles && P.closed && n >= 8) {
+            Vec3 c;
+            for (const Vec3& q : pts) c = c + q;
+            c = c * (1.0 / n);
+            double R = 0;
+            for (const Vec3& q : pts) R += (q - c).length();
+            R /= n;
+            bool round = R > kTol * 10;
+            for (const Vec3& q : pts)
+                if (std::fabs((q - c).length() - R) > 0.01 * R) round = false;
+            if (round) {
+                const int z = gearTeethForDiameter(p.module, 2 * R);
+                const double R2 = p.module * z / 2;
+                for (Vec3& q : pts) q = c + (q - c) * (R2 / R);
+                const bool outward = side[0].dot(pts[0] - c) * (p.inward ? -1 : 1) > 0;
+                if (outward) {
+                    GearParams gp;
+                    gp.module = p.module;
+                    gp.teeth = z;
+                    gp.pressureAngle = std::clamp(p.pressureAngle, 10.0, 35.0);
+                    gp.backlash = 0;
+                    gp.flankSteps = std::clamp(p.curveSegments, 1, 64);
+                    std::string e;
+                    const std::vector<Vec2> ring = spurGearOutline(gp, nullptr, nullptr, &e);
+                    if (ring.empty()) {
+                        if (error) *error = "A circle can't take these teeth: " + e;
+                        return false;
+                    }
+                    // The circle's own frame: u to its first point, angles
+                    // counted the way the path runs.
+                    const Vec3 u = (pts[0] - c).normalized(), v = N.cross(u).normalized();
+                    const double sigma = (pts[1] - pts[0]).dot(v) >= 0 ? 1 : -1;
+                    auto angleOf = [&](const Vec3& q) {
+                        double a = sigma * std::atan2((q - c).dot(v), (q - c).dot(u));
+                        if (a < 0) a += 2 * kPi;
+                        return a;
+                    };
+                    std::vector<double> phi(n + 1), sp(n + 1, 0.0);
+                    for (int i = 0; i < n; ++i) {
+                        phi[i] = i == 0 ? 0 : angleOf(pts[i]);
+                        sp[i + 1] = sp[i] + (pts[(i + 1) % n] - pts[i]).length();
+                    }
+                    phi[n] = 2 * kPi;
+                    const double turn = std::fmod(std::fmod(p.phase, 1.0) + 1.0, 1.0) * 2 * kPi / z;
+                    for (const Vec2& q : ring) {
+                        const double a0 = std::atan2(q.y, q.x) + turn, rho = std::hypot(q.x, q.y);
+                        const Vec3 w = c + u * (rho * std::cos(a0)) + v * (rho * std::sin(a0));
+                        const double a = angleOf(w);
+                        int i = int(std::upper_bound(phi.begin(), phi.end(), a) - phi.begin()) - 1;
+                        i = std::clamp(i, 0, n - 1);
+                        const double span = phi[i + 1] - phi[i];
+                        const double f = span > 0 ? std::clamp((a - phi[i]) / span, 0.0, 1.0) : 0;
+                        double sv = sp[i] + f * (sp[i + 1] - sp[i]);
+                        if (sv >= sp[n] - 1e-12) sv = 0;
+                        plan.pts.push_back({w, sv});
+                    }
+                    std::stable_sort(plan.pts.begin(), plan.pts.end(),
+                                     [](const NotchPoint& a, const NotchPoint& b) { return a.s < b.s; });
+                    teeth = z;
+                    involute = true;
+                }
+                ++circles;
+                lastPitchDiameter = 2 * R2;
+            }
+        }
+        if (!involute) plan.pts = notchPath(pts, P.closed, side, p, &teeth);
         teethTotal += teeth;
         if (teethTotal > kMaxTeeth) return fail("Too many teeth (more than 5000): fewer teeth or a larger spacing.");
         if (plan.pts.size() < 2) continue;
@@ -531,6 +641,8 @@ bool gearNotch(Mesh& m, const std::set<Id>& faces, const std::set<Id>& edgesIn, 
     m.markGeometryMoved();
     res.paths = (int)plans.size();
     res.teeth = teethTotal;
+    res.circles = circles;
+    res.pitchDiameter = lastPitchDiameter;
     if (out) *out = std::move(res);
     return true;
 }

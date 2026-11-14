@@ -53,9 +53,29 @@ Ray Camera::ray(double px, double py) const {
     return {o - f * 1e4, f};
 }
 
+const Mat4& Camera::cachedViewProjection() const {
+    ProjCache& c = proj_;
+    auto ne = [](const Vec3& a, const Vec3& b) { return a.x != b.x || a.y != b.y || a.z != b.z; };
+    if (!c.valid || ne(c.eye, eye) || ne(c.target, target) || ne(c.up, up) || c.fovY != fovY || c.perspective != perspective ||
+        c.width != width || c.height != height || c.sceneRadius != sceneRadius_ || ne(c.sceneCenter, sceneCenter_)) {
+        c.eye = eye;
+        c.target = target;
+        c.up = up;
+        c.fovY = fovY;
+        c.perspective = perspective;
+        c.width = width;
+        c.height = height;
+        c.sceneRadius = sceneRadius_;
+        c.sceneCenter = sceneCenter_;
+        c.vp = projection() * view();
+        c.valid = true;
+    }
+    return c.vp;
+}
+
 bool Camera::project(const Vec3& p, double& sx, double& sy) const {
     double w;
-    Vec3 c = viewProjection().transformPoint(p, &w);
+    Vec3 c = cachedViewProjection().transformPoint(p, &w);
     if (perspective && w <= 1e-9) return false;
     sx = (c.x + 1.0) * 0.5 * width;
     sy = (1.0 - c.y) * 0.5 * height;

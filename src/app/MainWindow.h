@@ -29,6 +29,7 @@ namespace gs {
 class FormatPlugin;
 struct PrimitiveParams;
 struct PartChoice;
+struct GearRef;
 enum class PartFamily;
 
 class Viewport;
@@ -145,8 +146,12 @@ private:
     void roundCorners();
     void insertPrimitive();
     void insertPart(PartFamily family);
+    // The model's gears (selected placements first) that a new gear can fit.
+    std::vector<GearRef> gearsInModel() const;
     // A new component of the mesh, following the cursor; one undo step.
-    bool startMeshPlacement(Mesh mesh, const std::string& name);
+    // A new component of the mesh on the cursor (or, with `at`, put right
+    // there and selected); `extra` is kept with its definition.
+    bool startMeshPlacement(Mesh mesh, const std::string& name, const std::string& extra = {}, const Mat4* at = nullptr);
     // The new instance (inside an open operation) follows the cursor until a
     // click places it; commits or cancels the operation.
     bool attachToCursor(Id inst);

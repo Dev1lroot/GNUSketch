@@ -8,6 +8,9 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QHBoxLayout>
+#include <QSlider>
 #include <QFormLayout>
 #include <QLineEdit>
 #include <QSettings>
@@ -188,6 +191,54 @@ bool ScaleSettings::enter(int axis, const QString& text) {
     return ok;
 }
 
+EraserBrushSettings::EraserBrushSettings(Viewport* vp, QWidget* parent) : QWidget(parent), vp_(vp) {
+    setObjectName(QStringLiteral("EraserBrushSettings"));
+    auto* form = new QFormLayout(this);
+    form->setContentsMargins(0, 0, 0, 0);
+    auto* row = new QWidget(this);
+    auto* h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    slider_ = new QSlider(Qt::Horizontal, row);
+    slider_->setObjectName(QStringLiteral("eraserSizeSlider"));
+    slider_->setRange((int)EraserSettings::kMin, 100);
+    size_ = new QDoubleSpinBox(row);
+    size_->setObjectName(QStringLiteral("eraserSize"));
+    size_->setRange(EraserSettings::kMin, EraserSettings::kMax);
+    size_->setDecimals(0);
+    size_->setSuffix(QStringLiteral(" px"));
+    h->addWidget(slider_, 1);
+    h->addWidget(size_);
+    row->setToolTip(QStringLiteral("Radius of the brush circle around the cursor, in screen pixels. "
+                                   "Every visible edge it touches is erased. [ and ] change it too."));
+    form->addRow(QStringLiteral("Brush size:"), row);
+    auto* note = new QLabel(QStringLiteral("Only what you can see is erased: edges and components behind a face are "
+                                           "left alone (turn on X-ray to reach them)."),
+                            this);
+    note->setWordWrap(true);
+    note->setProperty("hint", true);
+    form->addRow(note);
+    auto set = [this](double v) {
+        if (updating_) return;
+        EraserSettings::instance().setRadius(v);
+    };
+    connect(slider_, &QSlider::valueChanged, this, [set](int v) { set(v); });
+    connect(size_, &QDoubleSpinBox::valueChanged, this, set);
+    connect(&EraserSettings::instance(), &EraserSettings::changed, this, [this] {
+        refresh();
+        vp_->refreshToolStatus();
+        vp_->update();
+    });
+    refresh();
+}
+
+void EraserBrushSettings::refresh() {
+    updating_ = true;
+    const double r = EraserSettings::instance().radius();
+    slider_->setValue((int)std::lround(std::min(r, 100.0)));
+    size_->setValue(r);
+    updating_ = false;
+}
+
 PropertiesPanel::PropertiesPanel(Document* doc, Viewport* vp, EntityInfoPanel* info, ScenePanel* scene, TerrainPanel* terrain,
                                  PlacementSettings* placement, QWidget* parent)
     : QWidget(parent), doc_(doc), vp_(vp), info_(info), scene_(scene), terrain_(terrain), placement_(placement) {
@@ -201,13 +252,14 @@ PropertiesPanel::PropertiesPanel(Document* doc, Viewport* vp, EntityInfoPanel* i
     hint_->setProperty("hint", true);
     scale_ = new ScaleSettings(doc, vp, this);
     units_ = new UnitsSettings(doc, false, this);
+    eraser_ = new EraserBrushSettings(vp, this);
     connect(units_, &UnitsSettings::changed, this, [this] { scale_->refresh(); info_->refresh(); });
     entityBtn_ = new QPushButton(QStringLiteral("Game Properties…"), this);
     entityBtn_->setToolTip(QStringLiteral("How the component behaves in Game Mode: door, button, script, physics"));
     connect(entityBtn_, &QPushButton::clicked, this, &PropertiesPanel::entityPropertiesRequested);
     scene_->setListVisible(false);
     for (QWidget* w : {static_cast<QWidget*>(title_), static_cast<QWidget*>(hint_), static_cast<QWidget*>(terrain_),
-                       static_cast<QWidget*>(placement_), static_cast<QWidget*>(scale_), static_cast<QWidget*>(units_), static_cast<QWidget*>(scene_), static_cast<QWidget*>(info_),
+                       static_cast<QWidget*>(placement_), static_cast<QWidget*>(eraser_), static_cast<QWidget*>(scale_), static_cast<QWidget*>(units_), static_cast<QWidget*>(scene_), static_cast<QWidget*>(info_),
                        static_cast<QWidget*>(entityBtn_)}) {
         w->setParent(this);
         lay->addWidget(w);
@@ -224,7 +276,8 @@ void PropertiesPanel::setTool(ToolId id, const QString& name) {
 
 void PropertiesPanel::refresh() {
     const Selection& s = doc_->selection;
-    const bool terraform = isTerraform(tool_), light = isLightTool(tool_), scale = tool_ == ToolId::Scale;
+    const bool terraform = isTerraform(tool_), light = isLightTool(tool_), scale = tool_ == ToolId::Scale,
+               eraser = tool_ == ToolId::Eraser;
     // The tools that draw lengths show the snapping and precision settings
     // (above what is selected).
     const bool lengths = tool_ == ToolId::Line || tool_ == ToolId::Rectangle || tool_ == ToolId::Circle || tool_ == ToolId::Polygon ||
@@ -234,9 +287,11 @@ void PropertiesPanel::refresh() {
     if (lengths || scale) units_->refresh();
     terrain_->setVisible(terraform);
     placement_->setVisible(light);
+    eraser_->setVisible(eraser);
+    if (eraser) eraser_->refresh();
     scale_->setVisible(scale);
     if (scale) scale_->refresh();
-    if (terraform || light || scale) {
+    if (terraform || light || scale || eraser) {
         // The equipped tool's settings.
         showing_ = QStringLiteral("tool");
         title_->setText(toolName_);
@@ -266,7 +321,7 @@ void PropertiesPanel::refresh() {
         info_->refresh();
     }
     hint_->setVisible(s.empty());
-    hint_->setText(QStringLiteral("Select something to see and change its properties. The terraform brushes and the light tools show their settings here."));
+    hint_->setText(QStringLiteral("Select something to see and change its properties. The terraform brushes, the Eraser and the light tools show their settings here."));
 }
 
 } // namespace gs

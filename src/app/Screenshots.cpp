@@ -9,6 +9,7 @@
 #include "MainWindow.h"
 #include "Viewport.h"
 #include "core/GearNotch.h"
+#include "core/MechParts.h"
 #include "core/ScrewThread.h"
 #include "core/Slicer.h"
 #include "core/Components.h"
@@ -31,6 +32,7 @@
 #include <QThread>
 
 #include <cstdio>
+#include <tuple>
 
 namespace gs {
 
@@ -245,6 +247,270 @@ void save(const QImage& img, const QString& path) {
     std::printf("screenshots: %s (%dx%d)\n", qPrintable(path), img.width(), img.height());
 }
 
+// ---- gears (GEARS.md) ----------------------------------------------------------
+// Animated scenes of meshing gears as components, each turning by its own
+// ratio: two teeth per loop, so every GIF loops without a jump.
+void gearShots(Viewport* vp, Document& doc, const QDir& dir) {
+    auto frame = [&](const QString& name) {
+        vp->update();
+        pump(40);
+        save(vp->grabFramebuffer(), dir.filePath(name + QStringLiteral(".png")));
+    };
+    auto seq = [&](const QString& name, int i) { frame(QStringLiteral("%1_%2").arg(name).arg(i, 3, 10, QLatin1Char('0'))); };
+    auto fresh = [&] {
+        doc.reset();
+        doc.style = RenderStyle();
+        doc.style.sun = true;
+        doc.style.shadows = true;
+        doc.style.ambientOcclusion = true;
+        doc.style.sunAzimuth = 230;
+        doc.style.sunAltitude = 50;
+        doc.style.showAxes = false;
+    };
+    auto look = [&](const Vec3& d, double closer) {
+        doc.notifyChanged();
+        vp->setStandardView(d.normalized());
+        vp->zoomExtents();
+        Camera& c = vp->camera();
+        c.eye = c.target + (c.eye - c.target) * closer;
+        pump(80);
+    };
+    struct Part {
+        Id inst;
+        Mat4 base;
+        GearParams p;
+    };
+    auto colors = [&] {
+        return std::vector<Id>{addColor(doc, "Steel", Color::rgb8(95, 140, 205)), addColor(doc, "Brass", Color::rgb8(214, 172, 72)),
+                               addColor(doc, "Red", Color::rgb8(200, 85, 70)), addColor(doc, "Green", Color::rgb8(95, 170, 105)),
+                               addColor(doc, "Grey", Color::rgb8(170, 170, 165))};
+    };
+    // A gear as a component at `xf` (meters; the scenes use millimetre gears).
+    auto add = [&](GearParams p, const Mat4& xf, Id mat) {
+        Mesh m;
+        std::string name;
+        if (!buildGear(p, m, &name)) std::printf("screenshots: gear failed\n");
+        paintAll(m, mat);
+        ComponentDef d;
+        d.name = name;
+        d.mesh = std::move(m);
+        d.mesh.touch();
+        doc.state.defs.push_back(std::move(d));
+        Instance in;
+        in.def = (Id)doc.state.defs.size() - 1;
+        in.xf = xf;
+        doc.state.instances.push_back(in);
+        ++doc.materialsRevision;
+        return Part{(Id)doc.state.instances.size() - 1, xf, p};
+    };
+    auto spin = [&](const Part& g, double a) { doc.state.instances[g.inst].xf = g.base * Mat4::rotation({0, 0, 1}, a); };
+    auto slide = [&](const Part& g, double x) { doc.state.instances[g.inst].xf = g.base * Mat4::translation({x, 0, 0}); };
+    auto meshWith = [&](const Part& a, GearParams b, Id mat, double around = 0) {
+        Mat4 rel;
+        gearMeshPlacement(a.p, b, rel);
+        // Turned about a's axis by whole teeth of a: a looks the same.
+        const double step = 2 * kPi / a.p.teeth;
+        const double turn = std::round(around / step) * step;
+        return add(b, a.base * Mat4::rotation({0, 0, 1}, turn) * rel, mat);
+    };
+    // Shown 20× life size: the camera frames half a metre at least.
+    constexpr double S = 20;
+    auto spur = [](int z, double m = 0.001, double w = 0.008) {
+        GearParams p;
+        p.module = m * S;
+        p.teeth = z;
+        p.faceWidth = w * S;
+        p.bore = std::min(0.005, m * z * 0.3) * S;
+        return p;
+    };
+    auto bevel = [](int z, int z2, double m = 0.001) {
+        GearParams p;
+        p.kind = GearKind::Bevel;
+        p.module = m * S;
+        p.teeth = z;
+        p.mateTeeth = z2;
+        p.faceWidth = 0;
+        p.bore = 0.004 * S;
+        return p;
+    };
+    const int N = 36;
+    // Angle of the driver at frame i: two of its teeth per loop.
+    auto drive = [&](const Part& a, int i) { return 2 * 2 * kPi / a.p.teeth * i / N; };
+    const Vec3 above(-0.25, 0.45, -1), iso(-0.55, 1, -0.75);
+
+    // 1. Two spur gears, 16 and 28 teeth: the small one turns 1.75× as fast, the other way.
+    {
+        fresh();
+        auto c = colors();
+        const Part a = add(spur(16), Mat4(), c[0]);
+        const Part b = meshWith(a, spur(28), c[1]);
+        look(above, 0.8);
+        for (int i = 0; i < N; ++i) {
+            const double t = drive(a, i);
+            spin(a, t);
+            spin(b, -t * 16 / 28);
+            seq(QStringLiteral("gears_spur_pair"), i);
+        }
+    }
+    // 2. A train: driver, idler, output; and a fourth gear off to the side.
+    {
+        fresh();
+        auto c = colors();
+        const Part a = add(spur(12), Mat4(), c[2]);
+        const Part b = meshWith(a, spur(24), c[0]);
+        const Part d = meshWith(b, spur(18), c[1], -kPi / 3);
+        const Part e = meshWith(b, spur(30), c[3], kPi / 2.2);
+        look(above, 0.75);
+        for (int i = 0; i < N; ++i) {
+            const double t = drive(a, i), tb = -t * 12 / 24;
+            spin(a, t);
+            spin(b, tb);
+            spin(d, -tb * 24 / 18);
+            spin(e, -tb * 24 / 30);
+            seq(QStringLiteral("gears_train"), i);
+        }
+    }
+    // 3. Rack and pinion: turning becomes sliding.
+    {
+        fresh();
+        auto c = colors();
+        const Part a = add(spur(14, 0.0015), Mat4(), c[0]);
+        GearParams rp;
+        rp.kind = GearKind::Rack;
+        rp.module = 0.0015 * S;
+        rp.teeth = 16;
+        rp.faceWidth = 0.008 * S;
+        Mat4 rel;
+        gearMeshPlacement(a.p, rp, rel);
+        const Part r = add(rp, rel, c[4]);
+        look(Vec3(-0.1, 0.35, -1), 0.8);
+        const double rr = a.p.module * a.p.teeth / 2;
+        for (int i = 0; i < N; ++i) {
+            const double t = drive(a, i);
+            spin(a, t);
+            slide(r, t * rr);
+            seq(QStringLiteral("gears_rack"), i);
+        }
+    }
+    // 4. Bevel gears, 1:1 (miter, teeth at 45°), shafts at right angles.
+    // 5. Bevel gears, 15 to 30: half the speed, turned through 90°.
+    for (auto [name, z1, z2] : {std::tuple<const char*, int, int>{"gears_bevel_miter", 20, 20}, {"gears_bevel_reduction", 15, 30}}) {
+        fresh();
+        auto c = colors();
+        const Part a = add(bevel(z1, z2, 0.0015), Mat4(), c[1]);
+        GearParams bp = bevel(z2, z1, 0.0015);
+        const Part b = meshWith(a, bp, c[0]);
+        look(Vec3(0.8, 1, -0.6), 0.85);
+        for (int i = 0; i < N; ++i) {
+            const double t = drive(a, i);
+            spin(a, t);
+            spin(b, -t * z1 / z2);
+            seq(QString::fromLatin1(name), i);
+        }
+    }
+    // 6. A drivetrain: a motor pinion drives a big spur gear; a bevel gear on
+    // the same shaft turns the drive through 90° to a shaft along X.
+    {
+        fresh();
+        auto c = colors();
+        const Part a = add(spur(12), Mat4(), c[2]);
+        GearParams big = spur(36);
+        big.bore = 0.004 * S;
+        const Part b = meshWith(a, big, c[0], -kPi / 2);
+        // On b's shaft, above it: a bevel gear turning with it.
+        const GearParams cp = bevel(20, 20, 0.001);
+        const Part cB = add(cp, b.base * Mat4::translation({0, 0, big.faceWidth + 0.002 * S}), c[1]);
+        const Part d = meshWith(cB, bevel(20, 20, 0.001), c[3]);
+        // From behind the output gear's teeth: looking the way its shaft points.
+        // Seen from between the pinion's side and the output gear's teeth
+        // (the output's back faces along its shaft, v).
+        const Vec3 v = cB.base.transformDir({1, 0, 0}).normalized();
+        const Vec3 toPinion = (a.base.transformPoint({0, 0, 0}) - b.base.transformPoint({0, 0, 0})).normalized();
+        const Vec3 side = (Vec3(toPinion.x, toPinion.y, 0) - Vec3(v.x, v.y, 0)).normalized();
+        look(Vec3(-side.x, -side.y, -0.8), 0.8);
+        for (int i = 0; i < N; ++i) {
+            const double t = drive(a, i), tb = -t * 12 / 36;
+            spin(a, t);
+            spin(b, tb);
+            spin(cB, tb);
+            spin(d, -tb);
+            seq(QStringLiteral("gears_drivetrain"), i);
+        }
+    }
+    // 7. Fitting by size: the right gear grows and its teeth follow; it keeps
+    // meshing with the left one at every size.
+    {
+        fresh();
+        auto c = colors();
+        const Part a = add(spur(18), Mat4(), c[0]);
+        int shown = 0;
+        Vec3 camEye, camTarget;
+        for (int z = 10; z <= 40; z += 2, ++shown) {
+            while (doc.state.instances.size() > 1) doc.state.instances.pop_back();
+            const Part b = meshWith(a, spur(z), c[1]);
+            (void)b;
+            if (shown == 0) {
+                // Framed for the largest one, kept still.
+                const Part big = meshWith(a, spur(40), c[1]);
+                (void)big;
+                look(above, 0.8);
+                camEye = vp->camera().eye;
+                camTarget = vp->camera().target;
+                doc.state.instances.pop_back();
+            }
+            vp->camera().eye = camEye;
+            vp->camera().target = camTarget;
+            doc.notifyChanged();
+            seq(QStringLiteral("gears_fit"), shown);
+        }
+    }
+    // 8. Gear Notches with a standard tooth size: a drawn circle became the
+    // gear on the left, a plate's edge became a rack; a Draw > Spur Gear of the
+    // same module meshes with the circle.
+    {
+        fresh();
+        auto c = colors();
+        Mesh& m = doc.mesh();
+        m.groundFacesDown = false;
+        m.viewHint = Vec3(0, 0, 10);
+        std::vector<Vec3> ring;
+        for (int i = 0; i < 48; ++i) ring.push_back(Vec3(0.0105 * S * std::cos(2 * kPi * i / 48), 0.0105 * S * std::sin(2 * kPi * i / 48), 0));
+        m.drawPolyline(ring, true, m.newCurveId());
+        GearNotchParams gp;
+        gp.module = 0.001 * S;
+        gearNotch(m, allFaces(m), {}, gp);
+        for (Id f : allFaces(m))
+            if (std::fabs(m.faces[f].normal.z) > 0.99) {
+                m.pushPull(f, 0.008 * S * m.faces[f].normal.z);
+                break;
+            }
+        paintAll(m, c[3]);
+        GearParams p = spur(21);
+        const Part notched{kNone, Mat4(), p};
+        meshWith(notched, spur(13), c[1]);
+        Mesh plate;
+        plate.groundFacesDown = false;
+        plate.viewHint = Vec3(0, 0, 10);
+        plate.drawPolyline({{-0.03 * S, -0.034 * S, 0}, {0.03 * S, -0.034 * S, 0}, {0.03 * S, -0.022 * S, 0}, {-0.03 * S, -0.022 * S, 0}}, true);
+        const Id edge = plate.findEdge(plate.findVertex({-0.03 * S, -0.022 * S, 0}), plate.findVertex({0.03 * S, -0.022 * S, 0}));
+        GearNotchParams rp;
+        rp.module = 0.001 * S;
+        gearNotch(plate, {}, {edge}, rp);
+        for (Id f : allFaces(plate))
+            if (std::fabs(plate.faces[f].normal.z) > 0.99) {
+                plate.pushPull(f, 0.006 * S * plate.faces[f].normal.z);
+                break;
+            }
+        paintAll(plate, c[4]);
+        place(m, plate, Mat4());
+        m.touch();
+        ++doc.materialsRevision;
+        look(above, 0.8);
+        frame(QStringLiteral("gears_notches"));
+    }
+    doc.reset();
+}
+
 } // namespace
 
 int runScreenshots(MainWindow& w, const QString& dirPath) {
@@ -255,6 +521,12 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
     Document& doc = vp->doc();
     w.resize(1500, 920);
     pump(300);
+    // GS_SHOTS=gears: only the pictures of GEARS.md.
+    if (qEnvironmentVariable("GS_SHOTS") == QLatin1String("gears")) {
+        gearShots(vp, doc, dir);
+        doc.modified = false;
+        return 0;
+    }
 
     // 1. The window: the house, its panels and the Animator.
     doc.reset();
@@ -1119,6 +1391,7 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
         }
     }
 
+    gearShots(vp, doc, dir);
     doc.reset();
     doc.modified = false;
     return 0;

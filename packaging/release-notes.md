@@ -13,6 +13,22 @@ See the [README](https://github.com/Dev1lroot/GNUSketch#readme) and the
   desktop shortcut, opens .gsketch files); or unpack `GNUSketch-*-windows-x64.zip`
   anywhere and run `bin\gnusketch.exe`. Needs a graphics driver with OpenGL 3.3.
 
+### New in 0.3.3
+- Gears that fit each other without the engineering: choose a tooth size and roughly
+  how big a gear should be, and the number of teeth follows. **Fit to** a gear in the
+  model and the new one is placed right next to it, meshing. The module and tooth
+  count are still there for engineers.
+- Draw > Mechanical > Bevel Gear: straight bevel gears for shafts at right angles
+  (45° miter pairs or reductions), placed alone or as a meshing pair
+- Gear Notches: a *Standard tooth size* that turns a circle into an exact involute gear
+  and straight edges into a rack, meshing with Draw > Mechanical gears
+- [GEARS.md](https://github.com/Dev1lroot/GNUSketch/blob/main/GEARS.md): a guide to
+  gears with animations of every kind of junction
+- Eraser: a round brush you can see, sized in the Properties panel or with [ and ];
+  it no longer erases components or edges behind the face you are cleaning
+- Faster: snapping while drawing over large models is 50–80× quicker per mouse
+  move, and parts out of view or edges turned off no longer cost frame time
+
 ### New in 0.3.2
 - Draw > Engineering: ISO metric screws and bolts (hex, socket cap, countersunk,
   threaded rod), hex and square nuts and washers, M1 to M36, with real threads that

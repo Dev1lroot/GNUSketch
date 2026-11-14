@@ -338,30 +338,39 @@ double involute(double a) { return std::tan(a) - a; }
 
 } // namespace
 
-std::vector<Vec2> spurGearOutline(const GearParams& p, std::vector<char>* smooth, GearInfo* info, std::string* err) {
-    std::vector<Vec2> pts;
-    std::vector<char> sm;
-    const double m = p.module;
-    const int z = p.teeth;
-    if (!(m > 0)) return fail(err, "The module must be above zero."), pts;
-    if (z < 6 || z > 1000) return fail(err, "Use 6 to 1000 teeth."), pts;
-    if (!(p.pressureAngle >= 10 && p.pressureAngle <= 35)) return fail(err, "Use a pressure angle of 10° to 35°."), pts;
-    const double alpha = p.pressureAngle * kPi / 180;
+// One tooth of an involute gear of z teeth (z may be fractional: the virtual
+// spur gear of a bevel gear), centred at angle 0, and the root arc after it up
+// to the next tooth (at 2π/z): (radius, angle) per point and whether the
+// outline turns smoothly there. Also how many points each flank has (root to
+// tip, the radial piece under the base circle included) and the tip points
+// between the flanks.
+namespace {
+struct ToothShape {
+    std::vector<std::pair<double, double>> pts; // (rho, angle)
+    std::vector<char> smooth;
+    int flank = 0, tip = 0;
+    double r = 0, ra = 0, rf = 0, rb = 0;
+};
+} // namespace
+
+static bool involuteTooth(double m, double z, double pressureAngle, double backlash, int flankSteps, ToothShape& T, std::string* err) {
+    if (!(m > 0)) return fail(err, "The module must be above zero.");
+    if (!(pressureAngle >= 10 && pressureAngle <= 35)) return fail(err, "Use a pressure angle of 10° to 35°.");
+    const double alpha = pressureAngle * kPi / 180;
     const double r = m * z / 2, rb = r * std::cos(alpha), ra = r + m, rf = r - 1.25 * m;
-    if (!(rf > 0)) return fail(err, "Too few teeth for this module."), pts;
+    if (!(rf > 0)) return fail(err, "Too few teeth for this module.");
     // Half the tooth's angular thickness at the pitch circle, less backlash.
-    const double psi = (kPi * m / 2 - std::max(0.0, p.backlash)) / (2 * r);
-    if (!(psi > 0)) return fail(err, "The backlash is wider than a tooth."), pts;
+    const double psi = (kPi * m / 2 - std::max(0.0, backlash)) / (2 * r);
+    if (!(psi > 0)) return fail(err, "The backlash is wider than a tooth.");
     // Half-angle of the tooth at radius rho on its involute flank.
     auto half = [&](double rho) { return psi + involute(alpha) - involute(std::acos(std::min(1.0, rb / rho))); };
-    if (half(ra) <= 0.02 * kPi / z) return fail(err, "The teeth come to a point: more teeth or a smaller pressure angle."), pts;
+    if (half(ra) <= 0.02 * kPi / z) return fail(err, "The teeth come to a point: more teeth or a smaller pressure angle.");
     const double rs = std::max(rb, rf); // where the involute starts
     const double gapAtRoot = 2 * kPi / z - 2 * half(rs);
-    if (gapAtRoot <= 0) return fail(err, "The teeth run into each other at the root."), pts;
-    const int K = std::clamp(p.flankSteps, 1, 64);
-    const int R = 3; // pieces of the root arc
-    const int T = 2; // pieces of the tip arc
-    auto polar = [](double rho, double a) { return Vec2(rho * std::cos(a), rho * std::sin(a)); };
+    if (gapAtRoot <= 0) return fail(err, "The teeth run into each other at the root.");
+    const int K = std::clamp(flankSteps, 1, 64);
+    const int R = 3;  // pieces of the root arc
+    const int Tn = 2; // pieces of the tip arc
     // Involute points from rs to ra, evenly in the roll angle.
     const double t0 = std::sqrt(std::max(0.0, (rs / rb) * (rs / rb) - 1)), t1 = std::sqrt((ra / rb) * (ra / rb) - 1);
     std::vector<double> rhos;
@@ -369,43 +378,55 @@ std::vector<Vec2> spurGearOutline(const GearParams& p, std::vector<char>* smooth
         const double t = t0 + (t1 - t0) * k / K;
         rhos.push_back(rb * std::sqrt(1 + t * t));
     }
+    T = ToothShape();
+    T.r = r;
+    T.ra = ra;
+    T.rf = rf;
+    T.rb = rb;
+    auto add = [&](double rho, double a, bool sm) {
+        T.pts.push_back({rho, a});
+        T.smooth.push_back(sm ? 1 : 0);
+    };
+    // Rising flank (the side towards smaller angles), root to tip.
+    if (rf < rb) add(rf, -half(rb), false); // radial line under the base circle
+    for (int k = 0; k <= K; ++k)
+        // Corners: where the flank leaves the root (unless a radial line leads
+        // into it, which meets the involute tangentially) and the tip.
+        add(rhos[k], -half(rhos[k]), k == K ? false : k == 0 ? rf < rb : true);
+    T.flank = (int)T.pts.size();
+    for (int k = 1; k < Tn; ++k) add(ra, -half(ra) + 2 * half(ra) * k / Tn, true);
+    T.tip = Tn - 1;
+    for (int k = K; k >= 0; --k) add(rhos[k], half(rhos[k]), k == K ? false : k == 0 ? rf < rb : true);
+    if (rf < rb) add(rf, half(rb), false);
+    // The root arc to the next tooth.
+    const double a0 = half(rs), a1 = 2 * kPi / z - half(rs);
+    for (int k = 1; k < R; ++k) add(rf, a0 + (a1 - a0) * k / R, true);
+    return true;
+}
+
+std::vector<Vec2> spurGearOutline(const GearParams& p, std::vector<char>* smooth, GearInfo* info, std::string* err) {
+    std::vector<Vec2> pts;
+    std::vector<char> sm;
+    const double m = p.module;
+    const int z = p.teeth;
+    if (!(m > 0)) return fail(err, "The module must be above zero."), pts;
+    if (z < 6 || z > 1000) return fail(err, "Use 6 to 1000 teeth."), pts;
+    ToothShape T;
+    if (!involuteTooth(m, z, p.pressureAngle, p.backlash, p.flankSteps, T, err)) return pts;
     for (int i = 0; i < z; ++i) {
         const double c = 2 * kPi * i / z;
-        // Rising flank (the side towards smaller angles), root to tip.
-        if (rf < rb) {
-            pts.push_back(polar(rf, c - half(rb))); // radial line under the base circle
-            sm.push_back(0);
-        }
-        for (int k = 0; k <= K; ++k) {
-            pts.push_back(polar(rhos[k], c - half(rhos[k])));
-            // Corners: where the flank leaves the root (unless a radial line
-            // leads into it, which meets the involute tangentially) and the tip.
-            sm.push_back(k == K ? 0 : k == 0 ? (rf < rb ? 1 : 0) : 1);
-        }
-        for (int k = 1; k < T; ++k) {
-            pts.push_back(polar(ra, c - half(ra) + 2 * half(ra) * k / T));
-            sm.push_back(1);
-        }
-        for (int k = K; k >= 0; --k) {
-            pts.push_back(polar(rhos[k], c + half(rhos[k])));
-            sm.push_back(k == K ? 0 : k == 0 ? (rf < rb ? 1 : 0) : 1);
-        }
-        if (rf < rb) {
-            pts.push_back(polar(rf, c + half(rb)));
-            sm.push_back(0);
-        }
-        // The root arc to the next tooth.
-        const double a0 = c + half(rs), a1 = c + 2 * kPi / z - half(rs);
-        for (int k = 1; k < R; ++k) {
-            pts.push_back(polar(rf, a0 + (a1 - a0) * k / R));
-            sm.push_back(1);
+        for (size_t k = 0; k < T.pts.size(); ++k) {
+            const auto [rho, a] = T.pts[k];
+            pts.push_back(Vec2(rho * std::cos(a + c), rho * std::sin(a + c)));
+            sm.push_back(T.smooth[k]);
         }
     }
     if (info) {
-        info->pitchDiameter = 2 * r;
-        info->outsideDiameter = 2 * ra;
-        info->rootDiameter = 2 * rf;
-        info->baseDiameter = 2 * rb;
+        const double alpha = p.pressureAngle * kPi / 180;
+        info->pitchDiameter = 2 * T.r;
+        info->outsideDiameter = 2 * T.ra;
+        info->rootDiameter = 2 * T.rf;
+        info->baseDiameter = 2 * T.rb;
         info->pitch = kPi * m;
         // Teeth start being undercut below 2 / sin²α (17 at 20°).
         info->undercut = z < 2 / (std::sin(alpha) * std::sin(alpha));
@@ -414,15 +435,157 @@ std::vector<Vec2> spurGearOutline(const GearParams& p, std::vector<char>* smooth
     return pts;
 }
 
+// A straight bevel gear for shafts at right angles (Tredgold's approximation):
+// on the back cone at the large end each tooth is the tooth of a spur gear of
+// z / cos δ teeth, and every tooth line runs to the cone's apex, so the teeth
+// shrink evenly towards the small end. Axis Z, the large end down; it stands
+// on the ground.
+static bool buildBevel(const GearParams& p, Mesh& out, GearInfo& gi, std::string* err) {
+    const double m = p.module;
+    const int z = p.teeth, z2 = p.mateTeeth > 0 ? p.mateTeeth : p.teeth;
+    if (!(m > 0)) return fail(err, "The module must be above zero.");
+    if (z < 6 || z > 400) return fail(err, "Use 6 to 400 teeth.");
+    if (z2 < 6 || z2 > 400) return fail(err, "The other gear needs 6 to 400 teeth.");
+    const BevelGeometry g = bevelGeometry(p);
+    const double cd = std::cos(g.coneAngle), sd = std::sin(g.coneAngle);
+    const double rv = g.pitchRadius / cd, zv = z / cd; // the virtual spur gear on the back cone
+    ToothShape T;
+    if (!involuteTooth(m, zv, p.pressureAngle, p.backlash, p.flankSteps, T, err)) return false;
+    const double R = g.coneDistance;
+    const double b = g.faceWidth;
+    if (b > R / 2 + 1e-12)
+        return fail(err, "The face width can be at most half the cone distance: " + fmtMM(R / 2 * 1000) + " mm.");
+    const double k = (R - b) / R; // the small end, scaled to the apex
+    // Large end: back-cone point of the virtual tooth (rho, angle), lifted so
+    // the root ring sits on the ground.
+    const double lift = 1.25 * m * sd;
+    const Vec3 apex(0, 0, g.pitchRadius / std::tan(g.coneAngle) + lift);
+    const int per = (int)T.pts.size(), N = per * z;
+    std::vector<Vec3> heel(N), toe(N);
+    std::vector<char> sm(N);
+    for (int i = 0; i < z; ++i)
+        for (int j = 0; j < per; ++j) {
+            const auto [rho, a] = T.pts[j];
+            const double th = a / cd + 2 * kPi * i / z;
+            const Vec3 P(rho * cd * std::cos(th), rho * cd * std::sin(th), (rho - rv) * sd + lift);
+            heel[i * per + j] = P;
+            toe[i * per + j] = apex + (P - apex) * k;
+            sm[i * per + j] = T.smooth[j];
+        }
+    // The bore, through both ends.
+    const double toeRoot = T.rf * cd * k;
+    if (p.bore < 0) return fail(err, "The bore cannot be negative.");
+    if (p.bore > 0 && p.bore / 2 > toeRoot - 0.5 * m * k)
+        return fail(err, "The bore is too large for this gear: under " + fmtMM(2 * (toeRoot - 0.5 * m * k) * 1000) + " mm.");
+    std::vector<Id> H(N), Tt(N);
+    for (int i = 0; i < N; ++i) {
+        H[i] = out.addVertex(heel[i]);
+        Tt[i] = out.addVertex(toe[i]);
+    }
+    std::vector<std::pair<Id, Id>> soft;
+    auto face = [&](const std::vector<Id>& loop, const std::vector<std::vector<Id>>& holes, const Vec3& hint) {
+        out.addFaceRaw(loop, holes, hint);
+    };
+    // Sides: tooth flanks, tips and root lands, each a strip running to the apex.
+    for (int i = 0; i < N; ++i) {
+        const int j = (i + 1) % N;
+        const Vec3 d = heel[j] - heel[i];
+        if (d.length() < 1e-12) continue;
+        Vec3 n = d.cross(apex - heel[i]);
+        if (n.dot(Vec3(d.y, -d.x, 0)) < 0) n = n * -1.0;
+        face({H[i], H[j], Tt[j], Tt[i]}, {}, n);
+        if (sm[i]) soft.push_back({H[i], Tt[i]});
+    }
+    // The two ends: per tooth a stack of flat strips across it (on the back
+    // cone at the large end, the front cone at the small end), a flat tip, and
+    // a flat ring at the root level with the bore in it.
+    const int F = T.flank, tc = T.tip;
+    auto ends = [&](const std::vector<Id>& V, const std::vector<Vec3>& P, bool large) {
+        const double s = large ? 1 : -1;
+        std::vector<Id> rootRing;
+        for (int i = 0; i < z; ++i) {
+            const int o = i * per;
+            const double c = 2 * kPi * i / z;
+            const Vec3 outward = Vec3(sd * std::cos(c), sd * std::sin(c), -cd) * s;
+            auto L = [&](int lv) { return o + lv; };
+            auto Rr = [&](int lv) { return o + F + tc + (F - 1 - lv); };
+            for (int lv = 0; lv + 1 < F; ++lv) {
+                face({V[L(lv)], V[Rr(lv)], V[Rr(lv + 1)], V[L(lv + 1)]}, {}, outward);
+                if (lv > 0) soft.push_back({V[L(lv)], V[Rr(lv)]});
+            }
+            std::vector<Id> tip;
+            for (int q = F - 1; q <= F + tc; ++q) tip.push_back(V[o + q]);
+            if (tip.size() >= 3) face(tip, {}, outward);
+            rootRing.push_back(V[L(0)]);
+            rootRing.push_back(V[Rr(0)]);
+            for (int q = 2 * F + tc; q < per; ++q) rootRing.push_back(V[o + q]);
+        }
+        std::vector<std::vector<Id>> holes;
+        if (p.bore > 0) {
+            std::vector<Id> h;
+            const int n = std::clamp(p.boreSegments, 8, 256);
+            const double rootZ = P[0].z; // the first point (tooth 0's root) is on the root ring
+            for (int q = 0; q < n; ++q) {
+                const double a = 2 * kPi * q / n;
+                h.push_back(out.addVertex(Vec3(p.bore / 2 * std::cos(a), p.bore / 2 * std::sin(a), rootZ)));
+            }
+            holes.push_back(h);
+        }
+        face(rootRing, holes, Vec3(0, 0, -s));
+        return holes.empty() ? std::vector<Id>{} : holes[0];
+    };
+    const std::vector<Id> boreHeel = ends(H, heel, true);
+    const std::vector<Id> boreToe = ends(Tt, toe, false);
+    for (size_t q = 0; q < boreHeel.size(); ++q) {
+        const size_t r = (q + 1) % boreHeel.size();
+        const Vec3 a = out.pos(boreHeel[q]), c = out.pos(boreHeel[r]);
+        const Vec3 mid = (a + c) * 0.5;
+        face({boreHeel[q], boreHeel[r], boreToe[r], boreToe[q]}, {}, Vec3(-mid.x, -mid.y, 0));
+        soft.push_back({boreHeel[q], boreToe[q]});
+    }
+    for (const auto& [a, c] : soft) {
+        const Id e = out.findEdge(a, c);
+        if (e != kNone) out.edges[e].soft = out.edges[e].smooth = true;
+    }
+    out.touch();
+    gi.pitchDiameter = 2 * g.pitchRadius;
+    gi.outsideDiameter = 2 * (g.pitchRadius + m * cd);
+    gi.rootDiameter = 2 * (g.pitchRadius - 1.25 * m * cd);
+    gi.baseDiameter = 2 * T.rb * cd;
+    gi.pitch = kPi * m;
+    gi.coneAngle = g.coneAngle * 180 / kPi;
+    gi.coneDistance = R;
+    gi.faceWidth = b;
+    const double alpha = p.pressureAngle * kPi / 180;
+    gi.undercut = zv < 2 / (std::sin(alpha) * std::sin(alpha));
+    return true;
+}
+
+BevelGeometry bevelGeometry(const GearParams& p) {
+    BevelGeometry g;
+    const int z = p.teeth, z2 = p.mateTeeth > 0 ? p.mateTeeth : p.teeth;
+    g.coneAngle = std::atan2(double(z), double(z2)); // shafts at 90°
+    g.pitchRadius = p.module * z / 2;
+    g.coneDistance = g.pitchRadius / std::sin(g.coneAngle);
+    g.faceWidth = p.faceWidth > 0 ? p.faceWidth : g.coneDistance / 3;
+    g.apexHeight = g.pitchRadius / std::tan(g.coneAngle) + 1.25 * p.module * std::sin(g.coneAngle);
+    return g;
+}
+
 bool buildGear(const GearParams& p, Mesh& out, std::string* name, GearInfo* info, std::string* err) {
-    if (!(p.faceWidth > 0)) return fail(err, "The face width must be above zero.");
+    if (!(p.faceWidth > 0) && !(p.kind == GearKind::Bevel && p.faceWidth == 0))
+        return fail(err, "The face width must be above zero.");
     GearInfo gi;
     const double m = p.module;
     Builder b(out);
     const double w = p.faceWidth;
     std::string label;
     char buf[96];
-    if (p.kind == GearKind::Spur) {
+    if (p.kind == GearKind::Bevel) {
+        if (!buildBevel(p, out, gi, err)) return false;
+        std::snprintf(buf, sizeof buf, "Bevel Gear m%g z%d-%d", m * 1000, p.teeth, p.mateTeeth > 0 ? p.mateTeeth : p.teeth);
+        label = buf;
+    } else if (p.kind == GearKind::Spur) {
         std::vector<char> sm;
         std::string e;
         std::vector<Vec2> pts = spurGearOutline(p, &sm, &gi, &e);
@@ -489,6 +652,71 @@ bool buildGear(const GearParams& p, Mesh& out, std::string* name, GearInfo* info
     if (info) *info = gi;
     if (name) *name = label;
     return true;
+}
+
+int gearTeethForDiameter(double module, double diameter) {
+    if (!(module > 0) || !(diameter > 0)) return 6;
+    return (int)std::clamp(std::lround(diameter / module), 6L, 1000L);
+}
+
+int rackTeethForLength(double module, double length) {
+    if (!(module > 0) || !(length > 0)) return 1;
+    return (int)std::clamp(std::lround(length / (kPi * module)), 1L, 2000L);
+}
+
+double gearCentreDistance(double module, int teethA, int teethB) { return module * (teethA + teethB) / 2; }
+
+bool gearMeshPlacement(const GearParams& a, const GearParams& b, Mat4& out, std::string* err) {
+    if (!(a.module > 0) || std::fabs(a.module - b.module) > 1e-9 * std::max(1.0, a.module * 1e3))
+        return fail(err, "Gears mesh only with the same module (tooth size).");
+    if (std::fabs(a.pressureAngle - b.pressureAngle) > 1e-6) return fail(err, "Gears mesh only with the same pressure angle.");
+    const double m = a.module, pitch = kPi * m;
+    auto rackPitchY = [&](const GearParams& r) { // the pitch line in the rack's coordinates
+        const double hp = r.rackHeight > 0 ? r.rackHeight : 3 * m;
+        return (hp - m) / 2;
+    };
+    if (a.kind == GearKind::Bevel || b.kind == GearKind::Bevel) {
+        const int za2 = a.mateTeeth > 0 ? a.mateTeeth : a.teeth, zb2 = b.mateTeeth > 0 ? b.mateTeeth : b.teeth;
+        if (a.kind != b.kind) return fail(err, "A bevel gear meshes only with another bevel gear.");
+        if (za2 != b.teeth || zb2 != a.teeth)
+            return fail(err, "These bevel gears were not made for each other: one with " + std::to_string(za2) +
+                                 " teeth is needed (made for " + std::to_string(a.teeth) + ").");
+        // b's axis along +X from the common apex, its large end outward; a
+        // gap of b faces a's tooth at +X (b's own -X side looks down at it).
+        const BevelGeometry ga = bevelGeometry(a), gb = bevelGeometry(b);
+        out = Mat4::translation({0, 0, ga.apexHeight}) * Mat4::rotation({0, 1, 0}, -kPi / 2) *
+              Mat4::rotation({0, 0, 1}, kPi - kPi / b.teeth) * Mat4::translation({0, 0, -gb.apexHeight});
+        return true;
+    }
+    if (a.kind == GearKind::Spur && b.kind == GearKind::Spur) {
+        // Teeth of a spur gear are centred at 2πi/z: a has one pointing at +X,
+        // so b turns to put a gap at its -X side.
+        const double d = gearCentreDistance(m, a.teeth, b.teeth);
+        out = Mat4::translation({d, 0, 0}) * Mat4::rotation({0, 0, 1}, kPi - kPi / b.teeth);
+        return true;
+    }
+    if (a.kind == GearKind::Spur && b.kind == GearKind::Rack) {
+        // Under the gear: the pitch line touches the pitch circle at -Y. The
+        // tooth of a nearest to -Y sits off it by delta pitches along the line;
+        // a gap of the rack (at x0 + i·pitch, x0 = -n·pitch/2) goes there.
+        const double r = m * a.teeth / 2;
+        const double t = -a.teeth / 4.0;
+        const double delta = std::round(t) - t;
+        const double xs = std::remainder(delta * pitch + b.teeth * pitch / 2, pitch);
+        out = Mat4::translation({xs, -r - rackPitchY(b), 0});
+        return true;
+    }
+    if (a.kind == GearKind::Rack && b.kind == GearKind::Spur) {
+        // On top of the rack, over the tooth nearest its middle (teeth at
+        // x0 + (i + ½)·pitch), with a gap of the gear pointing down at it.
+        const double x0 = -a.teeth * pitch / 2;
+        const double i = std::round(-x0 / pitch - 0.5);
+        const double xc = x0 + (i + 0.5) * pitch;
+        const double r = m * b.teeth / 2;
+        out = Mat4::translation({xc, rackPitchY(a) + r, 0}) * Mat4::rotation({0, 0, 1}, -kPi / 2 - kPi / b.teeth);
+        return true;
+    }
+    return fail(err, "Two racks do not mesh with each other: one of them must be a spur gear.");
 }
 
 } // namespace gs

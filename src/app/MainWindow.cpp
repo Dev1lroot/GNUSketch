@@ -258,6 +258,8 @@ void MainWindow::buildActions() {
         ->setStatusTip(QStringLiteral("An involute spur gear from a standard module, a tooth count and a pressure angle."));
     act("part_rack", "part_rack", QStringLiteral("Gear &Rack…"), QKeySequence(), [this] { insertPart(PartFamily::Rack); })
         ->setStatusTip(QStringLiteral("A straight gear rack that meshes with spur gears of the same module and pressure angle."));
+    act("part_bevel", "part_bevel", QStringLiteral("&Bevel Gear…"), QKeySequence(), [this] { insertPart(PartFamily::BevelGear); })
+        ->setStatusTip(QStringLiteral("A bevel gear for shafts at right angles (45° teeth for a 1:1 pair), alone or with its mate."));
     act("traceimage", "traceimage", QStringLiteral("&Trace Image…"), QKeySequence(), [this] { traceImage(); })
         ->setStatusTip(QStringLiteral("Turn the alpha cutout or the dark/light shapes of a face's image into outline geometry."));
     act("exportgltf", "", QStringLiteral("glTF 2.0 (*.gltf)…"), QKeySequence(), [this] { exportGltf(); });
@@ -606,7 +608,7 @@ void MainWindow::buildMenus() {
     QMenu* engineering = draw->addMenu(Icons::get("part_screw"), QStringLiteral("&Engineering"));
     for (const char* k : {"part_screw", "part_nut", "part_washer"}) engineering->addAction(acts_[k]);
     QMenu* mechanical = draw->addMenu(Icons::get("fx_gear"), QStringLiteral("&Mechanical"));
-    for (const char* k : {"part_gear", "part_rack"}) mechanical->addAction(acts_[k]);
+    for (const char* k : {"part_gear", "part_rack", "part_bevel"}) mechanical->addAction(acts_[k]);
 
     QMenu* tools = menuBar()->addMenu(QStringLiteral("&Tools"));
     for (ToolId id : {ToolId::Select, ToolId::Eraser, ToolId::Paint}) tools->addAction(toolActions_[id]);
@@ -2098,7 +2100,7 @@ bool MainWindow::startPrimitivePlacement(const PrimitiveParams& params) {
     return startMeshPlacement(std::move(mesh), primitiveName(params.kind));
 }
 
-bool MainWindow::startMeshPlacement(Mesh mesh, const std::string& name) {
+bool MainWindow::startMeshPlacement(Mesh mesh, const std::string& name, const std::string& extra, const Mat4* at) {
     viewport_->cancelTool();
     viewport_->setTool(ToolId::Move);
     doc_.beginOp("Add " + name);
@@ -2107,11 +2109,21 @@ bool MainWindow::startMeshPlacement(Mesh mesh, const std::string& name) {
     def.uid = newComponentUid();
     def.mesh = std::move(mesh);
     def.mesh.touch();
+    def.extra = extra;
     doc_.state.defs.push_back(std::move(def));
     Instance in;
     in.def = (Id)doc_.state.defs.size() - 1;
     in.parent = doc_.state.activeDef();
+    if (at) in.xf = *at;
     doc_.state.instances.push_back(in);
+    if (at) {
+        doc_.selection.clear();
+        doc_.selection.instances.insert((Id)doc_.state.instances.size() - 1);
+        doc_.notifySelection();
+        doc_.commitOp();
+        viewport_->update();
+        return true;
+    }
     if (!attachToCursor((Id)doc_.state.instances.size() - 1)) return false;
     statusLabel_->setText(QStringLiteral("Click to place the %1. Explode it to merge it with the model's geometry.")
                               .arg(QString::fromStdString(name)));
@@ -2129,13 +2141,111 @@ bool MainWindow::startPartPlacement(const PartChoice& part) {
         statusLabel_->setText(QString::fromStdString(err));
         return false;
     }
-    return startMeshPlacement(std::move(mesh), name);
+    if (!part.gear) return startMeshPlacement(std::move(mesh), name);
+    // Gears keep their parameters, so later gears can be fitted to them.
+    const std::string tag = withGearTag({}, part.gearParams);
+    if (part.pair && part.gearParams.kind == GearKind::Bevel) {
+        // Both bevel gears, meshing, in one component (explode it to have two).
+        GearParams mate = part.gearParams;
+        std::swap(mate.teeth, mate.mateTeeth);
+        Mesh mateMesh;
+        std::string mateName;
+        Mat4 rel;
+        if (!buildGear(mate, mateMesh, &mateName, nullptr, &err) || !gearMeshPlacement(part.gearParams, mate, rel, &err)) {
+            statusLabel_->setText(QString::fromStdString(err));
+            return false;
+        }
+        viewport_->cancelTool();
+        viewport_->setTool(ToolId::Move);
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "Bevel Gear Pair m%g z%d-%d", part.gearParams.module * 1000, part.gearParams.teeth,
+                      part.gearParams.mateTeeth);
+        const std::string pairName = buf;
+        doc_.beginOp("Add " + pairName);
+        ModelState& st = doc_.state;
+        auto addDef = [&](Mesh&& m, const std::string& n, const std::string& extra) {
+            ComponentDef def;
+            def.name = uniqueComponentName(st, n);
+            def.uid = newComponentUid();
+            def.mesh = std::move(m);
+            def.mesh.touch();
+            def.extra = extra;
+            st.defs.push_back(std::move(def));
+            return (Id)st.defs.size() - 1;
+        };
+        const Id defA = addDef(std::move(mesh), name, tag);
+        const Id defB = addDef(std::move(mateMesh), mateName, withGearTag({}, mate));
+        const Id group = addDef(Mesh(), pairName, {});
+        for (auto [d, xf] : {std::pair<Id, Mat4>{defA, Mat4()}, std::pair<Id, Mat4>{defB, rel}}) {
+            Instance in;
+            in.def = d;
+            in.parent = group;
+            in.xf = xf;
+            st.instances.push_back(in);
+        }
+        Instance top;
+        top.def = group;
+        top.parent = st.activeDef();
+        st.instances.push_back(top);
+        if (!attachToCursor((Id)st.instances.size() - 1)) return false;
+        statusLabel_->setText(QStringLiteral("Click to place the %1. Explode it to move the gears on their own.")
+                                  .arg(QString::fromStdString(pairName)));
+        return true;
+    }
+    const Id with = part.meshWith;
+    if (with != kNone && with < (Id)doc_.state.instances.size() && doc_.state.instances[with].alive) {
+        Mat4 rel;
+        if (!gearMeshPlacement(part.meshParams, part.gearParams, rel, &err)) {
+            statusLabel_->setText(QString::fromStdString(err));
+            return false;
+        }
+        const Mat4 xf = doc_.state.instances[with].xf * rel;
+        if (!startMeshPlacement(std::move(mesh), name, tag, &xf)) return false;
+        statusLabel_->setText(QStringLiteral("The %1 is placed meshing with the selected gear. Turn either about its own "
+                                             "axis by whole teeth to keep them meshing.")
+                                  .arg(QString::fromStdString(name)));
+        return true;
+    }
+    return startMeshPlacement(std::move(mesh), name, tag);
+}
+
+std::vector<GearRef> MainWindow::gearsInModel() const {
+    std::vector<GearRef> out;
+    const ModelState& st = doc_.state;
+    // Selected placements first: those can be meshed with right away.
+    std::set<Id> listed;
+    for (Id i : doc_.selection.instances) {
+        if (i < 0 || i >= (Id)st.instances.size() || !st.instances[i].alive) continue;
+        const Instance& in = st.instances[i];
+        GearRef g;
+        if (in.def < 0 || in.def >= (Id)st.defs.size() || !gearFromComponent(st.defs[in.def].extra, st.defs[in.def].name, g.params))
+            continue;
+        // Only an unscaled placement: a scaled one has other teeth than it says.
+        const double sx = in.xf.transformDir({1, 0, 0}).length(), sy = in.xf.transformDir({0, 1, 0}).length(),
+                     sz = in.xf.transformDir({0, 0, 1}).length();
+        if (std::fabs(sx - 1) > 1e-6 || std::fabs(sy - 1) > 1e-6 || std::fabs(sz - 1) > 1e-6) continue;
+        g.name = st.defs[in.def].name;
+        g.instance = i;
+        out.push_back(g);
+        listed.insert(in.def);
+    }
+    for (Id d = 0; d < (Id)st.defs.size(); ++d) {
+        if (listed.count(d)) continue;
+        bool placed = false;
+        for (const Instance& in : st.instances) placed = placed || (in.alive && in.def == d);
+        GearRef g;
+        if (!placed || !gearFromComponent(st.defs[d].extra, st.defs[d].name, g.params)) continue;
+        g.name = st.defs[d].name;
+        out.push_back(g);
+    }
+    return out;
 }
 
 void MainWindow::insertPart(PartFamily family) {
     viewport_->cancelTool();
     PartChoice part;
-    if (runPartDialog(this, family, part)) startPartPlacement(part);
+    const bool gear = family == PartFamily::SpurGear || family == PartFamily::Rack || family == PartFamily::BevelGear;
+    if (runPartDialog(this, family, part, gear ? gearsInModel() : std::vector<GearRef>{})) startPartPlacement(part);
 }
 
 void MainWindow::insertPrimitive() {

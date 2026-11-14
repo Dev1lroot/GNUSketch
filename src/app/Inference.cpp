@@ -41,6 +41,85 @@ double InferenceEngine::pixelDistance(const Vec3& p, double px, double py) const
     return std::hypot(sx - px, sy - py);
 }
 
+const InferenceEngine::MeshBoxes& InferenceEngine::boxesOf(const Mesh& m) const {
+    if (boxes_.size() > 4096) boxes_.clear(); // meshes come and go (undo, deleted components)
+    MeshBoxes& b = boxes_[&m];
+    if (b.revision == m.revision && b.faces.size() == m.faces.size()) return b;
+    b.revision = m.revision;
+    b.any = false;
+    b.faces.assign(m.faces.size(), Box());
+    const double big = std::numeric_limits<double>::infinity();
+    b.all = {Vec3(big, big, big), Vec3(-big, -big, -big)};
+    auto grow = [](Box& x, const Vec3& p) {
+        x.mn = Vec3(std::min(x.mn.x, p.x), std::min(x.mn.y, p.y), std::min(x.mn.z, p.z));
+        x.mx = Vec3(std::max(x.mx.x, p.x), std::max(x.mx.y, p.y), std::max(x.mx.z, p.z));
+    };
+    for (const Vertex& v : m.vertices)
+        if (v.alive) {
+            grow(b.all, v.p);
+            b.any = true;
+        }
+    if (!b.any) b.all = {Vec3(), Vec3()};
+    // A little slack: flat faces have no thickness, and kTol counts as touching.
+    const double pad = std::max(kTol, 1e-7 * (b.all.mx - b.all.mn).length());
+    const Vec3 slack(pad, pad, pad);
+    b.all.mn = b.all.mn - slack;
+    b.all.mx = b.all.mx + slack;
+    for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+        const Face& F = m.faces[f];
+        if (!F.alive) continue;
+        Box& fb = b.faces[f];
+        fb = {Vec3(big, big, big), Vec3(-big, -big, -big)};
+        for (Id v : F.outer) grow(fb, m.pos(v)); // holes lie inside the outline
+        if (F.outer.empty()) fb = {Vec3(), Vec3()};
+        fb.mn = fb.mn - slack;
+        fb.mx = fb.mx + slack;
+    }
+    return b;
+}
+
+bool InferenceEngine::boxNearCursor(const Box& b, const Mat4& xf, double px, double py, double tolPx) const {
+    double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+    for (int i = 0; i < 8; ++i) {
+        const Vec3 c((i & 1) ? b.mx.x : b.mn.x, (i & 2) ? b.mx.y : b.mn.y, (i & 4) ? b.mx.z : b.mn.z);
+        double sx, sy;
+        if (!cam_.project(xf.transformPoint(c), sx, sy)) return true;
+        x0 = std::min(x0, sx);
+        x1 = std::max(x1, sx);
+        y0 = std::min(y0, sy);
+        y1 = std::max(y1, sy);
+    }
+    return px >= x0 - tolPx && px <= x1 + tolPx && py >= y0 - tolPx && py <= y1 + tolPx;
+}
+
+bool InferenceEngine::rayHitsBox(const Box& b, const Ray& r) {
+    double t0 = -std::numeric_limits<double>::infinity(), t1 = std::numeric_limits<double>::infinity();
+    for (int a = 0; a < 3; ++a) {
+        const double o = r.origin[a], d = r.dir[a], lo = b.mn[a], hi = b.mx[a];
+        if (std::fabs(d) < 1e-300) {
+            if (o < lo || o > hi) return false;
+            continue;
+        }
+        double ta = (lo - o) / d, tb = (hi - o) / d;
+        if (ta > tb) std::swap(ta, tb);
+        t0 = std::max(t0, ta);
+        t1 = std::min(t1, tb);
+        if (t0 > t1) return false;
+    }
+    return true; // a parallel camera's ray runs both ways: t < 0 counts too
+}
+
+bool InferenceEngine::boxContains(const Box& b, const Mat4& xf, const Vec3& p, double tol) const {
+    const Vec3 q = xf.inverted().transformPoint(p);
+    // tol is in world units; a scaled placement shrinks or stretches it.
+    const double s = std::max({xf.transformDir(Vec3(1, 0, 0)).length(), xf.transformDir(Vec3(0, 1, 0)).length(),
+                               xf.transformDir(Vec3(0, 0, 1)).length(), 1e-12});
+    const double t = tol / std::min(s, 1.0) + tol;
+    for (int a = 0; a < 3; ++a)
+        if (q[a] < b.mn[a] - t || q[a] > b.mx[a] + t) return false;
+    return true;
+}
+
 Id InferenceEngine::pickFace(double px, double py, double* tOut, const std::set<Id>* ex) const {
     const Mesh& m = doc_.mesh();
     Ray r = cam_.ray(px, py);
@@ -48,9 +127,10 @@ Id InferenceEngine::pickFace(double px, double py, double* tOut, const std::set<
     double bestT = std::numeric_limits<double>::infinity();
     if (tOut) *tOut = bestT;
     if (doc_.style.faceStyle == RenderStyle::Wireframe) return kNone;
+    const MeshBoxes& boxes = boxesOf(m);
     for (Id f = 0; f < (Id)m.faces.size(); ++f) {
         const Face& F = m.faces[f];
-        if (!F.alive || F.hidden) continue;
+        if (!F.alive || F.hidden || !rayHitsBox(boxes.faces[f], r)) continue;
         if (ex) {
             bool skip = false;
             for (Id v : F.outer)
@@ -87,12 +167,14 @@ Id InferenceEngine::pickInstance(double px, double py, double* tOut, Vec3* norma
         const Id i = placed.root;
         const Mesh& m = st.defs[placed.def].mesh;
         const Mat4& xf = placed.xf;
+        const MeshBoxes& boxes = boxesOf(m);
+        if (!boxes.any || !boxNearCursor(boxes.all, xf, px, py, 6.0)) continue; // nothing of it near the cursor
         const Mat4 inv = xf.inverted();
         // Ray in definition coordinates; same parameter t as in world space.
         Ray lr{inv.transformPoint(r.origin), inv.transformDir(r.dir)};
         if (!wire)
             for (Id f = 0; f < (Id)m.faces.size(); ++f) {
-                if (!m.faces[f].alive || m.faces[f].hidden) continue;
+                if (!m.faces[f].alive || m.faces[f].hidden || !rayHitsBox(boxes.faces[f], lr)) continue;
                 double t;
                 if (doc_.style.backfaceCulling && !doc_.style.xray &&
                     transformCovector(xf, m.faces[f].normal).dot(r.dir) >= 0) continue; // not drawn
@@ -173,7 +255,7 @@ bool InferenceEngine::pickAnyEdge(double px, double py, double tolPx, const std:
     }
     const std::vector<PlacedInstance> placed = snapSources();
     for (int i = 0; i < (int)placed.size(); ++i) {
-        if (!snapsTo(placed[i])) continue;
+        if (!snapsTo(placed[i]) || !nearCursor(placed[i], px, py, tolPx)) continue;
         for (const Segment& s : instanceEdges(i, placed[i])) {
             Vec3 q = closest(s.a, s.b);
             double d = pixelDistance(q, px, py);
@@ -196,7 +278,7 @@ bool InferenceEngine::pickAnyEdge(double px, double py, double tolPx, const std:
     return found;
 }
 
-std::vector<InferenceEngine::FaceRef> InferenceEngine::worldFaces(const std::set<Id>* ex) const {
+std::vector<InferenceEngine::FaceRef> InferenceEngine::worldFaces(const std::set<Id>* ex, double px, double py, double tolPx) const {
     std::vector<FaceRef> out;
     if (doc_.style.faceStyle == RenderStyle::Wireframe) return out;
     const Mesh& m = doc_.mesh();
@@ -219,7 +301,7 @@ std::vector<InferenceEngine::FaceRef> InferenceEngine::worldFaces(const std::set
     const ModelState& st = doc_.state;
     // Components, and while one is open everything around it.
     for (const PlacedInstance& placed : snapSources()) {
-        if (!snapsTo(placed) || placed.inst == st.editing) continue;
+        if (!snapsTo(placed) || placed.inst == st.editing || !nearCursor(placed, px, py, tolPx)) continue;
         const Mesh& dm = sourceMesh(placed);
         const Mat4 inv = placed.xf.inverted();
         for (Id f = 0; f < (Id)dm.faces.size(); ++f) {
@@ -246,6 +328,7 @@ bool InferenceEngine::rayHitsFace(const FaceRef& f, const Ray& r, double& t) con
     if (doc_.style.backfaceCulling && !doc_.style.xray && f.plane.n.dot(r.dir) >= 0) return false; // not drawn
     // Same parameter t in world and definition coordinates.
     const Ray lr{f.inv.transformPoint(r.origin), f.inv.transformDir(r.dir)};
+    if (!rayHitsBox(boxesOf(*f.mesh).faces[f.face], lr)) return false;
     return f.mesh->rayFace(f.face, lr, t);
 }
 
@@ -267,14 +350,14 @@ int InferenceEngine::frontFace(const std::vector<FaceRef>& faces, const Ray& r, 
 }
 
 Vec3 InferenceEngine::faceNormalAt(double px, double py, const std::set<Id>* ex) const {
-    const std::vector<FaceRef> faces = worldFaces(ex);
+    const std::vector<FaceRef> faces = worldFaces(ex, px, py, 1.0);
     double t;
     const int f = frontFace(faces, cam_.ray(px, py), t);
     return f >= 0 ? faces[f].plane.n : Vec3();
 }
 
 bool InferenceEngine::faceUnder(double px, double py, const std::set<Id>* ex, Vec3& point, Vec3& normal) const {
-    const std::vector<FaceRef> faces = worldFaces(ex);
+    const std::vector<FaceRef> faces = worldFaces(ex, px, py, 1.0);
     const Ray r = cam_.ray(px, py);
     double t;
     const int f = frontFace(faces, r, t);
@@ -379,6 +462,73 @@ Id InferenceEngine::pickEdgeT(double px, double py, double tolPx, const std::set
         best = e;
     }
     return best;
+}
+
+std::vector<Id> InferenceEngine::edgesInBrush(double px, double py, double rad, bool includeSoft) const {
+    std::vector<Id> out;
+    const Mesh& m = doc_.mesh();
+    rad = std::max(rad, 0.5);
+    // Seen at the screen point (sx, sy): the edge's point there is not behind
+    // the front-most face along that pixel's ray.
+    auto visibleAt = [&](const Vec3& a, const Vec3& b, double sx, double sy) {
+        const Ray r = cam_.ray(sx, sy);
+        double s, t;
+        const Vec3 q = closestLineLine(a, b - a, r.origin, r.dir, s, t) ? lerp(a, b, std::clamp(s, 0.0, 1.0)) : a;
+        const double depth = (q - r.origin).dot(r.dir);
+        if (cam_.perspective && depth < 0) return false;
+        if (seeThrough()) return true;
+        double tFace;
+        pickFace(sx, sy, &tFace);
+        return depth <= tFace + std::max(cam_.pixelSize(q) * 3.0, 1e-4);
+    };
+    for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+        const Edge& E = m.edges[e];
+        if (!E.alive) continue;
+        if (E.hidden && !doc_.style.showHidden) continue;
+        if (E.soft && !doc_.style.showHidden && !includeSoft) continue;
+        const Vec3 a = m.pos(E.v[0]), b = m.pos(E.v[1]);
+        double ax, ay, bx, by;
+        const bool pa = cam_.project(a, ax, ay), pb = cam_.project(b, bx, by);
+        if (!pa && !pb) continue;
+        if (!pa || !pb) {
+            // Reaching behind the camera: the point nearest the cursor's ray.
+            const Ray r = cam_.ray(px, py);
+            double s, t;
+            const Vec3 q = closestLineLine(a, b - a, r.origin, r.dir, s, t) ? lerp(a, b, std::clamp(s, 0.0, 1.0)) : a;
+            if (pixelDistance(q, px, py) <= rad && visibleAt(a, b, px, py)) out.push_back(e);
+            continue;
+        }
+        // The stretch of the edge on screen inside the brush circle.
+        const double dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+        const double fx = ax - px, fy = ay - py;
+        double u0 = 0, u1 = 1, uc = 0;
+        if (len2 < 1e-12) {
+            if (fx * fx + fy * fy > rad * rad) continue;
+        } else {
+            uc = std::clamp(-(fx * dx + fy * dy) / len2, 0.0, 1.0);
+            const double cx = fx + uc * dx, cy = fy + uc * dy;
+            if (cx * cx + cy * cy > rad * rad) continue;
+            // |f + u d|² = r²
+            const double B = 2 * (fx * dx + fy * dy), C = fx * fx + fy * fy - rad * rad;
+            const double disc = std::max(0.0, B * B - 4 * len2 * C), sq = std::sqrt(disc);
+            u0 = std::clamp((-B - sq) / (2 * len2), 0.0, 1.0);
+            u1 = std::clamp((-B + sq) / (2 * len2), 0.0, 1.0);
+        }
+        // Some of that stretch must be in sight (a few points along it).
+        for (double u : {uc, u0, u1, (u0 + u1) / 2, u0 + (u1 - u0) * 0.25, u0 + (u1 - u0) * 0.75})
+            if (visibleAt(a, b, ax + u * dx, ay + u * dy)) {
+                out.push_back(e);
+                break;
+            }
+    }
+    return out;
+}
+
+Id InferenceEngine::pickInstanceInFront(double px, double py) const {
+    double t;
+    // pickFace answers kNone when a component is the front-most thing there.
+    if (pickFace(px, py, &t) != kNone && !seeThrough()) return kNone;
+    return pickInstance(px, py);
 }
 
 int InferenceEngine::pickGuide(double px, double py, double tolPx) const {
@@ -493,7 +643,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     Id face = pickFace(px, py, &tFace, o.excludeVerts);
     // Faces of components and, inside an open component, of everything around
     // it: they hide what is behind them and count as faces to snap on.
-    const std::vector<FaceRef> faces = worldFaces(o.excludeVerts);
+    const std::vector<FaceRef> faces = worldFaces(o.excludeVerts, px, py, std::max(snap, 1.0));
     double tAll;
     const int front = frontFace(faces, r, tAll);
     if (front >= 0 && tAll < tFace - 1e-9) {
@@ -543,7 +693,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     if (bestV == kNone) {
         double bd = snap;
         for (const PlacedInstance& placed : snapSources()) {
-            if (!snapsTo(placed)) continue;
+            if (!snapsTo(placed) || !nearCursor(placed, px, py, snap)) continue;
             const Mat4& xf = placed.xf;
             for (const Vertex& v : sourceMesh(placed).vertices) {
                 if (!v.alive) continue;
@@ -591,7 +741,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         double bd = snap;
         const std::vector<PlacedInstance> placed = snapSources();
         for (int i = 0; i < (int)placed.size(); ++i) {
-            if (!snapsTo(placed[i])) continue;
+            if (!snapsTo(placed[i]) || !nearCursor(placed[i], px, py, snap)) continue;
             for (const Segment& s : instanceEdges(i, placed[i])) {
                 Vec3 mid = (s.a + s.b) * 0.5;
                 double d = pixelDistance(mid, px, py);
@@ -761,6 +911,8 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         const std::vector<PlacedInstance> placed = snapSources();
         for (int i = 0; i < (int)placed.size(); ++i) {
             if (!snapsTo(placed[i])) continue;
+            const MeshBoxes& pb = boxesOf(sourceMesh(placed[i]));
+            if (!pb.any || !boxContains(pb.all, placed[i].xf, *o.ref, 2 * kTol)) continue; // no corner of it at the reference point
             for (const Segment& s : instanceEdges(i, placed[i])) {
                 Vec3 d = s.a.nearlyEquals(*o.ref) ? s.b - s.a : s.b.nearlyEquals(*o.ref) ? s.a - s.b : Vec3();
                 if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge});

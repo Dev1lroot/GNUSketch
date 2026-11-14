@@ -105,7 +105,12 @@ private:
         uint64_t revision = 0, matRevision = 0;
         std::vector<Batch> batches;
         std::vector<std::vector<float>> faceTris; // per face: triangle positions (for overlays)
+        Vec3 bmin, bmax; // bounding box of the mesh (its own coordinates)
+        bool bany = false;
     };
+    // The box (placed by xf) lies wholly outside the view: not drawn this
+    // frame (it still casts shadows).
+    bool outsideView(const MeshGpu& g, const Mat4& xf, const Mat4& viewProj) const;
     // Edge lines collected for one frame.
     struct EdgeLists {
         std::vector<float> normal, profile, selected, hidden, faded, fadedProfile;

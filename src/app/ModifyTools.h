@@ -5,6 +5,7 @@
 #include "Tool.h"
 
 #include <QElapsedTimer>
+#include <QObject>
 #include <QPointF>
 
 #include <array>
@@ -42,23 +43,50 @@ private:
     QPointF dblPos_;
 };
 
+// The Eraser's brush: its radius in screen pixels (kept in the settings,
+// shown and changed in the Properties panel while the Eraser is equipped).
+class EraserSettings : public QObject {
+    Q_OBJECT
+public:
+    static EraserSettings& instance();
+    double radius() const { return radius_; }
+    void setRadius(double px);
+    static constexpr double kMin = 1, kMax = 200, kDefault = 8;
+
+signals:
+    void changed();
+
+private:
+    EraserSettings();
+    double radius_ = kDefault;
+};
+
 class EraserTool : public Tool {
 public:
     using Tool::Tool;
     ToolId id() const override { return ToolId::Eraser; }
     QString status() const override;
-    void reset() override { marked_.clear(); markedInstances_.clear(); erasing_ = false; update(); }
+    QString vcbLabel() const override { return QStringLiteral("Brush size"); }
+    void reset() override { marked_.clear(); markedInstances_.clear(); markedGuides_.clear(); hover_.clear(); erasing_ = false; update(); }
+    void deactivate() override { reset(); inside_ = false; }
     void mousePress(const MouseEvent& e) override;
     void mouseMove(const MouseEvent& e) override;
     void mouseRelease(const MouseEvent& e) override;
+    bool keyPress(QKeyEvent* e) override;
+    bool vcbEnter(const QString& text) override;
     void buildPreview(Preview& pv) override;
+    void paintOverlay(QPainter& p) override;
 
 private:
+    // Marks what the brush covers along the stroke from the last point.
     void markAt(const MouseEvent& e);
+    void markSpot(double x, double y, bool ctrl, bool unsoften);
     bool erasing_ = false;
+    bool inside_ = false; // the cursor has been over the view (the brush is drawn)
+    QPointF last_;
     std::set<Id> marked_, markedInstances_;
     std::set<int> markedGuides_;
-    Id hover_ = kNone;
+    std::set<Id> hover_;
 };
 
 class PaintTool : public Tool {

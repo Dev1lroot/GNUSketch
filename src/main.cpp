@@ -39,6 +39,10 @@ int main(int argc, char** argv) {
     parser.addOption(selfTest);
     QCommandLineOption glProbe("gl-probe", "Create an offscreen OpenGL context, render one frame with the real renderer and exit (no window).");
     parser.addOption(glProbe);
+    QCommandLineOption bench("render-bench", "Time off-screen frames of a model with each render setting and exit (no window).", "model");
+    parser.addOption(bench);
+    QCommandLineOption ibench("interact-bench", "Time mouse moves with each tool over the model given as the file, then exit.");
+    parser.addOption(ibench);
     QCommandLineOption shots("screenshots", "Render the README pictures into a folder and exit (use tools/readme-media.sh).", "dir");
     parser.addOption(shots);
     QCommandLineOption game("game", "Walk around a saved model in the Game Mode window.", "model");
@@ -51,6 +55,7 @@ int main(int argc, char** argv) {
     parser.process(app);
 
     if (parser.isSet(glProbe)) return gs::runGlProbe();
+    if (parser.isSet(bench)) return gs::runRenderBench(parser.value(bench), 120);
 
     if (parser.isSet(game)) {
         const QStringList p = parser.value(spawn).split(',');
@@ -65,6 +70,9 @@ int main(int argc, char** argv) {
     if (parser.isSet(shots)) {
         const QString dir = parser.value(shots);
         QTimer::singleShot(300, &w, [&w, dir] { QApplication::exit(gs::runScreenshots(w, dir)); });
+    }
+    if (parser.isSet(ibench)) {
+        QTimer::singleShot(300, &w, [&w] { QApplication::exit(gs::runInteractBench(w)); });
     }
     if (parser.isSet(selfTest)) {
         QTimer::singleShot(300, &w, [&w] { QApplication::exit(gs::runSelfTest(w)); });

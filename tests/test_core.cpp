@@ -4546,6 +4546,223 @@ int main() {
             // 4 faces per tooth on top (2 flanks, a tip, a root) plus the ends and bottom.
             CHECK(m.aliveFaceCount() > 40);
         });
+        test("gears: sized by eye, placed meshing with each other", [&] {
+            CHECK_EQ(gearTeethForDiameter(0.001, 0.0204), 20);
+            CHECK_EQ(gearTeethForDiameter(0.002, 0.003), 6); // at least 6
+            CHECK_EQ(rackTeethForLength(0.002, 0.063), 10);
+            CHECK(std::fabs(gearCentreDistance(0.001, 20, 31) - 0.0255) < 1e-12);
+            // The bottom face's outline (z = 0) in the part's own XY.
+            auto bottom = [](const Mesh& m) {
+                std::vector<Vec2> best;
+                for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+                    const Face& F = m.faces[f];
+                    if (!F.alive || F.normal.z > -0.9 || F.outer.size() <= best.size()) continue;
+                    best.clear();
+                    for (Id v : F.outer) best.push_back({m.pos(v).x, m.pos(v).y});
+                }
+                return best;
+            };
+            auto inside = [](const std::vector<Vec2>& poly, Vec2 q) {
+                bool in = false;
+                for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+                    if ((poly[i].y > q.y) != (poly[j].y > q.y) &&
+                        q.x < (poly[j].x - poly[i].x) * (q.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)
+                        in = !in;
+                return in;
+            };
+            // b placed by gearMeshPlacement next to a: they do not overlap (a
+            // little backlash leaves room), and b's teeth reach into a's.
+            auto check = [&](GearParams a, GearParams b) {
+                a.bore = b.bore = 0;
+                a.backlash = b.backlash = 0.04 * a.module;
+                a.flankSteps = b.flankSteps = 12;
+                Mesh ma, mb;
+                CHECK(buildGear(a, ma) && buildGear(b, mb));
+                Mat4 xf;
+                std::string err;
+                CHECK(gearMeshPlacement(a, b, xf, &err));
+                const std::vector<Vec2> pa = bottom(ma), pb0 = bottom(mb);
+                std::vector<Vec2> pb;
+                for (const Vec2& q : pb0) {
+                    const Vec3 w = xf.transformPoint(Vec3(q.x, q.y, 0));
+                    pb.push_back({w.x, w.y});
+                }
+                int overlaps = 0;
+                for (const Vec2& q : pb) overlaps += inside(pa, q);
+                for (const Vec2& q : pa) overlaps += inside(pb, q);
+                CHECK_EQ(overlaps, 0);
+                // Engaged: some point of b lies within a's outside, past its root... i.e. between
+                // a's teeth (the convex hull reaches over b).
+                int engaged = 0;
+                for (const Vec2& q : pb) {
+                    // inside a's tip envelope: a's outline grown to its tips
+                    if (a.kind == GearKind::Spur) engaged += std::hypot(q.x, q.y) < a.module * (a.teeth / 2.0 + 1) - 0.5 * a.module;
+                    else {
+                        const double hp = 3 * a.module, top = (hp - a.module) / 2 + a.module; // rack tips
+                        engaged += q.y < top - 0.5 * a.module && std::fabs(q.x) < a.teeth * kPi * a.module / 2;
+                    }
+                }
+                CHECK(engaged > 0);
+            };
+            for (int za : {12, 17, 20, 33})
+                for (int zb : {9, 14, 20, 41}) {
+                    GearParams a, b;
+                    a.module = b.module = 0.002;
+                    a.teeth = za;
+                    b.teeth = zb;
+                    check(a, b);
+                    b.kind = GearKind::Rack;
+                    b.teeth = 12;
+                    check(a, b); // a rack under the gear
+                    std::swap(a, b);
+                    b.teeth = zb;
+                    check(a, b); // a gear on the rack
+                }
+            GearParams a, b;
+            b.module = 0.0015;
+            Mat4 xf;
+            std::string err;
+            CHECK(!gearMeshPlacement(a, b, xf, &err) && err.find("module") != std::string::npos);
+            a.kind = b.kind = GearKind::Rack;
+            b.module = a.module;
+            CHECK(!gearMeshPlacement(a, b, xf, &err));
+        });
+        test("gears: bevel gears for shafts at right angles", [&] {
+            // Inside a closed mesh: an odd number of faces along a ray.
+            auto inside = [](const Mesh& m, const Vec3& p) {
+                const Ray r{p, Vec3(0.3141, 0.2718, 0.9123).normalized()};
+                int n = 0;
+                for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+                    double t;
+                    if (m.faces[f].alive && m.rayFace(f, r, t) && t > 1e-9) ++n;
+                }
+                return n % 2 == 1;
+            };
+            for (auto [z1, z2] : std::vector<std::pair<int, int>>{{20, 20}, {15, 30}, {30, 15}, {12, 40}, {24, 24}})
+                for (double bore : {0.0, 0.004}) {
+                    GearParams a;
+                    a.kind = GearKind::Bevel;
+                    a.module = 0.002;
+                    a.teeth = z1;
+                    a.mateTeeth = z2;
+                    a.faceWidth = 0;
+                    a.bore = bore;
+                    a.backlash = 0.05 * a.module;
+                    Mesh ma;
+                    GearInfo gi;
+                    std::string name, err;
+                    const bool ok = buildGear(a, ma, &name, &gi, &err);
+                    CHECK(ok);
+                    if (!ok) {
+                        std::printf("    bevel %d/%d: %s\n", z1, z2, err.c_str());
+                        continue;
+                    }
+                    CHECK(closedSolid(ma));
+                    CHECK(name == "Bevel Gear m2 z" + std::to_string(z1) + "-" + std::to_string(z2));
+                    CHECK(std::fabs(gi.coneAngle - std::atan2(z1, z2) * 180 / kPi) < 1e-9);
+                    CHECK(std::fabs(gi.pitchDiameter - 0.002 * z1) < 1e-12);
+                    Vec3 mn, mx;
+                    bool any;
+                    ma.bounds(mn, mx, any);
+                    CHECK(std::fabs(mn.z) < 1e-12);                                  // on the ground
+                    CHECK(std::fabs((mx.x - mn.x) / 2 - gi.outsideDiameter / 2) < 2e-4); // tips (between teeth a little less)
+                    // The mate, placed: apexes together, shafts square, teeth not in each other.
+                    GearParams b = a;
+                    b.teeth = z2;
+                    b.mateTeeth = z1;
+                    Mesh mb;
+                    CHECK(buildGear(b, mb));
+                    Mat4 xf;
+                    CHECK(gearMeshPlacement(a, b, xf, &err));
+                    const BevelGeometry ga = bevelGeometry(a), gb = bevelGeometry(b);
+                    CHECK((xf.transformPoint(Vec3(0, 0, gb.apexHeight)) - Vec3(0, 0, ga.apexHeight)).length() < 1e-12);
+                    CHECK(std::fabs(xf.transformDir(Vec3(0, 0, 1)).dot(Vec3(0, 0, 1))) < 1e-12);
+                    // a's large-end pitch point (on +X) lies on b's large-end pitch circle.
+                    const Vec3 pa(ga.pitchRadius, 0, 1.25 * a.module * std::sin(ga.coneAngle));
+                    const Vec3 inB = xf.inverted().transformPoint(pa);
+                    CHECK(std::fabs(std::hypot(inB.x, inB.y) - gb.pitchRadius) < 1e-12);
+                    CHECK(std::fabs(inB.z - 1.25 * b.module * std::sin(gb.coneAngle)) < 1e-12);
+                    int clash = 0, near = 0;
+                    for (const Vertex& v : mb.vertices)
+                        if (v.alive) {
+                            const Vec3 w = xf.transformPoint(v.p);
+                            clash += inside(ma, w);
+                            near += std::hypot(w.x, w.y) < ga.pitchRadius + a.module && w.x > 0 && std::fabs(w.y) < 3 * a.module;
+                        }
+                    for (const Vertex& v : ma.vertices)
+                        if (v.alive) clash += inside(mb, xf.inverted().transformPoint(v.p));
+                    CHECK_EQ(clash, 0);
+                    CHECK(near > 0); // b's teeth reach in among a's
+                    b.mateTeeth = z1 + 1;
+                    CHECK(!gearMeshPlacement(a, b, xf, &err));
+                }
+            GearParams a;
+            a.kind = GearKind::Bevel;
+            a.teeth = a.mateTeeth = 20;
+            a.faceWidth = 0.02; // more than half the cone distance (14 mm)
+            Mesh m;
+            std::string err;
+            CHECK(!buildGear(a, m, nullptr, nullptr, &err) && err.find("half the cone") != std::string::npos);
+        });
+        test("gear notches: standard teeth by module mesh with standard gears", [&] {
+            auto circlePts = [](Mesh& m, double r, int n, double cx) {
+                std::vector<Vec3> pts;
+                for (int i = 0; i < n; ++i) pts.push_back(Vec3(cx + r * std::cos(2 * kPi * i / n), r * std::sin(2 * kPi * i / n), 0));
+                m.drawPolyline(pts, true, m.newCurveId());
+                for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                    if (m.faces[f].alive && m.faces[f].normal.z < 0) m.reverseFace(f);
+            };
+            GearNotchParams p;
+            p.module = 0.001;
+            // A circle about 21 mm across becomes a 21-tooth involute gear.
+            Mesh m;
+            circlePts(m, 0.0104, 48, 0);
+            GearNotchResult r;
+            std::string err;
+            CHECK(gearNotch(m, {onlyFace(m)}, {}, p, &r, &err));
+            CHECK_EQ(r.teeth, 21);
+            CHECK_EQ(r.circles, 1);
+            CHECK(std::fabs(r.pitchDiameter - 0.021) < 1e-12);
+            CHECK_EQ(m.aliveFaceCount(), 1);
+            double lo = 1, hi = 0;
+            for (Id v = 0; v < (Id)m.vertices.size(); ++v)
+                if (m.vertices[v].alive) {
+                    lo = std::min(lo, m.pos(v).length());
+                    hi = std::max(hi, m.pos(v).length());
+                }
+            CHECK(std::fabs(hi - 0.0115) < 1e-9);     // tips at r + m
+            CHECK(std::fabs(lo - 0.00925) < 1e-9);    // roots at r - 1.25 m
+            // The same as Draw > Mechanical > Spur Gear's outline.
+            GearParams gp;
+            gp.module = 0.001;
+            gp.teeth = 21;
+            gp.flankSteps = p.curveSegments;
+            CHECK_EQ((int)m.faces[onlyFace(m)].outer.size(), (int)spurGearOutline(gp).size());
+            // A straight line: whole teeth at exactly π·m, its ends kept.
+            Mesh l;
+            rect(l, 0, -0.01, 0.05, 0);
+            const Id top = l.findEdge(l.findVertex(Vec3(0, 0, 0)), l.findVertex(Vec3(0.05, 0, 0)));
+            GearNotchParams q;
+            q.module = 0.002;
+            CHECK(gearNotch(l, {}, {top}, q, &r, &err));
+            CHECK_EQ(r.teeth, 7); // 50 mm / 6.28 mm
+            CHECK(l.findVertex(Vec3(0, 0, 0)) != kNone && l.findVertex(Vec3(0.05, 0, 0)) != kNone);
+            double ymax = -1, ymin = 1;
+            for (Id v = 0; v < (Id)l.vertices.size(); ++v)
+                if (l.vertices[v].alive && l.pos(v).y > -0.009) {
+                    ymax = std::max(ymax, l.pos(v).y);
+                    ymin = std::min(ymin, l.pos(v).y);
+                }
+            CHECK(std::fabs(ymax - 0.002) < 1e-9);   // m above the line
+            CHECK(std::fabs(ymin + 0.0025) < 1e-9);  // 1.25 m below it
+            // Without fitting, a circle keeps its size and the teeth stretch a little.
+            Mesh c;
+            circlePts(c, 0.0104, 48, 0);
+            p.fitCircles = false;
+            CHECK(gearNotch(c, {onlyFace(c)}, {}, p, &r, &err));
+            CHECK_EQ(r.circles, 0);
+            CHECK_EQ(r.teeth, (int)std::lround(2 * 48 * 0.0104 * std::sin(kPi / 48) / (kPi * 0.001)));
+        });
     }
 
     return g_failed ? 1 : 0;

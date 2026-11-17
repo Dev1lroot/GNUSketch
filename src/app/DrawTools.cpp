@@ -75,10 +75,72 @@ std::vector<Vec3> arcPoints(const Vec3& A, const Vec3& B, const Vec3& n, double 
 
 QString LineTool::status() const {
     if (!hasStart_) return QStringLiteral("Select start point.");
+    if (baseDir_)
+        return QStringLiteral("Select end point or enter length. Square to the start edge is inferred; hold Shift to step the angle by 5\u00b0. "
+                              "Arrow keys lock axes. Esc to finish.");
     return QStringLiteral("Select end point or enter length. Arrow keys lock axes, Shift locks the inference. Esc to finish.");
 }
 
+void LineTool::setBase(const InferenceResult& r) {
+    base_.reset();
+    baseDir_.reset();
+    const bool onEdge = r.type == InferenceResult::Midpoint || r.type == InferenceResult::OnEdge ||
+                        r.type == InferenceResult::OnIntersection || r.type == InferenceResult::Intersection;
+    if (onEdge && r.hasEdge && (r.edgeB - r.edgeA).length() > kTol) {
+        base_ = std::make_pair(r.edgeA, r.edgeB);
+        baseDir_ = (r.edgeB - r.edgeA).normalized();
+        return;
+    }
+    // A vertex where a line was split (two edges in line), or the end of a lone edge.
+    if (r.type != InferenceResult::Endpoint || r.vertex == kNone) return;
+    const Mesh& m = mesh();
+    std::vector<Id> es;
+    for (Id e : m.vertexEdges(r.vertex))
+        if (m.edges[e].alive && !m.edges[e].soft && !m.edges[e].hidden) es.push_back(e);
+    auto seg = [&](Id e) { return std::make_pair(m.pos(m.edges[e].v[0]), m.pos(m.edges[e].v[1])); };
+    for (size_t i = 0; i < es.size(); ++i)
+        for (size_t j = i + 1; j < es.size(); ++j) {
+            const Vec3 a = m.pos(m.edges[es[i]].other(r.vertex)), b = m.pos(m.edges[es[j]].other(r.vertex));
+            const Vec3 da = (a - r.p).normalized(), db = (b - r.p).normalized();
+            if (da.dot(db) < -1 + 1e-9) {
+                base_ = std::make_pair(a, b);
+                baseDir_ = (b - a).normalized();
+                return;
+            }
+        }
+    if (es.size() == 1) {
+        base_ = seg(es[0]);
+        baseDir_ = (base_->second - base_->first).normalized();
+    }
+}
+
+bool LineTool::keyPress(QKeyEvent* e) {
+    // From an edge, Shift steps the angle to it instead of locking the inference.
+    if (e->key() == Qt::Key_Shift && hasStart_ && baseDir_ && !lockDir_ && heldAxis_ < 0) {
+        if (!e->isAutoRepeat() && !angleStep_) {
+            angleStep_ = true;
+            lastMouse_.mods |= Qt::ShiftModifier;
+            mouseMove(lastMouse_);
+        }
+        return false;
+    }
+    return Tool::keyPress(e);
+}
+
+bool LineTool::keyRelease(QKeyEvent* e) {
+    if (e->key() == Qt::Key_Shift && !e->isAutoRepeat() && angleStep_) {
+        angleStep_ = false;
+        lastMouse_.mods &= ~Qt::ShiftModifier;
+        mouseMove(lastMouse_);
+        return false;
+    }
+    return Tool::keyRelease(e);
+}
+
 void LineTool::reset() {
+    base_.reset();
+    baseDir_.reset();
+    angleStep_ = false;
     hasStart_ = false;
     dragging_ = false;
     clearLocks();
@@ -90,8 +152,10 @@ void LineTool::reset() {
 void LineTool::mousePress(const MouseEvent& e) {
     if (e.button != Qt::LeftButton) return;
     lastMouse_ = e;
+    angleStep_ = hasStart_ && baseDir_ && e.shift();
     InferenceResult r = inferPoint(e, hasStart_ ? std::optional<Vec3>(start_) : std::nullopt);
     if (!hasStart_) {
+        setBase(r);
         start_ = r.p;
         hasStart_ = true;
         dragging_ = true;
@@ -106,6 +170,7 @@ void LineTool::mousePress(const MouseEvent& e) {
 
 void LineTool::mouseMove(const MouseEvent& e) {
     lastMouse_ = e;
+    angleStep_ = hasStart_ && baseDir_ && e.shift() && !lockDir_;
     InferenceResult r = inferPoint(e, hasStart_ ? std::optional<Vec3>(start_) : std::nullopt);
     if (hasStart_) setVcb(fmtLen((r.p - start_).length()));
     update();
@@ -114,6 +179,7 @@ void LineTool::mouseMove(const MouseEvent& e) {
 void LineTool::mouseRelease(const MouseEvent& e) {
     if (e.button != Qt::LeftButton) return;
     if (dragging_ && hasStart_ && std::hypot(e.x - pressX_, e.y - pressY_) > 6) {
+        angleStep_ = baseDir_ && e.shift() && !lockDir_;
         InferenceResult r = inferPoint(e, start_);
         commit(start_, r.p);
     }
@@ -121,6 +187,8 @@ void LineTool::mouseRelease(const MouseEvent& e) {
 }
 
 void LineTool::mouseDoubleClick(const MouseEvent&) {
+    base_.reset();
+    baseDir_.reset();
     hasStart_ = false;
     clearLocks();
     refreshStatus();
@@ -139,9 +207,14 @@ void LineTool::commit(const Vec3& a, const Vec3& b) {
     clearLocks();
     if (closed) {
         hasStart_ = false;
+        base_.reset();
+        baseDir_.reset();
     } else {
         start_ = b;
         hasStart_ = true;
+        // The next segment measures its angles from this one.
+        base_ = std::make_pair(a, b);
+        baseDir_ = (b - a).normalized();
     }
     setVcb(fmtLen((b - a).length()));
     refreshStatus();
@@ -155,6 +228,8 @@ bool LineTool::vcbEnter(const QString& text) {
         if (!hasStart_) {
             start_ = c;
             hasStart_ = true;
+            base_.reset();
+            baseDir_.reset();
             refreshStatus();
             update();
             return true;
@@ -175,8 +250,14 @@ bool LineTool::vcbEnter(const QString& text) {
 
 void LineTool::buildPreview(Preview& pv) {
     if (hasStart_) {
-        Color c = hasLock() ? lockColor() : lineColor(start_, inf_.p);
-        pv.line(start_, inf_.p, c, hasLock() ? 2.5f : 1.6f);
+        const Vec3 d = inf_.p - start_;
+        const bool square = baseDir_ && d.length() > kTol && std::fabs(d.normalized().dot(*baseDir_)) < 1e-6;
+        Color c = square ? InferenceEngine::squareColor() : hasLock() ? lockColor() : lineColor(start_, inf_.p);
+        pv.line(start_, inf_.p, c, hasLock() || square ? 2.5f : 1.6f);
+        // The edge the angle is taken from.
+        if (base_ && (square || inf_.type == InferenceResult::Angle))
+            pv.line(base_->first, base_->second, square ? InferenceEngine::squareColor() : Color::rgb8(220, 0, 220), 2.0f, Dash::Dashed);
+        if (square && inf_.type != InferenceResult::Angle && inf_.label().empty()) pv.labels.push_back({inf_.p, "Perpendicular"});
     }
     engine().addPreview(inf_, pv);
 }

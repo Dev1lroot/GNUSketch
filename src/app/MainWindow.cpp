@@ -346,6 +346,9 @@ void MainWindow::buildActions() {
         ->setStatusTip(QStringLiteral("Give the selected copies their own geometry, separate from the other copies."));
     act("explode", "", QStringLiteral("E&xplode"), QKeySequence(), [this] { explode(); })
         ->setStatusTip(QStringLiteral("Turn the selected components back into loose geometry."));
+    act("repairgeometry", "", QStringLiteral("&Repair Geometry"), QKeySequence(), [this] { repairGeometry(); })
+        ->setStatusTip(QStringLiteral("Align every point to the grid of Model Info > Align points to, merge points in one place, "
+                                      "split edges where points lie on them and join loose edges to the faces they lie on."));
     act("modelinfo", "info", QStringLiteral("&Model Info…"), QKeySequence(), [this] { modelInfo(); });
 
     act("zoomext", "zoomextents", QStringLiteral("Zoom E&xtents"), QKeySequence(QStringLiteral("Shift+Z")), [this] { viewport_->zoomExtents(); });
@@ -538,6 +541,8 @@ void MainWindow::buildMenus() {
     edit->addAction(acts_["unsoften"]);
     edit->addAction(acts_["texfit"]);
     edit->addAction(acts_["texreset"]);
+    edit->addSeparator();
+    edit->addAction(acts_["repairgeometry"]);
 
     QMenu* view = menuBar()->addMenu(QStringLiteral("&View"));
     view->addAction(axesAct_);
@@ -1448,6 +1453,7 @@ QJsonObject MainWindow::viewState() const {
     o["precision"] = doc_.units.precision;
     o["lengthSnap"] = (int)doc_.units.snap;
     o["snapStep"] = doc_.units.snapStep;
+    o["alignStep"] = doc_.units.alignStep;
     return o;
 }
 
@@ -1467,6 +1473,7 @@ void MainWindow::applyViewState(const QJsonObject& o) {
     if (o.contains("precision")) doc_.units.precision = std::clamp(o["precision"].toInt(), 0, 6);
     if (o.contains("lengthSnap")) doc_.units.snap = (Units::Snap)std::clamp(o["lengthSnap"].toInt(), 0, 2);
     if (o.contains("snapStep")) doc_.units.snapStep = std::max(1e-6, o["snapStep"].toDouble());
+    if (o.contains("alignStep")) doc_.units.alignStep = std::clamp(o["alignStep"].toDouble(), 0.0, 0.01);
     viewport_->update();
 }
 
@@ -1727,6 +1734,31 @@ void MainWindow::deleteGuides() {
     doc_.state.guides.clear();
     doc_.mesh().touch();
     doc_.commitOp();
+}
+
+void MainWindow::repairGeometry() {
+    viewport_->cancelTool();
+    doc_.beginOp("Repair Geometry");
+    Mesh& m = doc_.mesh();
+    const int faces = m.aliveFaceCount(), edges = m.aliveEdgeCount(), verts = m.aliveVertexCount();
+    int changes = m.alignVertices({}, doc_.units.alignStep);
+    // Edges lying on a face without dividing it (left over by older versions).
+    std::vector<Id> loose;
+    for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+        if (!m.edges[e].alive) continue;
+        bool used = false;
+        for (Id f : m.edgeFaces(e)) used = used || m.faces[f].alive;
+        if (!used) loose.push_back(e);
+    }
+    if (!loose.empty()) m.attachLyingEdges(loose);
+    changes += m.removeDegenerateFaces();
+    m.touch();
+    doc_.commitOp();
+    doc_.validateSelection();
+    statusBar()->showMessage(QStringLiteral("Repair Geometry: %1 fixes; faces %2 → %3, edges %4 → %5, vertices %6 → %7")
+                                 .arg(changes).arg(faces).arg(m.aliveFaceCount()).arg(edges).arg(m.aliveEdgeCount())
+                                 .arg(verts).arg(m.aliveVertexCount()), 8000);
+    viewport_->update();
 }
 
 void MainWindow::modelInfo() {

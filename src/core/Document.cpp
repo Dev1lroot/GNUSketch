@@ -25,6 +25,21 @@ void Document::commitOp() {
         if (&old == &m || old.revision != m.revision) {
             // Edges new or moved by this edit that lie on a face get joined to it.
             if (&old != &m) {
+                // Points new or moved by this edit: on the grid, one per place,
+                // and splitting the edges they lie on.
+                std::set<Id> touched;
+                for (Id v = 0; v < (Id)m.vertices.size(); ++v)
+                    if (m.vertices[v].alive && (v >= (Id)old.vertices.size() || !old.vertices[v].alive ||
+                                                !old.vertices[v].p.nearlyEquals(m.vertices[v].p, 1e-12)))
+                        touched.insert(v);
+                // ...and the old points that moved ones were welded into.
+                for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+                    const Edge& E = m.edges[e];
+                    if (E.alive && (e >= (Id)old.edges.size() || !old.edges[e].alive || old.edges[e].v[0] != E.v[0] ||
+                                    old.edges[e].v[1] != E.v[1]))
+                        touched.insert(E.v, E.v + 2);
+                }
+                if (!touched.empty() && touched.size() < 200000) m.alignVertices(touched, units.alignStep);
                 std::vector<Id> changed;
                 for (Id e = 0; e < (Id)m.edges.size() && changed.size() < 20000; ++e) {
                     const Edge& E = m.edges[e];

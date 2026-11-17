@@ -110,6 +110,10 @@ protected:
     int lockAxis_ = -1;
     int heldAxis_ = -1; // X/Y/Z held
     bool shiftLock_ = false;
+    // Edge the drawn line starts from (Line tool): square to it is inferred,
+    // and with angleStep_ the direction steps in 5 degrees from it.
+    std::optional<Vec3> baseDir_;
+    bool angleStep_ = false;
     MouseEvent lastMouse_;
 };
 

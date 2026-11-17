@@ -204,6 +204,14 @@ public:
     // Merges vertices within tolerance of each other (only those in `candidates`,
     // or all vertices if empty), fixing up edges and faces.
     void weld(const std::set<Id>& candidates = {});
+    // Keeps the topology exact where an edit put points: the given vertices
+    // (all when empty) are rounded to a grid of `step` meters (0 = no
+    // rounding), coincident points become one (weld), every edge a point lies
+    // on is split there (so lines laid over each other become one line, never
+    // two overlapping ones) and faces whose outline that left running back
+    // over itself are rebuilt from the edges of their plane.
+    // Returns how many vertices moved, merged or split an edge.
+    int alignVertices(const std::set<Id>& verts, double step);
     // Merges two collinear edges meeting at v when nothing else uses v.
     bool mergeCollinearAt(Id v);
     // Runs face inference for the given new edges (planes derived from them).

@@ -65,6 +65,14 @@ UnitsSettings::UnitsSettings(Document* doc, bool showUnit, QWidget* parent) : QW
     step_->setToolTip(QStringLiteral("Any length: 1m, 10cm, 5mm, 1/16\", 6\""));
     stepLabel_ = new QLabel(QStringLiteral("Step:"), this);
     form->addRow(stepLabel_, step_);
+    align_ = new QLineEdit(this);
+    align_->setObjectName(QStringLiteral("AlignStep"));
+    align_->setToolTip(QStringLiteral("After every edit, the points it made or moved are rounded to this grid, points in one place "
+                                      "become one and edges they lie on are split there, so micrometer drift never leaves "
+                                      "almost-meeting geometry. Slanted lines may lose up to one step of exactness. "
+                                      "0 = off (points still merge and split edges). Any unit: 0.001mm, 1um, 0.01mm"));
+    form->addRow(QStringLiteral("Align points to:"), align_);
+    connect(align_, &QLineEdit::editingFinished, this, [this] { apply(); });
     connect(precision_, &QComboBox::currentIndexChanged, this, [this] { apply(); });
     connect(snap_, &QComboBox::currentIndexChanged, this, [this] { apply(); });
     connect(step_, &QLineEdit::editingFinished, this, [this] { apply(); });
@@ -88,6 +96,8 @@ void UnitsSettings::refresh() {
     precision_->setCurrentIndex(std::clamp(u.precision, 0, 6));
     snap_->setCurrentIndex((int)u.snap);
     if (!step_->hasFocus()) step_->setText(QString::fromStdString(u.format(u.snapStep)));
+    if (!align_->hasFocus())
+        align_->setText(u.alignStep > 0 ? QString::number(u.alignStep * 1000.0, 'g', 6) + QStringLiteral("mm") : QStringLiteral("0"));
     step_->setVisible(u.snap == Units::Snap::Step);
     stepLabel_->setVisible(u.snap == Units::Snap::Step);
     updating_ = false;
@@ -100,6 +110,17 @@ void UnitsSettings::apply() {
     u.snap = (Units::Snap)snap_->currentIndex();
     double step;
     if (u.parseLength(step_->text().toStdString(), step) && step > 1e-9) u.snapStep = step;
+    {
+        QString t = align_->text().trimmed();
+        double a = -1;
+        if (t.endsWith(QStringLiteral("um")) || t.endsWith(QChar(0xB5) + QStringLiteral("m"))) {
+            if (parseNumber(t.chopped(2).trimmed().toStdString(), a)) a *= 1e-6; // micrometers
+            else a = -1;
+        } else if (!u.parseLength(t.toStdString(), a)) {
+            a = -1;
+        }
+        if (a >= 0) u.alignStep = a < 1e-12 ? 0 : std::min(a, 0.01);
+    }
     remember(u);
     refresh();
     emit changed();
@@ -111,6 +132,7 @@ void UnitsSettings::remember(const Units& u) {
     s.setValue("model/precision", u.precision);
     s.setValue("model/snapMode", (int)u.snap);
     s.setValue("model/snapStep", u.snapStep);
+    s.setValue("model/alignStep", u.alignStep);
 }
 
 void UnitsSettings::loadDefaults(Units& u) {
@@ -119,6 +141,7 @@ void UnitsSettings::loadDefaults(Units& u) {
     u.precision = std::clamp(s.value("model/precision", Units::defaultPrecision(u.unit)).toInt(), 0, 6);
     u.snap = (Units::Snap)std::clamp(s.value("model/snapMode", 0).toInt(), 0, 2);
     u.snapStep = std::max(1e-6, s.value("model/snapStep", 0.01).toDouble());
+    u.alignStep = std::clamp(s.value("model/alignStep", 0.0).toDouble(), 0.0, 0.01);
 }
 
 ScaleSettings::ScaleSettings(Document* doc, Viewport* vp, QWidget* parent) : QWidget(parent), doc_(doc), vp_(vp) {

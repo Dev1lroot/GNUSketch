@@ -22,9 +22,14 @@ public:
     void mouseDoubleClick(const MouseEvent& e) override;
     bool vcbEnter(const QString& text) override;
     void buildPreview(Preview& pv) override;
+    bool keyPress(QKeyEvent* e) override;
+    bool keyRelease(QKeyEvent* e) override;
 
 private:
     void commit(const Vec3& a, const Vec3& b);
+    // The edge a new line starts from (clicked on its midpoint or along it).
+    void setBase(const InferenceResult& r);
+    std::optional<std::pair<Vec3, Vec3>> base_; // for the highlight
     bool hasStart_ = false;
     bool dragging_ = false;
     Vec3 start_;

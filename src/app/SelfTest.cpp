@@ -1039,6 +1039,135 @@ int runSelfTest(MainWindow& w) {
         eng.resetMemory();
     }
 
+    // Three faces of different components meeting at a point with no vertex
+    // there: a corner to snap to. Lines from an edge: square to it is inferred
+    // (blue-green), Shift steps the angle by 5 degrees.
+    {
+        auto plate = [&](Vec3 mn, Vec3 mx, const char* name) {
+            doc.beginOp("Plate");
+            Mesh cube;
+            PrimitiveParams bp;
+            bp.kind = PrimitiveKind::Box;
+            buildPrimitive(bp, cube); // 1 x 1 x 1 on the ground, centred on the origin in x/y
+            Mesh& m = d.mesh();
+            const size_t f0 = m.faces.size();
+            const Vec3 sz = mx - mn;
+            appendMesh(m, cube, Mat4::translation(Vec3((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mn.z)) * Mat4::scale(sz));
+            Selection s;
+            for (Id f = (Id)f0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) s.faces.insert(f);
+            makeComponent(doc.state, s, name);
+            doc.commitOp();
+        };
+        InferenceEngine& eng = vp->inference();
+        InferenceEngine::Options none;
+        plate(Vec3(299, -1, -0.1), Vec3(305, 5, 0), "Floor");
+        plate(Vec3(299, -1, -0.5), Vec3(305, 0, 4), "Wall 1");
+        plate(Vec3(299, -1, -0.5), Vec3(300, 5, 4), "Wall 2");
+        doc.selection.clear();
+        doc.notifySelection();
+        vp->setStandardView(Vec3(-1, -0.8, -0.7));
+        vp->camera().zoomExtents(Vec3(299.5, -0.5, -0.5), Vec3(302, 2, 2));
+        d.pump();
+        eng.resetMemory();
+        const Vec3 corner(300, 0, 0);
+        QPointF q = d.screen(corner) + QPointF(2, 1);
+        InferenceResult rc = eng.infer(q.x(), q.y(), none);
+        d.check(rc.type == InferenceResult::Intersection && rc.p.nearlyEquals(corner, 1e-6),
+                "snaps to the corner where three components' faces meet");
+        for (int i = 0; i < 3; ++i) doc.undo();
+        eng.resetMemory();
+
+        // Two walls standing through a floor: the two virtual intersection
+        // lines on the floor cross, and that crossing snaps.
+        plate(Vec3(299, -1, -0.1), Vec3(305, 5, 0), "Floor");
+        plate(Vec3(299.5, 1.9, -0.5), Vec3(304.5, 2, 1), "Wall X");
+        plate(Vec3(301.9, -0.5, -0.5), Vec3(302, 4.5, 1), "Wall Y");
+        vp->setStandardView(Vec3(-0.6, -1, -0.9));
+        vp->camera().zoomExtents(Vec3(300, 0, -0.2), Vec3(304, 4, 1));
+        d.pump();
+        eng.resetMemory();
+        const Vec3 cross(302, 2, 0);
+        q = d.screen(cross) + QPointF(2, 1);
+        InferenceResult rx = eng.infer(q.x(), q.y(), none);
+        d.check(rx.type == InferenceResult::Intersection && rx.p.nearlyEquals(cross, 1e-6),
+                "snaps where two intersection lines cross");
+        // The same with lots of faces around (a finely divided cylinder under the floor).
+        {
+            doc.beginOp("Cylinder");
+            Mesh cyl;
+            PrimitiveParams cp;
+            cp.kind = PrimitiveKind::Cylinder;
+            cp.segments = 400;
+            buildPrimitive(cp, cyl);
+            Mesh& m = d.mesh();
+            const size_t f0 = m.faces.size();
+            appendMesh(m, cyl, Mat4::translation(Vec3(302, 2, -0.6)) * Mat4::scale(Vec3(1, 1, 0.4)));
+            Selection s;
+            for (Id f = (Id)f0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive) s.faces.insert(f);
+            makeComponent(doc.state, s, "Pillar");
+            doc.commitOp();
+        }
+        d.pump();
+        eng.resetMemory();
+        InferenceResult rx2 = eng.infer(q.x(), q.y(), none);
+        d.check(rx2.type == InferenceResult::Intersection && rx2.p.nearlyEquals(cross, 1e-6),
+                "and still with many faces around it");
+        for (int i = 0; i < 4; ++i) doc.undo();
+        eng.resetMemory();
+
+        // A slanted line on the ground; a line from its midpoint.
+        const Vec3 a(310, 0, 0), b(312, 1, 0), mid = (a + b) * 0.5, e = (b - a).normalized();
+        const Vec3 perp = Vec3(0, 0, 1).cross(e).normalized();
+        doc.beginOp("Line");
+        d.mesh().drawLine(a, b);
+        doc.commitOp();
+        vp->setStandardView(Vec3(0, 0, -1));
+        vp->camera().zoomExtents(Vec3(309, -1.5, 0), Vec3(313, 2.5, 0));
+        d.pump();
+        InferenceEngine::Options po;
+        po.ref = mid;
+        po.baseDir = e;
+        const Vec3 near = mid + perp * 1.0 + e * 0.02; // a little off square
+        q = d.screen(near);
+        InferenceResult rp = eng.infer(q.x(), q.y(), po);
+        d.check(rp.type == InferenceResult::Perpendicular && std::fabs((rp.p - mid).normalized().dot(e)) < 1e-9,
+                "a line from an edge's midpoint snaps square to the edge");
+        vp->setTool(ToolId::Line);
+        d.move(d.screen(mid));
+        d.click(d.screen(mid));
+        d.move(d.screen(near));
+        d.click(d.screen(near));
+        vp->setTool(ToolId::Select);
+        const Id vm = d.mesh().findVertex(mid, 1e-6);
+        bool square = false;
+        if (vm != kNone)
+            for (Id ed : d.mesh().vertexEdges(vm)) {
+                const Vec3 dd = (d.mesh().pos(d.mesh().edges[ed].other(vm)) - mid).normalized();
+                square = square || std::fabs(dd.dot(e)) < 1e-9;
+            }
+        d.check(square, "Line draws square from the midpoint");
+
+        // Shift: the angle to the edge in 5 degree steps (37 -> 35).
+        const double ang = 37.0 * kPi / 180.0;
+        const Vec3 at37 = mid + (e * std::cos(ang) + perp * std::sin(ang)) * 1.2;
+        vp->setTool(ToolId::Line);
+        d.move(d.screen(mid));
+        d.click(d.screen(mid)); // now a vertex between the two halves of the edge
+        d.move(d.screen(at37), Qt::NoButton, Qt::ShiftModifier);
+        d.click(d.screen(at37), Qt::ShiftModifier);
+        vp->setTool(ToolId::Select);
+        bool step35 = false;
+        for (Id ed : d.mesh().vertexEdges(vm)) {
+            const Vec3 dd = (d.mesh().pos(d.mesh().edges[ed].other(vm)) - mid).normalized();
+            step35 = step35 || std::fabs(std::acos(std::clamp(dd.dot(e), -1.0, 1.0)) * 180.0 / kPi - 35.0) < 1e-6;
+        }
+        d.check(step35, "Shift steps the angle to the edge by 5 degrees");
+        for (int i = 0; i < 3; ++i) doc.undo();
+        eng.resetMemory();
+    }
+
     // Rectangles on vertical planes, front side toward the camera.
     {
         auto faceNear = [&](const Vec3& p) {

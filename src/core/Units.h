@@ -16,6 +16,12 @@ struct Units {
     enum class Snap { Off, Precision, Step };
     Snap snap = Snap::Off;
     double snapStep = 0.01; // meters (Snap::Step)
+    // After every edit the points it made or moved are rounded to this grid
+    // (meters, 0 = off), so drift of micrometers never leaves geometry that
+    // almost meets. Off by default: rounding each coordinate costs exact
+    // lengths and angles of slanted lines (up to about one step). Points in
+    // one place merging and edges splitting at points on them happen always.
+    double alignStep = 0;
     // The step in meters (0 when snapping is off). Precision: one unit of the
     // last decimal shown (0.1mm at one decimal, 1/100" ...).
     double snapLength() const;

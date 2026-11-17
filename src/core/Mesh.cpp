@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <unordered_set>
 
@@ -1834,6 +1835,155 @@ void Mesh::weld(const std::set<Id>& candidates) {
     gridDirty_ = true;
     adjDirty_ = true;
     revision = nextMeshRevision();
+}
+
+int Mesh::alignVertices(const std::set<Id>& vertsIn, double step) {
+    std::vector<Id> vs;
+    if (vertsIn.empty()) {
+        for (Id v = 0; v < (Id)vertices.size(); ++v)
+            if (vertices[v].alive) vs.push_back(v);
+    } else {
+        for (Id v : vertsIn)
+            if (v >= 0 && v < (Id)vertices.size() && vertices[v].alive) vs.push_back(v);
+    }
+    if (vs.empty()) return 0;
+    int changes = 0;
+
+    // 1. Round to the grid: points meant to be in one place land exactly there.
+    if (step > 0) {
+        auto q = [step](double x) { return std::round(x / step) * step; };
+        std::set<Id> movedVerts;
+        for (Id v : vs) {
+            Vec3& p = vertices[v].p;
+            const Vec3 r(q(p.x), q(p.y), q(p.z));
+            if (r.x != p.x || r.y != p.y || r.z != p.z) {
+                p = r;
+                movedVerts.insert(v);
+            }
+        }
+        if (!movedVerts.empty()) {
+            changes += (int)movedVerts.size();
+            for (Id f = 0; f < (Id)faces.size(); ++f) {
+                if (!faces[f].alive) continue;
+                for (Id v : faceVertices(f))
+                    if (movedVerts.count(v)) {
+                        recomputeNormal(f);
+                        break;
+                    }
+            }
+            markGeometryMoved();
+        }
+    }
+
+    // 2. One vertex per place.
+    std::vector<Vec3> at;
+    for (Id v : vs) at.push_back(vertices[v].p);
+    const int aliveBefore = aliveVertexCount();
+    weld(std::set<Id>(vs.begin(), vs.end()));
+    changes += aliveBefore - aliveVertexCount();
+    std::set<Id> cand;
+    for (size_t i = 0; i < vs.size(); ++i) {
+        Id v = vertices[vs[i]].alive ? vs[i] : findVertex(at[i]);
+        if (v != kNone) cand.insert(v);
+    }
+
+    // 3. No point inside an edge: split the edge there. An edge lying over a
+    // chain of others (the same line drawn twice, split differently) falls
+    // apart into that chain's pieces, which already exist, and is gone.
+    std::vector<Id> faceLoopSize(faces.size(), 0);
+    for (Id f = 0; f < (Id)faces.size(); ++f)
+        if (faces[f].alive) faceLoopSize[f] = (Id)faceVertices(f).size();
+    auto inside = [&](Id e, Id v) {
+        const Edge& E = edges[e];
+        if (E.has(v)) return false;
+        const Vec3 a = pos(E.v[0]), b = pos(E.v[1]), P = pos(v);
+        const double len = (b - a).length();
+        if (len < kTol) return false;
+        for (int i = 0; i < 3; ++i)
+            if (P[i] < std::min(a[i], b[i]) - kTol || P[i] > std::max(a[i], b[i]) + kTol) return false;
+        const double t = closestParamOnSegment(a, b, P), eps = kTol / len;
+        return t > eps && t < 1 - eps && (lerp(a, b, t) - P).length() <= kTol;
+    };
+    auto byX = [&](std::vector<Id>& L) {
+        std::sort(L.begin(), L.end(), [&](Id a, Id b) { return vertices[a].p.x < vertices[b].p.x; });
+    };
+    auto inXRange = [&](const std::vector<Id>& L, double lo, double hi, const std::function<void(Id)>& fn) {
+        auto it = std::lower_bound(L.begin(), L.end(), lo, [&](Id v, double x) { return vertices[v].p.x < x; });
+        for (; it != L.end() && vertices[*it].p.x <= hi; ++it) fn(*it);
+    };
+    for (int pass = 0; pass < 4 && !cand.empty(); ++pass) {
+        std::vector<Id> cv;
+        for (Id v : cand)
+            if (vertices[v].alive) cv.push_back(v);
+        byX(cv);
+        std::vector<Id> all;
+        for (Id v = 0; v < (Id)vertices.size(); ++v)
+            if (vertices[v].alive) all.push_back(v);
+        byX(all);
+        std::set<Id> candEdges;
+        for (Id v : cv)
+            for (Id e : vertexEdges(v))
+                if (edges[e].alive) candEdges.insert(e);
+        std::set<Id> toSplit;
+        for (Id e = 0; e < (Id)edges.size(); ++e) {
+            if (!edges[e].alive) continue;
+            const double x0 = pos(edges[e].v[0]).x, x1 = pos(edges[e].v[1]).x;
+            const double lo = std::min(x0, x1) - kTol, hi = std::max(x0, x1) + kTol;
+            // A moved point on any edge; any point on a moved edge.
+            const std::vector<Id>& pts = candEdges.count(e) ? all : cv;
+            bool hit = false;
+            inXRange(pts, lo, hi, [&](Id v) { hit = hit || inside(e, v); });
+            if (hit) toSplit.insert(e);
+        }
+        if (toSplit.empty()) break;
+        const Id firstNew = (Id)edges.size();
+        std::set<Id> next;
+        for (Id e : toSplit) {
+            if (!edges[e].alive) continue;
+            next.insert(edges[e].v[0]);
+            next.insert(edges[e].v[1]);
+            splitEdgeAtVertices(e);
+            ++changes;
+        }
+        for (Id e = firstNew; e < (Id)edges.size(); ++e)
+            if (edges[e].alive) next.insert(edges[e].v[0]), next.insert(edges[e].v[1]);
+        cand.swap(next);
+    }
+    ensureAdjacency();
+
+    // 4. Faces whose outline the splits made run along one edge twice (a slit
+    // between two copies of a line) are found again from their plane's edges.
+    std::vector<FaceSnapshot> snaps;
+    std::vector<Plane> planes;
+    for (Id f = 0; f < (Id)faces.size() && f < (Id)faceLoopSize.size(); ++f) {
+        if (!faces[f].alive || (Id)faceVertices(f).size() == faceLoopSize[f]) continue;
+        std::set<uint64_t> seen;
+        bool twice = false;
+        auto scan = [&](const std::vector<Id>& L) {
+            for (size_t i = 0; i < L.size(); ++i)
+                if (!seen.insert(edgeKey(L[i], L[(i + 1) % L.size()])).second) twice = true;
+        };
+        scan(faces[f].outer);
+        for (const auto& h : faces[f].holes) scan(h);
+        if (!twice) continue;
+        const Plane P = facePlane(f);
+        size_t k = 0;
+        while (k < planes.size() && !planes[k].coincident(P, kTol * 10)) ++k;
+        if (k == planes.size()) planes.push_back(P);
+        snaps.push_back(snapshot(f));
+        faces[f].alive = false;
+        adjDirty_ = true;
+    }
+    for (size_t k = 0; k < planes.size(); ++k) {
+        std::vector<FaceSnapshot> mine;
+        for (const FaceSnapshot& s : snaps)
+            if (std::fabs(s.normal.dot(planes[k].n)) > 1 - 1e-6) mine.push_back(s);
+        // Only what lay inside the broken faces comes back (their holes stay holes).
+        rebuildPlane(planes[k], {}, mine);
+        ++changes;
+    }
+    if (changes) revision = nextMeshRevision();
+    return changes;
 }
 
 void Mesh::compact(std::vector<Id>* vmapOut, std::vector<Id>* emapOut, std::vector<Id>* fmapOut) {

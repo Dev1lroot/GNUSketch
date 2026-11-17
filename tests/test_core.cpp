@@ -4765,5 +4765,71 @@ int main() {
         });
     }
 
+    test("align vertices: grid, overlapping lines become one, slit faces rebuilt", [] {
+        auto tJunctions = [](const Mesh& m) {
+            int n = 0;
+            for (Id e = 0; e < (Id)m.edges.size(); ++e) {
+                if (!m.edges[e].alive) continue;
+                const Vec3 a = m.pos(m.edges[e].v[0]), d = m.pos(m.edges[e].v[1]) - a;
+                for (Id v = 0; v < (Id)m.vertices.size(); ++v) {
+                    if (!m.vertices[v].alive || m.edges[e].has(v) || m.vertexEdges(v).empty()) continue;
+                    const double t = (m.pos(v) - a).dot(d) / d.dot(d);
+                    if (t > 1e-6 && t < 1 - 1e-6 && (a + d * t - m.pos(v)).length() < 1e-7) ++n;
+                }
+            }
+            return n;
+        };
+        auto faceAt = [](const Mesh& m, Vec3 p) {
+            for (Id f = 0; f < (Id)m.faces.size(); ++f)
+                if (m.faces[f].alive && std::fabs(m.facePlane(f).distance(p)) < 1e-6 && m.pointInFace(f, p, false)) return f;
+            return kNone;
+        };
+        // Drift below a micrometer goes to the grid.
+        {
+            Mesh m;
+            m.drawPolyline({{0, 0, 3e-7}, {1, 0, -2e-7}, {1, 1, 4e-7}, {0, 1, 0}}, true);
+            m.alignVertices({}, 1e-6);
+            for (const Vertex& v : m.vertices)
+                if (v.alive) CHECK(v.p.z == 0);
+        }
+        // The same line twice, split at different points (pentagon_cap.gsketch):
+        // a face running into the slit between them, and lines drawn over it
+        // that do not divide it.
+        {
+            Mesh m;
+            m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+            const Id a = m.findVertex({0, 0, 0}), b = m.findVertex({1, 0, 0});
+            const Id x = m.addVertexRaw({0.3, 0, 0}), y = m.addVertexRaw({0.7, 0, 0});
+            m.addEdgeRaw(a, x);
+            m.addEdgeRaw(x, y);
+            m.addEdgeRaw(y, b); // a-b and a-x-y-b overlap
+            CHECK(tJunctions(m) > 0);
+            m.alignVertices({}, 1e-6);
+            CHECK_EQ(tJunctions(m), 0);
+            CHECK(m.findEdge(a, b) == kNone);
+            CHECK(faceAt(m, {0.5, 0.5, 0}) != kNone);
+            m.drawLine({0.5, 0, 0}, {0.5, 1, 0});
+            CHECK_EQ(m.aliveFaceCount(), 2);
+        }
+        // Push/pull back flush leaves no point inside an edge once committed.
+        {
+            Document d;
+            Mesh& m = d.mesh();
+            d.beginOp("draw");
+            m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+            m.drawLine({0, 0.8, 0}, {1, 0.8, 0});
+            m.drawPolyline({{0.3, 0.4, 0}, {0.7, 0.4, 0}, {0.7, 0.8, 0}, {0.3, 0.8, 0}}, true);
+            m.drawLine({0.4, 0.8, 0}, {0.4, 0.9, 0});
+            d.commitOp();
+            d.beginOp("up");
+            Id g = m.pushPull(faceAt(m, {0.35, 0.45, 0}), 0.1);
+            d.commitOp();
+            d.beginOp("down");
+            m.pushPull(g, -0.1);
+            d.commitOp();
+            CHECK_EQ(tJunctions(m), 0);
+        }
+    });
+
     return g_failed ? 1 : 0;
 }

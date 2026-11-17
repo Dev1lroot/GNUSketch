@@ -49,6 +49,7 @@ private:
     QComboBox* snap_;
     QLineEdit* step_;
     QLabel* stepLabel_;
+    QLineEdit* align_;
     bool updating_ = false;
 };
 

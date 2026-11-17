@@ -25,7 +25,8 @@ struct InferenceResult {
         Parallel,      // parallel to the last hovered edge
         Perpendicular, // perpendicular to the last hovered edge
         FaceNormal,    // perpendicular to the last hovered face
-        OnIntersection // on the line where two faces cut through each other (no edge there)
+        OnIntersection, // on the line where two faces cut through each other (no edge there)
+        Angle           // Shift held: at a whole step of degrees from the base edge
     };
     Type type = None;
     Vec3 p;
@@ -38,6 +39,7 @@ struct InferenceResult {
     Color lineColor;
     Vec3 dir;             // direction inferred (axis / edge) for shift-locking
     bool hasDir = false;
+    double angleDeg = 0;  // Angle: the stepped angle to the base edge
     std::string label() const;
     bool isSnap() const { return type == Endpoint || type == Midpoint || type == Origin || type == GuidePoint || type == Intersection; }
 };
@@ -59,10 +61,17 @@ public:
         std::optional<Plane> plane;  // constrain result to this plane
         const std::set<Id>* excludeVerts = nullptr; // geometry being moved
         bool axes = true;            // axis inference from ref
+        // Direction of the edge the line starts from (its midpoint or a point
+        // on it, or the previous segment): square to it is inferred, and with
+        // angleStepDeg > 0 the direction steps by that many degrees from it.
+        std::optional<Vec3> baseDir;
+        double angleStepDeg = 0;
         double snapPx = 10.0;
     };
 
     InferenceEngine(const Document& doc, const Camera& cam) : doc_(doc), cam_(cam) {}
+    // Light blue-green: a line square (90 degrees) to the edge it starts from.
+    static Color squareColor() { return Color::rgb8(0, 190, 210); }
 
     InferenceResult infer(double px, double py, const Options& opt);
     PickResult pick(double px, double py, double edgeTolPx = 6.0, const std::set<Id>* excludeVerts = nullptr) const;
@@ -152,6 +161,12 @@ private:
     // Front-most face under the cursor (index into faces, -1 if none).
     int frontFace(const std::vector<FaceRef>& faces, const Ray& r, double& t) const;
     std::optional<EdgeHit> ix_; // intersection line near the cursor (set per infer call)
+    // Where three faces (of different objects, or cutting through each other)
+    // meet near the cursor with no vertex there: a corner to snap to. Only
+    // closer than tolPx and not hidden behind the face at tFront.
+    // The face's outline, projected, covers the cursor or passes within tolPx of it.
+    bool outlineNearCursor(const FaceRef& F, double px, double py, double tolPx) const;
+    bool pickCorner(double px, double py, double tolPx, const std::vector<FaceRef>& faces, double tFront, Vec3& out) const;
     bool pickAnyEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts, double tFace, EdgeHit& hit) const;
     // World-space hard edges of the instances that offer snaps (cached).
     const std::vector<Segment>& instanceEdges(int index, const PlacedInstance& p) const;

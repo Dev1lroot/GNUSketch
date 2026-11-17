@@ -74,11 +74,15 @@ Color Tool::lockColor() const {
 
 Color Tool::lineColor(const Vec3& a, const Vec3& b) const {
     Vec3 d = (b - a).normalized();
+    // Square to the edge the line starts from: blue-green, over the axis colours.
+    if (baseDir_ && (b - a).length() > kTol && std::fabs(d.dot(baseDir_->normalized())) < 1e-6) return InferenceEngine::squareColor();
+    if (inf_.type == InferenceResult::Perpendicular && inf_.p.nearlyEquals(b)) return InferenceEngine::squareColor();
     for (int i = 0; i < 3; ++i)
         if (std::fabs(d[i]) > 1 - 1e-9) return Renderer::axisColor(i);
     if (lockDir_ && lockAxis_ < 0) return Color::rgb8(220, 0, 220);
     // Following the direction of existing geometry.
-    if ((inf_.type == InferenceResult::AlongEdge || inf_.type == InferenceResult::Parallel) && inf_.p.nearlyEquals(b))
+    if ((inf_.type == InferenceResult::AlongEdge || inf_.type == InferenceResult::Parallel || inf_.type == InferenceResult::Angle) &&
+        inf_.p.nearlyEquals(b))
         return Color::rgb8(220, 0, 220);
     return Color::rgb8(0, 0, 0);
 }
@@ -98,6 +102,10 @@ InferenceResult Tool::inferPoint(const MouseEvent& e, std::optional<Vec3> ref, s
     o.plane = plane;
     o.excludeVerts = exclude;
     o.axes = axes;
+    if (ref && baseDir_) {
+        o.baseDir = baseDir_;
+        o.angleStepDeg = angleStep_ ? 5.0 : 0.0;
+    }
     inf_ = engine().infer(e.x, e.y, o);
     // Length snapping: a free point moves along its direction from the
     // reference to the nearest whole step.
@@ -130,6 +138,7 @@ bool Tool::lengthSnappable(const InferenceResult& r) {
     case InferenceResult::AlongEdge:
     case InferenceResult::Parallel:
     case InferenceResult::Perpendicular:
+    case InferenceResult::Angle:
     case InferenceResult::FaceNormal: return true;
     default: return false;
     }

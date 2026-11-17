@@ -143,6 +143,7 @@ private:
     void textureFitSelection(bool fit);
     void deleteGuides();
     void modelInfo();
+    void repairGeometry();
     void roundCorners();
     void insertPrimitive();
     void insertPart(PartFamily family);

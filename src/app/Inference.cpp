@@ -31,6 +31,7 @@ std::string InferenceResult::label() const {
     case Perpendicular: return "Perpendicular to Edge";
     case FaceNormal: return "Perpendicular to Face";
     case OnIntersection: return "On Intersection";
+    case Angle: return std::to_string((int)std::lround(angleDeg)) + "\u00b0";
     default: return "";
     }
 }
@@ -365,6 +366,80 @@ bool InferenceEngine::faceUnder(double px, double py, const std::set<Id>* ex, Ve
     point = r.at(t);
     normal = faces[f].plane.n;
     return true;
+}
+
+bool InferenceEngine::outlineNearCursor(const FaceRef& F, double px, double py, double tolPx) const {
+    const std::vector<Id>& L = F.mesh->faces[F.face].outer;
+    std::vector<std::pair<double, double>> s(L.size());
+    for (size_t i = 0; i < L.size(); ++i)
+        if (!cam_.project(F.xf.transformPoint(F.mesh->pos(L[i])), s[i].first, s[i].second)) return true; // behind the camera: keep
+    bool inside = false;
+    const double tol2 = tolPx * tolPx;
+    for (size_t i = 0, j = L.size() - 1; i < L.size(); j = i++) {
+        const auto [xi, yi] = s[i];
+        const auto [xj, yj] = s[j];
+        if ((yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) inside = !inside;
+        // Distance from the cursor to this side.
+        const double dx = xj - xi, dy = yj - yi, l2 = dx * dx + dy * dy;
+        const double t = l2 > 0 ? std::clamp(((px - xi) * dx + (py - yi) * dy) / l2, 0.0, 1.0) : 0.0;
+        const double ex = xi + dx * t - px, ey = yi + dy * t - py;
+        if (ex * ex + ey * ey <= tol2) return true;
+    }
+    return inside;
+}
+
+bool InferenceEngine::pickCorner(double px, double py, double tolPx, const std::vector<FaceRef>& faces, double tFront, Vec3& out) const {
+    // Only faces that reach near the cursor on screen.
+    std::vector<int> near;
+    for (int i = 0; i < (int)faces.size(); ++i) {
+        const FaceRef& F = faces[i];
+        const MeshBoxes& b = boxesOf(*F.mesh);
+        if (F.face < (Id)b.faces.size() && boxNearCursor(b.faces[F.face], F.xf, px, py, tolPx) && outlineNearCursor(F, px, py, tolPx))
+            near.push_back(i);
+    }
+    if (near.size() < 3 || near.size() > 400) return false; // too many to try every three
+    const Ray r = cam_.ray(px, py);
+    // Nothing in front of p along the ray through p itself (the cursor is a few
+    // pixels off: on a face seen at a grazing angle, the depth under the
+    // cursor says little about the depth at p).
+    auto unhidden = [&](const Vec3& p) {
+        double sx, sy;
+        if (!cam_.project(p, sx, sy)) return false;
+        const Ray rp = cam_.ray(sx, sy);
+        double t;
+        if (frontFace(faces, rp, t) < 0) return true;
+        return (p - rp.origin).dot(rp.dir) <= t + std::max(cam_.pixelSize(p) * 3.0, 1e-4);
+    };
+    (void)tFront;
+    double best = tolPx;
+    bool found = false;
+    for (size_t a = 0; a < near.size(); ++a) {
+        const Plane& A = faces[near[a]].plane;
+        for (size_t b = a + 1; b < near.size(); ++b) {
+            const Plane& B = faces[near[b]].plane;
+            Vec3 u = A.n.cross(B.n);
+            if (u.length() < 1e-6) continue;
+            // The line where A and B meet must pass near the cursor.
+            const Vec3 p0 = (B.n.cross(u) * A.d + u.cross(A.n) * B.d) / u.length2();
+            double s, t;
+            if (!closestLineLine(p0, u.normalized(), r.origin, r.dir, s, t) || pixelDistance(p0 + u.normalized() * s, px, py) >= best) continue;
+            for (size_t c = b + 1; c < near.size(); ++c) {
+                const Plane& C = faces[near[c]].plane;
+                const double det = C.n.dot(u);
+                if (std::fabs(det) < 1e-6) continue;
+                const Vec3 p = (B.n.cross(C.n) * A.d + C.n.cross(A.n) * B.d + u * C.d) / det;
+                const double d = pixelDistance(p, px, py);
+                if (d >= best) continue;
+                if (cam_.perspective && (p - r.origin).dot(r.dir) < 0) continue;
+                if (!faceContains(faces[near[a]], p) || !faceContains(faces[near[b]], p) || !faceContains(faces[near[c]], p)) continue;
+                if (!seeThrough() && !unhidden(p)) continue;
+                best = d;
+                out = p;
+                found = true;
+            }
+        }
+    }
+    return found;
 }
 
 bool InferenceEngine::pickIntersection(double px, double py, double tolPx, const std::vector<FaceRef>& faces, EdgeHit& hit) const {
@@ -720,6 +795,18 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
             }
         }
     }
+    // Corners where three faces meet (no vertex there), when closer than an
+    // intersection line's end.
+    if (bestV == kNone && (!instPoint || ixEnd)) {
+        const double lim = ixEnd ? pixelDistance(instP, px, py) : snap;
+        if (Vec3 c; pickCorner(px, py, lim, faces, tFace, c)) {
+            instP = c;
+            instPoint = true;
+            ixEnd = false;
+            res.hasEdge = false;
+            res.type = InferenceResult::Intersection;
+        }
+    }
     Id bestMid = kNone;
     double bestMD = snap;
     if (bestV == kNone && !instPoint) {
@@ -771,7 +858,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         res.vertex = bestV;
         remembered_ = res.p;
     } else if (instPoint) {
-        res.type = ixEnd ? InferenceResult::Intersection : InferenceResult::Endpoint;
+        res.type = ixEnd || res.type == InferenceResult::Intersection ? InferenceResult::Intersection : InferenceResult::Endpoint;
         res.p = instP;
         remembered_ = res.p;
         if (ixEnd) {
@@ -845,6 +932,42 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         return lr;
     }
 
+    // --- angle steps from the base edge (Shift) ---------------------------------
+    if (o.ref && o.baseDir && o.angleStepDeg > 0 && o.baseDir->length() > kTol) {
+        const Vec3 e = o.baseDir->normalized();
+        Vec3 raw = res.type != InferenceResult::None ? res.p : std::isfinite(tFace) ? r.at(tFace) : freePoint(r, o);
+        if (o.plane) raw = o.plane->project(raw);
+        const Vec3 v = raw - *o.ref;
+        if (v.length() > kTol) {
+            // The plane of the angle: the drawing plane, or else the one
+            // through the base edge and the cursor.
+            Vec3 n = e.cross(v);
+            if (o.plane && std::fabs(o.plane->n.dot(e)) < 1e-6) n = n.dot(o.plane->n) < 0 ? -o.plane->n : o.plane->n;
+            const Vec3 side = n.length() > 1e-9 * v.length() ? n.normalized().cross(e) : Vec3();
+            const double theta = std::atan2(v.dot(side), v.dot(e)); // 0..pi
+            const double step = o.angleStepDeg * kPi / 180.0;
+            const double ts = std::round(theta / step) * step;
+            const Vec3 d = (e * std::cos(ts) + side * std::sin(ts)).normalized();
+            InferenceResult ar;
+            double s, t;
+            if (res.type != InferenceResult::None) {
+                s = (res.p - *o.ref).dot(d);
+                ar.hasLine = true; // dotted line from the snapped point
+                ar.lineA = res.p;
+                ar.lineB = *o.ref + d * s;
+                ar.lineColor = Color::rgb8(120, 120, 120);
+            } else if (!closestLineLine(*o.ref, d, r.origin, r.dir, s, t)) {
+                s = v.dot(d);
+            }
+            ar.type = InferenceResult::Angle;
+            ar.p = *o.ref + d * s;
+            ar.dir = d;
+            ar.hasDir = true;
+            ar.angleDeg = ts * 180.0 / kPi;
+            return ar;
+        }
+    }
+
     if (res.type != InferenceResult::None) {
         if (o.plane && !o.plane->contains(res.p)) {
             // Keep the snap but project onto the drawing plane.
@@ -893,6 +1016,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     bool edgeDir = false;
     InferenceResult::Type dirType = InferenceResult::AlongEdge;
     Vec3 edgeDirV, edgePt;
+    bool squareToBase = false; // the Perpendicular found is to the base edge
     if (o.ref && o.axes) {
         struct Cand {
             Vec3 dir;
@@ -962,6 +1086,35 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
             }
         }
     }
+    // Square to the base edge (any direction in the plane normal to it through
+    // the reference point, or the one line of it in the drawing plane). An axis
+    // in that plane keeps its colour; it is square too.
+    if (o.ref && o.axes && o.baseDir && o.baseDir->length() > kTol) {
+        const Vec3 e = o.baseDir->normalized();
+        const bool axisSquare = bestAxis >= 0 && std::fabs(kAxes[bestAxis].dot(e)) < 1e-9;
+        Vec3 raw = std::isfinite(tFace) ? r.at(tFace) : freePoint(r, o);
+        Vec3 q;
+        bool ok = true;
+        if (o.plane) {
+            const Vec3 dp = o.plane->n.cross(e);
+            ok = dp.length() > 1e-6;
+            if (ok) q = *o.ref + dp.normalized() * (o.plane->project(raw) - *o.ref).dot(dp.normalized());
+        } else {
+            q = raw - e * (raw - *o.ref).dot(e);
+        }
+        if (ok && !axisSquare && (q - *o.ref).length() > kTol) {
+            const double d = pixelDistance(q, px, py);
+            if (d < bestAD) {
+                bestAD = d;
+                bestAxis = -1;
+                edgeDir = true;
+                dirType = InferenceResult::Perpendicular;
+                edgeDirV = (q - *o.ref).normalized();
+                edgePt = q;
+                squareToBase = true;
+            }
+        }
+    }
     // A direction inference must not keep the line from ending on geometry:
     // stop where the direction line crosses the hovered edge or pierces the
     // hovered face. An edge the line never meets wins over the direction.
@@ -1008,12 +1161,12 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         res.p = o.plane ? o.plane->project(edgePt) : edgePt;
         res.dir = edgeDirV;
         res.hasDir = true;
-        if (dirType == InferenceResult::Parallel || dirType == InferenceResult::Perpendicular) {
-            // Highlight the edge the line runs parallel to.
+        if ((dirType == InferenceResult::Parallel || dirType == InferenceResult::Perpendicular) && !squareToBase && rememberedEdge_) {
+            // Highlight the edge the line runs parallel or square to.
             res.hasLine = true;
             res.lineA = rememberedEdge_->a;
             res.lineB = rememberedEdge_->b;
-            res.lineColor = Color::rgb8(220, 0, 220);
+            res.lineColor = dirType == InferenceResult::Perpendicular ? InferenceEngine::squareColor() : Color::rgb8(220, 0, 220);
         }
         return res;
     }

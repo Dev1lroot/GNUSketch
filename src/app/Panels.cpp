@@ -1035,6 +1035,8 @@ void InstructorPanel::showTool(ToolId id) {
         "Click the solid that cuts (or select it before picking the tool), then the solid to cut it out of.", "Esc: start over"}; break;
     case ToolId::SolidTrim: i = {"Trim", "Cuts the first solid out of the second but keeps the first, e.g. to fit a part into another.",
         "Click the solid that cuts (or select it before picking the tool), then the solid to trim.", "Esc: start over"}; break;
+    case ToolId::SolidKnife: i = {"Knife", "Cuts any component (a solid, an open surface, a loose sheet) in two along a flat face: exactly as far as the face reaches. Solids get the cut closed, so both parts stay solid.",
+        "Draw a flat face (a rectangle, a circle...) through the part, or make one a component. Click the face, then the component to cut. The knife is kept.", "Esc: start over"}; break;
     case ToolId::SolidSplit: i = {"Split", "Splits two overlapping solids into three components: each one's own part and the part they share.",
         "Click the first solid, then the second.", "Esc: start over"}; break;
     case ToolId::Flatten: i = {"Flatten", "Levels the surface around the brush to the height of the point where you start.",

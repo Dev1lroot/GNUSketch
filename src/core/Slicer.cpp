@@ -153,7 +153,8 @@ bool sliceSelection(ModelState& st, Selection& sel, const SlicerParams& p, Slice
     if (src.aliveFaceCount() == 0) return fail("Select a solid (its faces, or a component) to slice.");
     std::string why;
     if (!isSolid(src, &why))
-        return fail("The Slicer needs closed solids: " + why + " (Effects > Solid > Solidify can close a model).");
+        return fail("The Slicer needs closed solids: " + why +
+                    ". Effects > Solid > Solidify closes small holes; larger openings need faces drawn over them.");
 
     Vec3 mn, mx;
     boundsOf(src, mn, mx);
@@ -189,13 +190,25 @@ bool sliceSelection(ModelState& st, Selection& sel, const SlicerParams& p, Slice
                 for (double nudge : {0.0, 1e-6, -1e-6, 3e-6}) {
                     Vec3 bl = mn - far, bh = mx + far;
                     bl[a] = c + nudge;
-                    if (splitMeshes(rest.m, solidBox(bl, bh), below, above, unused, &err)) {
-                        ok = true;
-                        cuts[a][k] = c + nudge;
-                        break;
+                    if (!splitMeshes(rest.m, solidBox(bl, bh), below, above, unused, &err)) continue;
+                    // Both pieces must be closed solids again, or the next cut
+                    // (and the print) fails; a nudged plane may cut cleanly.
+                    std::string why;
+                    if ((below.aliveFaceCount() > 0 && !isSolid(below, &why)) ||
+                        (above.aliveFaceCount() > 0 && !isSolid(above, &why))) {
+                        err = "a piece would not be closed: " + why;
+                        continue;
                     }
+                    ok = true;
+                    cuts[a][k] = c + nudge;
+                    break;
                 }
-                if (!ok) return fail("Could not cut the model: " + err);
+                if (!ok) {
+                    char at[64];
+                    std::snprintf(at, sizeof at, "%c = %.4g m", "xyz"[a], c);
+                    return fail("Could not cut the model at " + std::string(at) + ": " + err +
+                                ". Try a slightly different slice size.");
+                }
                 if (below.aliveFaceCount() > 0) {
                     Piece b;
                     b.m = std::move(below);

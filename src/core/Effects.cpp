@@ -2177,6 +2177,122 @@ bool effectHollow(Mesh& m, const std::set<Id>& faces, const HollowParams& p, Eff
     return true;
 }
 
+namespace {
+
+// Solidify closes holes up to this many grid cells across.
+constexpr double kHoleCells = 4;
+
+// The holes in the surface `faces`: loops of edges that border only one face
+// (of the whole mesh, and that one selected). Faces around a hole need not
+// agree on which way they face (the patch is turned to match later). A loop
+// passing a corner twice (two holes touching at a point) comes back as two.
+std::vector<std::vector<Id>> holeLoops(const Mesh& m, const std::set<Id>& faces) {
+    std::set<Id> open;
+    for (Id f : faces)
+        for (Id e : m.faceEdges(f)) {
+            int n = 0;
+            for (Id g : m.edgeFaces(e)) n += m.faces[g].alive;
+            if (n == 1) open.insert(e);
+        }
+    std::multimap<Id, Id> at; // corner -> open edges there
+    for (Id e : open) {
+        at.emplace(m.edges[e].v[0], e);
+        at.emplace(m.edges[e].v[1], e);
+    }
+    std::set<Id> used;
+    std::vector<std::vector<Id>> out;
+    for (Id e0 : open) {
+        if (used.count(e0)) continue;
+        used.insert(e0);
+        const Id start = m.edges[e0].v[0];
+        std::vector<Id> loop{start};
+        Id cur = m.edges[e0].v[1];
+        bool closed = false;
+        while (true) {
+            if (cur == start) {
+                closed = true;
+                break;
+            }
+            loop.push_back(cur);
+            Id next = kNone;
+            for (auto [it, end] = at.equal_range(cur); it != end; ++it)
+                if (!used.count(it->second)) {
+                    next = it->second;
+                    break;
+                }
+            if (next == kNone) break; // a chain that doesn't come round
+            used.insert(next);
+            cur = m.edges[next].v[0] == cur ? m.edges[next].v[1] : m.edges[next].v[0];
+        }
+        if (!closed) continue;
+        // Split where the loop comes back to a corner it passed.
+        std::vector<Id> stack;
+        for (Id v : loop) {
+            auto it = std::find(stack.begin(), stack.end(), v);
+            if (it != stack.end()) {
+                std::vector<Id> sub(it, stack.end());
+                if (sub.size() >= 3) out.push_back(sub);
+                stack.erase(it + 1, stack.end());
+            } else {
+                stack.push_back(v);
+            }
+        }
+        if (stack.size() >= 3) out.push_back(stack);
+    }
+    return out;
+}
+
+// Closes a hole with one face if its edges lie in a plane, else with
+// triangles (inner edges soft and smooth). Returns the new faces.
+std::vector<Id> closeHole(Mesh& m, const std::vector<Id>& loop) {
+    std::vector<Id> made;
+    const Vec3 n = newellNormal((int)loop.size(), [&](int i) { return m.pos(loop[i]); });
+    if (n.length() < 1e-14) return made;
+    const Plane P(n.normalized(), m.pos(loop[0]));
+    double warp = 0;
+    for (Id v : loop) warp = std::max(warp, std::fabs(P.distance(m.pos(v))));
+    if (warp <= kTol) {
+        const Id f = m.addFaceRaw(loop, {}, n);
+        if (f != kNone) made.push_back(f);
+        return made;
+    }
+    Vec3 u, w;
+    planeBasis(P.n, u, w);
+    std::vector<std::vector<Vec2>> flat(1);
+    for (Id v : loop) flat[0].emplace_back(m.pos(v).dot(u), m.pos(v).dot(w));
+    std::vector<std::array<int, 3>> tris = triangulatePolygon(flat);
+    std::vector<std::array<Id, 3>> corners;
+    for (const auto& t : tris) corners.push_back({loop[t[0]], loop[t[1]], loop[t[2]]});
+    // Every side of the hole must end up on exactly one triangle (a sliver
+    // the triangulation skipped would leave the hole open).
+    std::map<std::pair<Id, Id>, int> sides;
+    for (const auto& t : corners)
+        for (int k = 0; k < 3; ++k) sides[std::minmax(t[k], t[(k + 1) % 3])]++;
+    for (size_t i = 0; i < loop.size() && !corners.empty(); ++i)
+        if (sides[std::minmax(loop[i], loop[(i + 1) % loop.size()])] != 1) corners.clear();
+    if (corners.empty()) {
+        // Not a simple outline seen from any side: a fan from its middle.
+        Vec3 c;
+        for (Id v : loop) c = c + m.pos(v);
+        const Id mid = m.addVertexRaw(c / (double)loop.size());
+        for (size_t i = 0; i < loop.size(); ++i) corners.push_back({loop[i], loop[(i + 1) % loop.size()], mid});
+    }
+    std::set<Id> rim;
+    for (size_t i = 0; i < loop.size(); ++i) rim.insert(m.findEdge(loop[i], loop[(i + 1) % loop.size()]));
+    for (const auto& t : corners) {
+        const Id f = m.addFaceRaw({t[0], t[1], t[2]}, {}, P.n);
+        if (f == kNone) continue;
+        made.push_back(f);
+        for (int k = 0; k < 3; ++k) {
+            const Id e = m.findEdge(t[k], t[(k + 1) % 3]);
+            if (e != kNone && !rim.count(e)) m.edges[e].soft = m.edges[e].smooth = true;
+        }
+    }
+    return made;
+}
+
+} // namespace
+
 bool effectSolidify(Mesh& m, const std::set<Id>& facesIn, const SolidifyParams& p, EffectResult* out, std::string* error) {
     std::set<Id> faces;
     for (Id f : facesIn)
@@ -2243,7 +2359,57 @@ bool effectSolidify(Mesh& m, const std::set<Id>& facesIn, const SolidifyParams& 
         }
     }
 
-    // 2. Only what can be seen from outside stays.
+    // 2. Small holes are closed with new faces (they stay: too small to be
+    //    told apart from the outside by the grid below).
+    std::set<Id> patches;
+    {
+        Vec3 mn0(1e300, 1e300, 1e300), mx0(-1e300, -1e300, -1e300);
+        for (Id f : faces)
+            for (Id v : m.faceVertices(f))
+                for (int i = 0; i < 3; ++i) {
+                    mn0[i] = std::min(mn0[i], m.pos(v)[i]);
+                    mx0[i] = std::max(mx0[i], m.pos(v)[i]);
+                }
+        const Vec3 ext0 = mx0 - mn0;
+        const double cell0 = std::max({ext0.x, ext0.y, ext0.z, 1e-6}) / std::clamp(p.detail, 16, 400);
+        if (p.closeHoles)
+            for (const std::vector<Id>& loop : holeLoops(m, faces)) {
+                Vec3 lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+                for (Id v : loop)
+                    for (int i = 0; i < 3; ++i) {
+                        lo[i] = std::min(lo[i], m.pos(v)[i]);
+                        hi[i] = std::max(hi[i], m.pos(v)[i]);
+                    }
+                const double size = (hi - lo).length();
+                if (size > kHoleCells * cell0) continue;
+                // Only a hole in something larger: the outline of a small
+                // loose sheet looks just the same, and the sheet should go.
+                Vec3 plo = lo, phi = hi;
+                std::set<Id> seen;
+                std::vector<Id> stack;
+                for (Id v : loop)
+                    for (Id e : m.vertexEdges(v))
+                        for (Id g : m.edgeFaces(e))
+                            if (faces.count(g) && seen.insert(g).second) stack.push_back(g);
+                while (!stack.empty() && (phi - plo).length() <= 2 * size) {
+                    const Id g = stack.back();
+                    stack.pop_back();
+                    for (Id v : m.faceVertices(g))
+                        for (int i = 0; i < 3; ++i) {
+                            plo[i] = std::min(plo[i], m.pos(v)[i]);
+                            phi[i] = std::max(phi[i], m.pos(v)[i]);
+                        }
+                    for (Id e : m.faceEdges(g))
+                        for (Id h : m.edgeFaces(e))
+                            if (faces.count(h) && m.faces[h].alive && seen.insert(h).second) stack.push_back(h);
+                }
+                if ((phi - plo).length() <= 2 * size) continue;
+                for (Id f : closeHole(m, loop)) patches.insert(f);
+            }
+        faces.insert(patches.begin(), patches.end());
+    }
+
+    // 3. Only what can be seen from outside stays.
     Surface s;
     if (!s.extract(m, faces)) return emptyError(error);
     const std::vector<Tri3> tris = surfaceTriangles(s);
@@ -2309,7 +2475,11 @@ bool effectSolidify(Mesh& m, const std::set<Id>& facesIn, const SolidifyParams& 
     const InsideTest insideTest(tris, cell * 4);
     const double eps = std::max(cell * 0.05, kTol * 10);
     std::vector<Id> drop, flip, keep;
+    // Faces the grid can't decide on (walls all round within reach: tiny
+    // faces in a narrow notch, the patches) are settled by their neighbours.
+    std::set<Id> pending = patches, undecided;
     for (Id f : faces) {
+        if (patches.count(f)) continue;
         const Vec3 pt = m.faceInteriorPoint(f), n = m.faces[f].normal;
         const int fe = reachOutside(pt, n), be = reachOutside(pt, -n);
         const bool fi = insideTest(pt + n * eps), bi = insideTest(pt - n * eps);
@@ -2318,11 +2488,47 @@ bool effectSolidify(Mesh& m, const std::set<Id>& facesIn, const SolidifyParams& 
         const bool flipIt = !keepIt && be == 1 && (fi || fe == 0);
         if (keepIt) keep.push_back(f);
         else if (flipIt) flip.push_back(f);
+        else if (fe == -1 || be == -1) undecided.insert(f);
         else drop.push_back(f);
     }
     if (keep.empty() && flip.empty()) {
+        for (Id f : patches) m.eraseFace(f);
+        m.removeOrphanVertices();
+        m.touch();
         if (error) *error = "Nothing of this is a solid seen from outside.";
         return false;
+    }
+    // A face to go stays where it closes the surface: each of its edges has
+    // exactly one other face that stays (so none is left open and none gets a
+    // third face). The walls of a sealed hollow, inner walls and loose sheets
+    // go together with their neighbours, so this only keeps faces the grid
+    // misjudged: tiny ones in a notch narrower than a cell, which looks sealed.
+    {
+        undecided.insert(drop.begin(), drop.end());
+        drop.clear();
+        std::set<Id> gone(drop.begin(), drop.end());
+        gone.insert(undecided.begin(), undecided.end());
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (auto it = undecided.begin(); it != undecided.end();) {
+                const Id f = *it;
+                bool closes = true;
+                for (Id e : m.faceEdges(f)) {
+                    int others = 0;
+                    for (Id g : m.edgeFaces(e)) others += g != f && m.faces[g].alive && !gone.count(g);
+                    closes = closes && others == 1;
+                }
+                if (closes) {
+                    gone.erase(f);
+                    pending.insert(f);
+                    it = undecided.erase(it);
+                    changed = true;
+                } else {
+                    ++it;
+                }
+            }
+        }
+        drop.insert(drop.end(), undecided.begin(), undecided.end());
     }
     std::vector<Id> loose;
     for (Id f : drop) {
@@ -2330,6 +2536,37 @@ bool effectSolidify(Mesh& m, const std::set<Id>& facesIn, const SolidifyParams& 
         m.eraseFace(f);
     }
     for (Id f : flip) m.reverseFace(f);
+    // Those face the way the faces around them do (a neighbour walks a shared
+    // edge one way, they the other); a patch left with nothing around it (all
+    // dropped) goes. Ones next to each other settle in a few rounds.
+    for (int round = 0; round < 4; ++round)
+        for (Id f : pending) {
+            if (!m.faces[f].alive) continue;
+            int same = 0, opposite = 0;
+            const std::vector<Id>& L = m.faces[f].outer;
+            for (size_t i = 0; i < L.size(); ++i) {
+                const Id a = L[i], b = L[(i + 1) % L.size()];
+                const Id e = m.findEdge(a, b);
+                if (e == kNone) continue;
+                for (Id g : m.edgeFaces(e)) {
+                    if (g == f || !m.faces[g].alive || (round == 0 && pending.count(g))) continue;
+                    (m.faceEdgeDirection(g, a, b) == 1 ? same : opposite)++;
+                }
+            }
+            if (round == 0 && same + opposite == 0) {
+                bool any = false;
+                for (Id e : m.faceEdges(f))
+                    for (Id g : m.edgeFaces(e)) any = any || (g != f && m.faces[g].alive);
+                if (!any) {
+                    for (Id e : m.faceEdges(f)) loose.push_back(e);
+                    m.eraseFace(f);
+                    continue;
+                }
+            }
+            if (same > opposite) m.reverseFace(f);
+        }
+    for (Id f : pending)
+        if (m.faces[f].alive) keep.push_back(f);
     m.removeEdgesWithoutFaces(loose);
     m.removeOrphanVertices();
     m.touch();
@@ -2337,6 +2574,504 @@ bool effectSolidify(Mesh& m, const std::set<Id>& facesIn, const SolidifyParams& 
         out->faces.clear();
         out->faces.insert(keep.begin(), keep.end());
         out->faces.insert(flip.begin(), flip.end());
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Thicken
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Eigen decomposition of a symmetric 3x3 matrix (cyclic Jacobi). A becomes
+// diagonal (the eigenvalues), the columns of V the eigenvectors.
+void jacobi3(double A[3][3], double V[3][3]) {
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) V[i][j] = i == j;
+    for (int sweep = 0; sweep < 50; ++sweep) {
+        const double off = A[0][1] * A[0][1] + A[0][2] * A[0][2] + A[1][2] * A[1][2];
+        if (off < 1e-30) break;
+        for (int p = 0; p < 2; ++p)
+            for (int q = p + 1; q < 3; ++q) {
+                if (std::fabs(A[p][q]) < 1e-300) continue;
+                const double theta = (A[q][q] - A[p][p]) / (2 * A[p][q]);
+                const double t = (theta >= 0 ? 1 : -1) / (std::fabs(theta) + std::sqrt(theta * theta + 1));
+                const double c = 1 / std::sqrt(t * t + 1), s = t * c;
+                for (int k = 0; k < 3; ++k) {
+                    const double akp = A[k][p], akq = A[k][q];
+                    A[k][p] = c * akp - s * akq;
+                    A[k][q] = s * akp + c * akq;
+                }
+                for (int k = 0; k < 3; ++k) {
+                    const double apk = A[p][k], aqk = A[q][k];
+                    A[p][k] = c * apk - s * aqk;
+                    A[q][k] = s * apk + c * aqk;
+                }
+                for (int k = 0; k < 3; ++k) {
+                    const double vkp = V[k][p], vkq = V[k][q];
+                    V[k][p] = c * vkp - s * vkq;
+                    V[k][q] = s * vkp + c * vkq;
+                }
+            }
+    }
+}
+
+// Least squares point for planes n . x = b (weighted): the smallest move that
+// best meets them, ignoring directions none of the planes pins down.
+struct PlaneSolve {
+    double A[3][3] = {};
+    Vec3 r;
+    void add(const Vec3& n, double b, double w) {
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) A[i][j] += w * n[i] * n[j];
+            r[i] += w * n[i] * b;
+        }
+    }
+    // Directions with an eigenvalue at or below `floor` are left alone: the
+    // planes hardly differ there (faces that are almost flat to each other).
+    Vec3 solve(double floor = 0) const {
+        double D[3][3], V[3][3];
+        std::copy(&A[0][0], &A[0][0] + 9, &D[0][0]);
+        jacobi3(D, V);
+        const double top = std::max({std::fabs(D[0][0]), std::fabs(D[1][1]), std::fabs(D[2][2])});
+        Vec3 x;
+        for (int k = 0; k < 3; ++k) {
+            const double l = D[k][k];
+            if (std::fabs(l) <= std::max(top * 1e-10, floor)) continue;
+            double proj = 0;
+            for (int i = 0; i < 3; ++i) proj += V[i][k] * r[i];
+            for (int i = 0; i < 3; ++i) x[i] += V[i][k] * proj / l;
+        }
+        return x;
+    }
+};
+
+uint64_t undirectedKey(Id a, Id b) {
+    if (a > b) std::swap(a, b);
+    return (uint64_t(uint32_t(a)) << 32) | uint32_t(b);
+}
+
+Vec3 newellOf(const std::vector<Vec3>& loop) {
+    Vec3 n;
+    for (size_t i = 0; i < loop.size(); ++i) n += loop[i].cross(loop[(i + 1) % loop.size()]);
+    return n;
+}
+
+} // namespace
+
+bool effectThicken(Mesh& m, const std::set<Id>& facesIn, const ThickenParams& p, EffectResult* out, std::string* error) {
+    auto fail = [&](const std::string& msg) {
+        if (error) *error = msg;
+        return false;
+    };
+    if (!(p.thickness >= 1e-5)) return fail("The wall thickness must be at least 0.01 mm.");
+    std::vector<Id> faces;
+    for (Id f : facesIn)
+        if (f >= 0 && f < (Id)m.faces.size() && m.faces[f].alive) faces.push_back(f);
+    if (faces.empty()) return emptyError(error);
+    const int nf = (int)faces.size();
+    auto loopsOf = [&](Id f) {
+        std::vector<const std::vector<Id>*> L{&m.faces[f].outer};
+        for (const auto& h : m.faces[f].holes) L.push_back(&h);
+        return L;
+    };
+    // Every directed edge of the faces: key -> (face index, a, b).
+    struct Use {
+        int fi;
+        Id a, b;
+    };
+    auto collectUses = [&]() {
+        std::unordered_map<uint64_t, std::vector<Use>> uses;
+        for (int i = 0; i < nf; ++i)
+            for (const auto* L : loopsOf(faces[i]))
+                for (size_t k = 0; k < L->size(); ++k) {
+                    const Id a = (*L)[k], b = (*L)[(k + 1) % L->size()];
+                    if (a != b) uses[undirectedKey(a, b)].push_back({i, a, b});
+                }
+        return uses;
+    };
+    auto uses = collectUses();
+    for (const auto& [k, u] : uses)
+        if (u.size() > 2)
+            return fail("Thicken needs every edge to join at most two of the selected faces (here three or more faces meet at an edge).");
+
+    // One consistent side: neighbours run their shared edge in opposite
+    // directions. Each connected piece keeps the side most of its area faces.
+    std::vector<std::vector<std::pair<int, bool>>> nbr(nf); // (other, same direction)
+    for (const auto& [k, u] : uses)
+        if (u.size() == 2 && u[0].fi != u[1].fi) {
+            const bool same = u[0].a == u[1].a;
+            nbr[u[0].fi].push_back({u[1].fi, same});
+            nbr[u[1].fi].push_back({u[0].fi, same});
+        }
+    std::vector<int> flip(nf, -1);
+    for (int seed = 0; seed < nf; ++seed) {
+        if (flip[seed] >= 0) continue;
+        std::vector<int> piece{seed};
+        flip[seed] = 0;
+        for (size_t q = 0; q < piece.size(); ++q) {
+            const int i = piece[q];
+            for (const auto& [j, same] : nbr[i]) {
+                const int want = flip[i] ^ (same ? 1 : 0);
+                if (flip[j] < 0) {
+                    flip[j] = want;
+                    piece.push_back(j);
+                } else if (flip[j] != want) {
+                    return fail("These faces form a one-sided surface (like a Moebius strip): there is no inside and outside to thicken towards.");
+                }
+            }
+        }
+        double kept = 0, flipped = 0;
+        for (int i : piece) (flip[i] ? flipped : kept) += m.faceArea(faces[i]);
+        if (flipped > kept)
+            for (int i : piece) flip[i] ^= 1;
+    }
+    bool anyFlip = false;
+    for (int i = 0; i < nf; ++i)
+        if (flip[i]) m.reverseFace(faces[i]), anyFlip = true;
+    if (anyFlip) uses = collectUses();
+
+    // The plane of every face, and the faces and open edges at every corner.
+    const double s = p.outward ? p.thickness : -p.thickness;
+    std::vector<Vec3> fn(nf);
+    std::vector<double> fd(nf);
+    for (int i = 0; i < nf; ++i) {
+        const Face& F = m.faces[faces[i]];
+        fn[i] = F.normal.normalized();
+        double sum = 0;
+        int cnt = 0;
+        for (const auto* L : loopsOf(faces[i]))
+            for (Id v : *L) sum += fn[i].dot(m.pos(v)), ++cnt;
+        fd[i] = sum / std::max(cnt, 1);
+    }
+    std::unordered_map<Id, int> local;
+    std::vector<Id> verts;
+    std::vector<std::vector<int>> vFaces;
+    auto localOf = [&](Id v) {
+        auto [it, fresh] = local.emplace(v, (int)verts.size());
+        if (fresh) verts.push_back(v), vFaces.emplace_back();
+        return it->second;
+    };
+    for (int i = 0; i < nf; ++i)
+        for (const auto* L : loopsOf(faces[i]))
+            for (Id v : *L) {
+                auto& vf = vFaces[localOf(v)];
+                if (vf.empty() || vf.back() != i) vf.push_back(i);
+            }
+    std::vector<Use> open;
+    for (const auto& [k, u] : uses)
+        if (u.size() == 1) open.push_back(u[0]);
+    std::vector<std::vector<int>> vOpen(verts.size()); // open edges at a corner
+    for (int e = 0; e < (int)open.size(); ++e) {
+        vOpen[local.at(open[e].a)].push_back(e);
+        vOpen[local.at(open[e].b)].push_back(e);
+    }
+
+    // Open outlines lying in one plane keep their rim in that plane (a dome
+    // cut at its equator gets a flat ring), unless the faces there lie in it.
+    Vec3 mn, mx;
+    bool anyB = false;
+    m.bounds(mn, mx, anyB);
+    const double size = anyB ? (mx - mn).length() : 1;
+    const double flatTol = std::max(1e-7, size * 1e-7);
+    std::vector<int> group(verts.size());
+    std::iota(group.begin(), group.end(), 0);
+    std::function<int(int)> root = [&](int x) { return group[x] == x ? x : group[x] = root(group[x]); };
+    for (const Use& u : open) group[root(local.at(u.a))] = root(local.at(u.b));
+    std::map<int, Vec3> outlineNormal; // root -> unit normal of a flat outline
+    {
+        std::map<int, Vec3> newell, centre;
+        std::map<int, int> count;
+        for (const Use& u : open) newell[root(local.at(u.a))] += m.pos(u.a).cross(m.pos(u.b));
+        for (int lv = 0; lv < (int)verts.size(); ++lv)
+            if (!vOpen[lv].empty()) centre[root(lv)] += m.pos(verts[lv]), count[root(lv)]++;
+        for (auto& [g, n] : newell) {
+            if (n.length() < 1e-14) continue;
+            const Vec3 nn = n.normalized(), c = centre[g] / double(count[g]);
+            bool flat = true;
+            for (int lv = 0; lv < (int)verts.size() && flat; ++lv)
+                if (!vOpen[lv].empty() && root(lv) == g) flat = std::fabs(nn.dot(m.pos(verts[lv]) - c)) <= flatTol;
+            if (flat) outlineNormal[g] = nn;
+        }
+    }
+
+    // Each corner moves to where the planes of its faces, moved by the
+    // thickness, meet (on a rim, also on the rim's plane).
+    const double kRim = 1e4;
+    std::vector<Vec3> moved(verts.size());
+    std::vector<Vec3> rimNormal(verts.size()); // the corner's rim plane (zero: none)
+    for (int lv = 0; lv < (int)verts.size(); ++lv) {
+        const Vec3 P = m.pos(verts[lv]);
+        PlaneSolve ps;
+        std::vector<std::pair<Vec3, double>> rimPlanes;
+        // Each face's plane moved by the thickness, through this corner: for a
+        // flat face that is its moved plane; a warped face's own plane misses
+        // its corners a little, and correcting that would throw them off.
+        for (int i : vFaces[lv]) ps.add(fn[i], s, 1);
+        if (!vOpen[lv].empty()) {
+            auto it = outlineNormal.find(root(lv));
+            bool useOutline = it != outlineNormal.end();
+            if (useOutline)
+                for (int i : vFaces[lv]) useOutline = useOutline && std::fabs(fn[i].dot(it->second)) < 0.98;
+            if (useOutline) {
+                rimPlanes.push_back({it->second, kRim});
+            } else {
+                // One rim plane through the corner, square to the faces along
+                // its open edges: across their mean outward direction. (A plane
+                // per edge would pin the corner to the line where two nearly
+                // parallel ones meet.)
+                Vec3 side;
+                for (int e : vOpen[lv]) {
+                    const Vec3 sd = (m.pos(open[e].b) - m.pos(open[e].a)).cross(fn[open[e].fi]);
+                    if (sd.length() > 1e-14) side += sd.normalized();
+                }
+                if (side.length() < 1e-6 && !vOpen[lv].empty()) // a hairpin: the edges run back on each other
+                    side = (m.pos(open[vOpen[lv][0]].b) - m.pos(open[vOpen[lv][0]].a)).cross(fn[open[vOpen[lv][0]].fi]);
+                if (side.length() > 1e-14) rimPlanes.push_back({side.normalized(), kRim});
+            }
+            for (const auto& [n, w] : rimPlanes) ps.add(n, 0, w);
+        }
+        // Faces less than about 0.6 degrees apart count as flat to each other.
+        if (!rimPlanes.empty()) rimNormal[lv] = rimPlanes[0].first;
+        Vec3 d = ps.solve(1e-4 * vFaces[lv].size());
+        // Where the moved planes don't meet in one point (warped or irregular
+        // polygons, as sculpted and imported surfaces have), that point is
+        // ill-defined and can fly far off. Then the corner moves the even
+        // thickness along the mean of its faces' normals instead, still
+        // held on its rim plane.
+        double worst = 0;
+        for (int i : vFaces[lv]) worst = std::max(worst, std::fabs(fn[i].dot(d) - s));
+        if (worst > std::max(1e-9, p.thickness * 1e-6)) {
+            Vec3 mean;
+            for (int i : vFaces[lv]) mean += fn[i];
+            double cosMean = 0;
+            if (mean.length() > 1e-12) {
+                mean = mean.normalized();
+                for (int i : vFaces[lv]) cosMean += fn[i].dot(mean);
+                cosMean /= double(vFaces[lv].size());
+            }
+            const Vec3 d0 = cosMean > 0.2 ? mean * (s / cosMean) : mean * s;
+            // Rim planes (heavily weighted) plus a pull towards d0.
+            PlaneSolve rs;
+            for (int k = 0; k < 3; ++k) {
+                Vec3 axis;
+                axis[k] = 1;
+                rs.add(axis, d0[k], 1);
+            }
+            for (const auto& [n, w] : rimPlanes) rs.add(n, 0, w);
+            d = rs.solve();
+        }
+        const double limit = 20 * p.thickness; // knife-sharp corners
+        if (d.length() > limit) d = d.normalized() * limit;
+        moved[lv] = P + d;
+    }
+
+    // Very short edges on a curve can turn around although the wall is far
+    // thinner than the curve: their corners move in slightly different
+    // directions by more than the edge is long. Such corners share their
+    // move (an error of a tiny fraction of the thickness). Only if that is
+    // not enough, or would bend the wall noticeably, is the wall too thick.
+    const char* tooThick = "The wall is too thick for the tightest curve or corner of these faces: it would turn inside out. Make it thinner or thicken to the other side.";
+    auto keepOnRim = [&](int lv, Vec3 d) {
+        const Vec3& r = rimNormal[lv];
+        return r.length2() > 0 ? d - r * d.dot(r) : d;
+    };
+    for (int pass = 0;; ++pass) {
+        std::vector<std::vector<int>> bad; // groups of corners to move together
+        for (int i = 0; i < nf; ++i)
+            for (const auto* L : loopsOf(faces[i])) {
+                std::vector<int> lvs;
+                std::vector<Vec3> a, b;
+                for (Id v : *L) lvs.push_back(local.at(v)), a.push_back(m.pos(v)), b.push_back(moved[lvs.back()]);
+                for (size_t k = 0; k < a.size(); ++k) {
+                    const size_t k1 = (k + 1) % a.size();
+                    if ((b[k1] - b[k]).dot(a[k1] - a[k]) <= 0) bad.push_back({lvs[k], lvs[k1]});
+                }
+                if (L == &m.faces[faces[i]].outer && newellOf(b).dot(fn[i]) <= 0) bad.push_back(lvs);
+            }
+        if (bad.empty()) break;
+        if (pass == 30) return fail(tooThick);
+        for (const auto& g : bad) {
+            Vec3 mean;
+            for (int lv : g) mean += moved[lv] - m.pos(verts[lv]);
+            mean = mean / double(g.size());
+            for (int lv : g) moved[lv] = m.pos(verts[lv]) + keepOnRim(lv, mean);
+        }
+        // Still about the thickness away from every face at the corner?
+        for (const auto& g : bad)
+            for (int lv : g)
+                for (int i : vFaces[lv])
+                    if (std::fabs(fn[i].dot(moved[lv] - m.pos(verts[lv])) - s) > 0.25 * p.thickness) return fail(tooThick);
+    }
+
+    const Mesh backup = m; // restored if the wall does not come out closed
+    // Build: the moved copy, the rim along open edges; when growing outward
+    // the original faces become the inner side and turn around.
+    const std::set<Id> oldFaces(faces.begin(), faces.end());
+    std::vector<Id> newV(verts.size());
+    for (int lv = 0; lv < (int)verts.size(); ++lv) newV[lv] = m.addVertexRaw(moved[lv]);
+    auto nv = [&](Id v) { return newV[local.at(v)]; };
+    const double sideSign = p.outward ? 1 : -1;
+    std::set<Id> made, rim;
+    std::vector<std::pair<Id, Id>> softPairs; // vertex pairs whose edge goes soft + smooth
+
+    // A polygon that is planar enough goes in whole, otherwise as triangles
+    // joined by soft edges.
+    // How far a polygon's corners are off its best plane.
+    auto warpOf = [&](const std::vector<std::vector<Id>>& loops) {
+        std::vector<Vec3> outerP;
+        for (Id v : loops[0]) outerP.push_back(m.pos(v));
+        Vec3 n = newellOf(outerP);
+        if (n.length() < 1e-14) return 0.0;
+        n = n.normalized();
+        Vec3 c;
+        int cnt = 0;
+        for (const auto& L : loops)
+            for (Id v : L) c += m.pos(v), ++cnt;
+        c = c / double(cnt);
+        double w = 0;
+        for (const auto& L : loops)
+            for (Id v : L) w = std::max(w, std::fabs(n.dot(m.pos(v) - c)));
+        return w;
+    };
+    // `allowWarp`: the copy of a warped face may be as warped as the face
+    // (kept whole, like the original) rather than split into triangles.
+    auto addPoly = [&](const std::vector<std::vector<Id>>& loops, const Vec3& hint, const Face& like, bool keepTex, double allowWarp) {
+        std::vector<Id> res;
+        std::vector<Vec3> outerP;
+        for (Id v : loops[0]) outerP.push_back(m.pos(v));
+        Vec3 n = newellOf(outerP);
+        if (n.length() < 1e-14) return res;
+        n = n.normalized();
+        Vec3 c;
+        int cnt = 0;
+        for (const auto& L : loops)
+            for (Id v : L) c += m.pos(v), ++cnt;
+        c = c / double(cnt);
+        bool planar = true;
+        for (const auto& L : loops)
+            for (Id v : L) planar = planar && std::fabs(n.dot(m.pos(v) - c)) <= flatTol + allowWarp;
+        auto finish = [&](Id f) {
+            if (f == kNone) return;
+            Face& F = m.faces[f];
+            F.front = like.front;
+            F.back = like.back;
+            F.front.axis = F.back.axis = Vec3();
+            if (!keepTex) F.front.tex.valid = F.back.tex.valid = false;
+            F.hidden = like.hidden;
+            res.push_back(f);
+        };
+        if (planar) {
+            finish(m.addFaceRaw(loops[0], std::vector<std::vector<Id>>(loops.begin() + 1, loops.end()), hint));
+            return res;
+        }
+        const Vec3 u = (std::fabs(n.x) < 0.9 ? Vec3(1, 0, 0) : Vec3(0, 1, 0)).cross(n).normalized(), w = n.cross(u);
+        std::vector<std::vector<Vec2>> loops2;
+        std::vector<Id> flat;
+        for (const auto& L : loops) {
+            loops2.emplace_back();
+            for (Id v : L) {
+                const Vec3 d = m.pos(v) - c;
+                loops2.back().push_back(Vec2(d.dot(u), d.dot(w)));
+                flat.push_back(v);
+            }
+        }
+        // A polygon whose outline folds over itself seen flat cannot be split
+        // cleanly: it stays whole (slightly warped) rather than leave a gap.
+        const auto tris = triangulatePolygon(loops2);
+        if ((int)tris.size() != (int)flat.size() - 2 + 2 * ((int)loops.size() - 1)) {
+            finish(m.addFaceRaw(loops[0], std::vector<std::vector<Id>>(loops.begin() + 1, loops.end()), hint));
+            return res;
+        }
+        for (const auto& t : tris) {
+            finish(m.addFaceRaw({flat[t[0]], flat[t[1]], flat[t[2]]}, {}, hint));
+            for (int k = 0; k < 3; ++k) softPairs.push_back({flat[t[k]], flat[t[(k + 1) % 3]]});
+        }
+        return res;
+    };
+
+    for (int i = 0; i < nf; ++i) {
+        const Face F = m.faces[faces[i]];
+        std::vector<std::vector<Id>> loops;
+        for (const auto* L : loopsOf(faces[i])) {
+            loops.emplace_back();
+            for (Id v : *L) loops.back().push_back(nv(v));
+        }
+        std::vector<std::vector<Id>> orig;
+        for (const auto* L : loopsOf(faces[i])) orig.push_back(*L);
+        const double w = warpOf(orig);
+        for (Id f : addPoly(loops, fn[i] * sideSign, F, p.outward, w > flatTol ? 1.5 * w : 0)) made.insert(f);
+    }
+    // The soft/smooth look of the faces' own edges carries over to the copy.
+    for (const auto& [k, u] : uses) {
+        const Id e = m.findEdge(u[0].a, u[0].b), e2 = m.findEdge(nv(u[0].a), nv(u[0].b));
+        if (e != kNone && e2 != kNone) {
+            m.edges[e2].soft = m.edges[e].soft;
+            m.edges[e2].smooth = m.edges[e].smooth;
+            m.edges[e2].hidden = m.edges[e].hidden;
+        }
+    }
+    for (const Use& u : open) {
+        const Face F = m.faces[faces[u.fi]];
+        Face look;
+        look.front.material = look.back.material = F.front.material;
+        const Vec3 outside = (m.pos(u.b) - m.pos(u.a)).cross(fn[u.fi]);
+        std::vector<std::vector<Id>> orig;
+        for (const auto* L : loopsOf(faces[u.fi])) orig.push_back(*L);
+        const double w = warpOf(orig);
+        for (Id f : addPoly({{u.a, u.b, nv(u.b), nv(u.a)}}, outside, look, false, w > flatTol ? 1.5 * w : 0)) rim.insert(f);
+    }
+    // Inner diagonals of split polygons are not drawn.
+    for (const auto& [a, b] : softPairs) {
+        const Id e = m.findEdge(a, b);
+        if (e == kNone || m.edgeFaces(e).size() != 2) continue;
+        const auto& fs = m.edgeFaces(e);
+        if (!(made.count(fs[0]) || rim.count(fs[0])) || !(made.count(fs[1]) || rim.count(fs[1]))) continue;
+        const Vec3 n0 = m.faces[fs[0]].normal, n1 = m.faces[fs[1]].normal;
+        if (n0.dot(n1) > 0.5) m.edges[e].soft = m.edges[e].smooth = true;
+    }
+    if (p.outward)
+        for (Id f : oldFaces) m.reverseFace(f);
+    m.touch();
+    // Rim pieces in one plane become one face (a flat ring, say); a curved rim
+    // is shaded smooth.
+    if (!rim.empty()) {
+        EffectResult merged;
+        if (effectMergeFlat(m, rim, &merged, nullptr)) rim = merged.faces;
+        for (Id f : rim)
+            for (Id e : m.faceEdges(f)) {
+                const auto& fs = m.edgeFaces(e);
+                if (fs.size() == 2 && rim.count(fs[0]) && rim.count(fs[1]) &&
+                    m.faces[fs[0]].normal.dot(m.faces[fs[1]].normal) > 0.85)
+                    m.edges[e].soft = m.edges[e].smooth = true;
+            }
+    }
+    m.touch();
+    // Every edge of the wall must now join exactly two of its faces.
+    {
+        std::set<Id> wall = oldFaces;
+        wall.insert(made.begin(), made.end());
+        wall.insert(rim.begin(), rim.end());
+        for (Id f : wall) {
+            if (!m.faces[f].alive) continue;
+            for (Id e : m.faceEdges(f)) {
+                int n = 0;
+                for (Id g : m.edgeFaces(e)) n += m.faces[g].alive && wall.count(g);
+                if (n != 2) {
+                    m = backup;
+                    m.touch();
+                    return fail("The wall could not be closed everywhere (the surface folds too tightly somewhere, often along a jagged open edge). Try a thinner wall or the other direction.");
+                }
+            }
+        }
+    }
+    if (out) {
+        out->faces = oldFaces;
+        out->faces.insert(made.begin(), made.end());
+        out->faces.insert(rim.begin(), rim.end());
+        for (auto it = out->faces.begin(); it != out->faces.end();)
+            it = m.faces[*it].alive ? std::next(it) : out->faces.erase(it);
     }
     return true;
 }

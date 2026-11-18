@@ -768,6 +768,103 @@ int main() {
         CHECK_EQ(o.state.mesh.aliveFaceCount(), 1);
     });
 
+    test("cutting a sculpted solid: warped quads, cuts right by its corners", [&] {
+        // A fine sphere with every corner pushed in or out a little, as a
+        // sculpted or imported model is: its quads are not flat. Volumes are
+        // compared loosely: a bent quad's depends on the diagonal it is split
+        // along.
+        PrimitiveParams sp;
+        sp.kind = PrimitiveKind::Sphere;
+        sp.radius = 0.1;
+        sp.segments = 48;
+        sp.rings = 24;
+        Mesh ball;
+        buildPrimitive(sp, ball);
+        uint32_t seed = 12345;
+        auto rnd = [&] {
+            seed = seed * 1664525u + 1013904223u;
+            return (seed >> 8) / double(1 << 24) * 2 - 1;
+        };
+        const Vec3 centre(0, 0, 0.1);
+        for (Vertex& v : ball.vertices)
+            if (v.alive) v.p = centre + (v.p - centre) * (1 + rnd() * 0.003); // up to 0.3 mm
+        for (Id f = 0; f < (Id)ball.faces.size(); ++f)
+            if (ball.faces[f].alive) ball.recomputeNormal(f);
+        ball.markGeometryMoved();
+        CHECK(isSolid(ball));
+        const double v0 = solidVolume(ball);
+        int warped = 0;
+        for (Id f = 0; f < (Id)ball.faces.size(); ++f) {
+            if (!ball.faces[f].alive) continue;
+            const Plane P = ball.facePlane(f);
+            double w = 0;
+            for (Id v : ball.faceVertices(f)) w = std::max(w, std::fabs(P.distance(ball.pos(v))));
+            warped += w > kTol;
+        }
+        CHECK(warped > 500);
+        auto box = [](const Vec3& lo, const Vec3& hi) {
+            PrimitiveParams bp;
+            bp.kind = PrimitiveKind::Box;
+            bp.width = hi.x - lo.x;
+            bp.depth = hi.y - lo.y;
+            bp.height = hi.z - lo.z;
+            Mesh b;
+            buildPrimitive(bp, b);
+            const Vec3 at((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z);
+            for (Vertex& v : b.vertices) v.p = v.p + at;
+            for (Id f = 0; f < (Id)b.faces.size(); ++f)
+                if (b.faces[f].alive) b.recomputeNormal(f);
+            b.markGeometryMoved();
+            return b;
+        };
+        // Planes across it, and planes passing a corner at a hair's distance
+        // (inside, at and just beyond the tolerance).
+        std::vector<std::pair<int, double>> planes;
+        for (int a = 0; a < 3; ++a)
+            for (int k = 1; k < 8; ++k) planes.push_back({a, (a == 2 ? 0.0 : -0.1) + k * 0.2 / 8 + 0.0013 * k});
+        for (Id v : {Id(100), Id(333), Id(611)})
+            for (double off : {0.0, 5e-6, -9e-6, 1.6e-5, -3e-5})
+                planes.push_back({int(v % 3), ball.pos(v)[int(v % 3)] + off});
+        int clean = 0;
+        for (auto [a, c] : planes) {
+            Vec3 lo(-1, -1, -1), hi(1, 1, 1);
+            lo[a] = c;
+            Mesh below, above, unused;
+            std::string err;
+            const bool ok = splitMeshes(ball, box(lo, hi), below, above, unused, &err);
+            std::string why;
+            const bool good = ok && isSolid(below, &why) && isSolid(above, &why) &&
+                              std::fabs(solidVolume(below) + solidVolume(above) - v0) < v0 * 1e-4;
+            if (!good)
+                std::printf("    cut %c = %.6f: %s (volume %.9f of %.9f)\n", "xyz"[a], c, ok ? why.c_str() : err.c_str(),
+                            solidVolume(below) + solidVolume(above), v0);
+            clean += good;
+        }
+        CHECK_EQ(clean, (int)planes.size());
+        // And the Slicer: every piece a closed solid, nothing lost.
+        Document d;
+        d.state.mesh = ball;
+        Selection sel;
+        for (Id f = 0; f < (Id)ball.faces.size(); ++f)
+            if (ball.faces[f].alive) sel.faces.insert(f);
+        SlicerParams p;
+        p.size = Vec3(0.07, 0.07, 0.07);
+        SlicerResult r;
+        std::string err;
+        CHECK(sliceSelection(d.state, sel, p, &r, &err));
+        CHECK_EQ(r.pieces, 27);
+        double v = 0;
+        int solids = 0;
+        for (Id i : sel.instances) {
+            const Mesh& pm = d.state.defs[d.state.instances[i].def].mesh;
+            v += solidVolume(pm);
+            solids += isSolid(pm);
+        }
+        CHECK_EQ(solids, r.pieces);
+        // Many cuts flatten many bent quads, each along its own diagonal.
+        CHECK(std::fabs(v - v0) < v0 * 1e-3);
+    });
+
     test("triangulating a face with holes lined up on one height", [&] {
         // Square holes whose corners share x and y with each other: the
         // triangles must cover exactly the face, wherever it lies.
@@ -1955,6 +2052,137 @@ int main() {
             ModelState before = d.state;
             CHECK(!solidOperation(d.state, SolidOp::Intersect, far, plate, nullptr, &err));
             CHECK(!err.empty() && d.state.instances[far].alive && d.state.instances[plate].alive);
+        }
+    });
+
+    test("knife: a flat face splits solids, open surfaces and only what it covers", [&] {
+        auto square = [](Mesh& k, double half, double z, double cx = 0, double cy = 0) {
+            k.drawPolyline({Vec3(cx - half, cy - half, z), Vec3(cx + half, cy - half, z), Vec3(cx + half, cy + half, z),
+                            Vec3(cx - half, cy + half, z)}, true);
+        };
+        std::string err;
+        std::vector<Mesh> pieces;
+        // A solid box cut across: two solids, closed at the cut.
+        {
+            Mesh box, knife;
+            solidBox(box, Vec3(0, 0, 0), Vec3(1, 1, 1));
+            square(knife, 3, 0.4, 0.5, 0.5);
+            CHECK(knifeMesh(box, knife, pieces, &err));
+            CHECK_EQ((int)pieces.size(), 2);
+            double v = 0;
+            for (const Mesh& p : pieces) {
+                CHECK(isSolid(p));
+                CHECK_EQ(p.aliveFaceCount(), 6);
+                v += solidVolume(p);
+            }
+            CHECK(near(v, 1) && (near(solidVolume(pieces[0]), 0.4) || near(solidVolume(pieces[0]), 0.6)));
+        }
+        // A sphere and a torus (the cut is a ring with a hole): volumes add up.
+        for (PrimitiveKind kind : {PrimitiveKind::Sphere, PrimitiveKind::Torus}) {
+            PrimitiveParams pp;
+            pp.kind = kind;
+            pp.radius = 1;
+            pp.radius2 = 0.4;
+            Mesh b, knife;
+            CHECK(buildPrimitive(pp, b));
+            Vec3 mn, mx;
+            bool any;
+            b.bounds(mn, mx, any);
+            square(knife, 5, (mn.z + mx.z) / 2 + 0.123);
+            CHECK(knifeMesh(b, knife, pieces, &err));
+            CHECK_EQ((int)pieces.size(), 2);
+            double v = 0;
+            for (const Mesh& p : pieces) {
+                CHECK(isSolid(p));
+                v += solidVolume(p);
+            }
+            CHECK(std::fabs(v - solidVolume(b)) < 1e-9);
+        }
+        // An open box (no lid) is not a solid: cut into two open parts, no caps.
+        {
+            Mesh o, knife;
+            solidBox(o, Vec3(0, 0, 0), Vec3(1, 1, 1));
+            for (Id f = 0; f < (Id)o.faces.size(); ++f)
+                if (o.faces[f].alive && o.faces[f].normal.z > 0.9) o.eraseFace(f);
+            square(knife, 2, 0.5, 0.5, 0.5);
+            CHECK(knifeMesh(o, knife, pieces, &err));
+            CHECK_EQ((int)pieces.size(), 2);
+            std::multiset<int> counts;
+            for (const Mesh& p : pieces) counts.insert(p.aliveFaceCount());
+            CHECK(counts == std::multiset<int>({4, 5}));
+        }
+        // Two boxes, the knife only through one of them: that one splits, the
+        // other stays whole, in the component.
+        {
+            Mesh two, knife;
+            solidBox(two, Vec3(0, 0, 0), Vec3(1, 1, 1));
+            solidBox(two, Vec3(3, 0, 0), Vec3(4, 1, 1));
+            square(knife, 1, 0.5, 0.5, 0.5);
+            CHECK(knifeMesh(two, knife, pieces, &err));
+            // Two parts: the cut-off half; the other half keeps the untouched box.
+            CHECK_EQ((int)pieces.size(), 2);
+            CHECK(near(solidVolume(pieces[0]) + solidVolume(pieces[1]), 2));
+            CHECK(near(std::max(solidVolume(pieces[0]), solidVolume(pieces[1])), 1.5));
+            double v = 0;
+            for (const Mesh& p : pieces) {
+                CHECK(isSolid(p));
+                v += solidVolume(p);
+            }
+            CHECK(near(v, 2));
+        }
+        // Warped quads (as sculpted or imported surfaces have) are cut too.
+        {
+            Mesh w, knife;
+            const int n = 8;
+            std::vector<std::vector<Id>> v(n + 1, std::vector<Id>(n + 1));
+            for (int i = 0; i <= n; ++i)
+                for (int j = 0; j <= n; ++j)
+                    v[i][j] = w.addVertexRaw(Vec3(i * 0.1, j * 0.1, 0.004 * std::sin(i * 1.7 + j * 2.3)));
+            for (int i = 0; i < n; ++i)
+                for (int j = 0; j < n; ++j) w.addFaceRaw({v[i][j], v[i + 1][j], v[i + 1][j + 1], v[i][j + 1]}, {}, Vec3(0, 0, 1));
+            double a0 = 0;
+            for (Id f = 0; f < (Id)w.faces.size(); ++f) a0 += w.faceArea(f);
+            knife.drawPolyline({Vec3(0.43, -1, -1), Vec3(0.43, 2, -1), Vec3(0.43, 2, 1), Vec3(0.43, -1, 1)}, true);
+            CHECK(knifeMesh(w, knife, pieces, &err));
+            CHECK_EQ((int)pieces.size(), 2);
+            double a1 = 0;
+            int faces = 0;
+            for (const Mesh& p : pieces)
+                for (Id f = 0; f < (Id)p.faces.size(); ++f)
+                    if (p.faces[f].alive) a1 += p.faceArea(f), ++faces;
+            CHECK_EQ(faces, n * n + n); // the column of quads the knife crosses splits in two
+            CHECK(std::fabs(a1 - a0) < 1e-4);
+        }
+        // Refused: too small to go through, not touching, not flat.
+        {
+            Mesh box, small, away, bent;
+            solidBox(box, Vec3(0, 0, 0), Vec3(1, 1, 1));
+            square(small, 0.3, 0.5, 0.5, 0.5);
+            CHECK(!knifeMesh(box, small, pieces, &err) && err.find("all the way") != std::string::npos && pieces.empty());
+            square(away, 1, 5);
+            CHECK(!knifeMesh(box, away, pieces, &err));
+            solidBox(bent, Vec3(0, 0, 0), Vec3(1, 1, 1));
+            CHECK(!knifeMesh(box, bent, pieces, &err) && err.find("flat") != std::string::npos);
+        }
+        // As a solid tool on components: the knife a loose face in the model.
+        {
+            Document d;
+            solidBox(d.mesh(), Vec3(0, 0, 0), Vec3(2, 1, 1));
+            const Id target = makeComponent(d.state, selectAllGeometry(d), "Bar");
+            square(d.mesh(), 2, 0.5, 1, 0.5);
+            Id face = kNone;
+            for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+                if (d.mesh().faces[f].alive) face = f;
+            Selection out;
+            CHECK(knifeOperation(d.state, kNone, face, target, &out, &err));
+            CHECK_EQ((int)out.instances.size(), 2);
+            double v = 0;
+            for (Id i : out.instances) {
+                CHECK(instanceIsSolid(d.state, i));
+                v += solidVolume(d.state.defs[d.state.instances[i].def].mesh);
+            }
+            CHECK(near(v, 2));
+            CHECK(d.mesh().faces[face].alive); // the knife stays
         }
     });
 
@@ -3927,6 +4155,177 @@ int main() {
             // Roughly a tube wall: 1 - (0.3/0.4)^2 of the volume.
             CHECK(v > 0 && std::fabs(v / v0 - (1 - 0.5625)) < 0.06);
         });
+        // A sphere cut at its equator: the dome above (open at the bottom).
+        auto dome = [&](Mesh& m, double r) {
+            PrimitiveParams pp;
+            pp.kind = PrimitiveKind::Sphere;
+            pp.radius = r;
+            pp.segments = 24;
+            pp.rings = 12;
+            CHECK(buildPrimitive(pp, m));
+            for (Id f : allFaces(m)) {
+                Vec3 c;
+                for (Id v : m.faces[f].outer) c += m.pos(v);
+                if (c.z / m.faces[f].outer.size() < r) m.eraseFace(f);
+            }
+            m.removeOrphanVertices();
+        };
+        // Each face not in `before` and not lying on the plane z = rimZ is
+        // a parallel copy of one of `before`, `t` away on the side `side`.
+        auto copiesExact = [](const Mesh& m, const std::vector<Plane>& before, const std::set<Id>& old, double t, double side, double rimZ) {
+            int copies = 0;
+            for (Id f = 0; f < (Id)m.faces.size(); ++f) {
+                if (!m.faces[f].alive || old.count(f)) continue;
+                bool onRim = true;
+                for (Id v : m.faceVertices(f)) onRim = onRim && std::fabs(m.pos(v).z - rimZ) < 1e-9;
+                if (onRim) continue;
+                bool found = false;
+                for (const Plane& P : before) {
+                    if (m.faces[f].normal.dot(P.n) * side < 1 - 1e-9) continue;
+                    bool all = true;
+                    for (Id v : m.faceVertices(f)) all = all && std::fabs(P.distance(m.pos(v)) - side * t) < 1e-9;
+                    if (all) { found = true; break; }
+                }
+                if (!found) return -1;
+                ++copies;
+            }
+            return copies;
+        };
+        test("effects: thicken a dome inward: a bowl with exact walls and a flat rim", [&] {
+            Mesh m;
+            const double R = 0.5, t = 0.05;
+            dome(m, R);
+            const std::set<Id> old = allFaces(m);
+            std::vector<Plane> planes;
+            for (Id f : old) planes.push_back(m.facePlane(f));
+            ThickenParams tp;
+            tp.thickness = t;
+            EffectResult r;
+            std::string err;
+            CHECK(effectThicken(m, old, tp, &r, &err));
+            CHECK(err.empty());
+            CHECK(isSolid(m));
+            CHECK_EQ(copiesExact(m, planes, old, t, -1, R), (int)old.size());
+            // One flat ring at the equator, facing down.
+            int ring = 0;
+            for (Id f : allFaces(m)) {
+                bool onRim = true;
+                for (Id v : m.faceVertices(f)) onRim = onRim && std::fabs(m.pos(v).z - R) < 1e-9;
+                if (onRim) {
+                    ++ring;
+                    CHECK(m.faces[f].normal.z < -0.999 && m.faces[f].holes.size() == 1);
+                }
+            }
+            CHECK_EQ(ring, 1);
+            const double v = solidVolume(m), want = 2.0 / 3 * kPi * (R * R * R - (R - t) * (R - t) * (R - t));
+            std::printf("    bowl volume %.6f (smooth dome %.6f), %d faces\n", v, want, m.aliveFaceCount());
+            CHECK(v > 0 && std::fabs(v / want - 1) < 0.05);
+            CHECK_EQ((int)r.faces.size(), m.aliveFaceCount());
+        });
+        test("effects: thicken a dome outward", [&] {
+            Mesh m;
+            const double R = 0.5, t = 0.02;
+            dome(m, R);
+            const std::set<Id> old = allFaces(m);
+            std::vector<Plane> planes;
+            for (Id f : old) planes.push_back(m.facePlane(f));
+            ThickenParams tp;
+            tp.thickness = t;
+            tp.outward = true;
+            std::string err;
+            CHECK(effectThicken(m, old, tp, nullptr, &err));
+            CHECK(isSolid(m));
+            CHECK_EQ(copiesExact(m, planes, old, t, 1, R), (int)old.size());
+            // The dome itself now faces the hollow under it.
+            for (Id f : old) {
+                const Vec3 c = m.faceInteriorPoint(f) - Vec3(0, 0, R);
+                CHECK(m.faces[f].normal.dot(c) < 0);
+            }
+            const double v = solidVolume(m), want = 2.0 / 3 * kPi * ((R + t) * (R + t) * (R + t) - R * R * R);
+            CHECK(std::fabs(v / want - 1) < 0.05);
+        });
+        test("effects: thicken a sheet and a box: exact volumes", [&] {
+            for (bool outward : {false, true}) {
+                Mesh m;
+                rect(m, 0, 0, 2, 1);
+                ThickenParams tp;
+                tp.thickness = 0.1;
+                tp.outward = outward;
+                CHECK(effectThicken(m, allFaces(m), tp));
+                CHECK(isSolid(m));
+                CHECK(std::fabs(solidVolume(m) - 0.2) < 1e-9);
+                CHECK_EQ(m.aliveFaceCount(), 6);
+            }
+            Mesh b;
+            rect(b, 0, 0, 1, 1);
+            b.pushPull(onlyFace(b), b.faces[onlyFace(b)].normal.z < 0 ? -1 : 1);
+            ThickenParams tp;
+            tp.thickness = 0.1;
+            CHECK(effectThicken(b, allFaces(b), tp));
+            CHECK(isSolid(b) && std::fabs(solidVolume(b) - (1 - 0.8 * 0.8 * 0.8)) < 1e-9);
+            CHECK_EQ(b.aliveFaceCount(), 12);
+            // An open box (no lid): walls inward, the rim flat on top.
+            Mesh o;
+            rect(o, 0, 0, 1, 1);
+            o.pushPull(onlyFace(o), o.faces[onlyFace(o)].normal.z < 0 ? -1 : 1);
+            for (Id f : allFaces(o))
+                if (o.faces[f].normal.z > 0.9) o.eraseFace(f);
+            CHECK(effectThicken(o, allFaces(o), tp));
+            CHECK(isSolid(o) && std::fabs(solidVolume(o) - (1 - 0.8 * 0.8 * 0.9)) < 1e-9);
+        });
+        test("effects: thicken a wavy surface of warped quads (sculpted or imported)", [&] {
+            Mesh w;
+            const int n = 12;
+            std::vector<std::vector<Id>> v(n + 1, std::vector<Id>(n + 1));
+            for (int i = 0; i <= n; ++i)
+                for (int j = 0; j <= n; ++j)
+                    v[i][j] = w.addVertexRaw(Vec3(i * 0.01, j * 0.01, 0.003 * std::sin(i * 0.9) * std::cos(j * 0.7) + 0.0004 * ((i * 7 + j * 3) % 5)));
+            for (int i = 0; i < n; ++i)
+                for (int j = 0; j < n; ++j) w.addFaceRaw({v[i][j], v[i + 1][j], v[i + 1][j + 1], v[i][j + 1]}, {}, Vec3(0, 0, 1));
+            for (bool outward : {false, true}) {
+                Mesh m = w;
+                ThickenParams tp;
+                tp.thickness = 0.001;
+                tp.outward = outward;
+                std::string err;
+                CHECK(effectThicken(m, allFaces(m), tp, nullptr, &err));
+                CHECK(isSolid(m));
+                // About area x thickness, and mostly quads like the original
+                // (pieces of the rim of a warped surface may be triangles).
+                CHECK(std::fabs(solidVolume(m) / (0.12 * 0.12 * 0.001) - 1) < 0.08);
+                int quads = 0;
+                for (Id f : allFaces(m)) quads += m.faces[f].outer.size() == 4;
+                CHECK(quads > m.aliveFaceCount() * 0.7);
+            }
+        });
+        test("effects: thicken turns mixed-up faces one way; refuses what it cannot do", [&] {
+            // A dome with every other face turned around.
+            Mesh m;
+            dome(m, 0.5);
+            int k = 0;
+            for (Id f : allFaces(m))
+                if (k++ % 2) m.reverseFace(f);
+            ThickenParams tp;
+            tp.thickness = 0.03;
+            std::string err;
+            CHECK(effectThicken(m, allFaces(m), tp, nullptr, &err));
+            CHECK(isSolid(m));
+            // Thicker than the dome is round: refused, nothing changed.
+            Mesh d;
+            dome(d, 0.5);
+            const int n0 = d.aliveFaceCount();
+            tp.thickness = 0.7;
+            CHECK(!effectThicken(d, allFaces(d), tp, nullptr, &err) && !err.empty());
+            CHECK_EQ(d.aliveFaceCount(), n0);
+            // Three faces on one edge.
+            Mesh t3;
+            const Id a = t3.addVertex(Vec3(0, 0, 0)), b = t3.addVertex(Vec3(1, 0, 0));
+            t3.addFaceRaw({a, b, t3.addVertex(Vec3(0.5, 1, 0))}, {});
+            t3.addFaceRaw({a, b, t3.addVertex(Vec3(0.5, -1, 0))}, {});
+            t3.addFaceRaw({a, b, t3.addVertex(Vec3(0.5, 0, 1))}, {});
+            tp.thickness = 0.01;
+            CHECK(!effectThicken(t3, allFaces(t3), tp, nullptr, &err));
+        });
         test("effects: solidify removes inner walls, sealed hollows and loose sheets", [&] {
             Mesh m;
             triBox(m, Vec3(0, 0, 0), Vec3(2, 2, 2));
@@ -3955,6 +4354,61 @@ int main() {
             const double v = solidVolume(m);
             std::printf("    union volume %.4f (want 15)\n", v);
             CHECK(std::fabs(v - 15) < 1e-6); // 8 + 8 - the 1 m overlap
+        });
+        test("effects: solidify closes small holes, keeps them closed, still drops small sheets", [&] {
+            PrimitiveParams sp;
+            sp.kind = PrimitiveKind::Sphere;
+            sp.radius = 0.5;
+            sp.segments = 96;
+            sp.rings = 48;
+            Mesh ball;
+            buildPrimitive(sp, ball);
+            const int n0 = ball.aliveFaceCount();
+            SolidifyParams coarse; // holes up to 4 cells (12.5 cm) across get closed
+            coarse.detail = 32;
+            const double v0 = solidVolume(ball);
+            // A flat hole (one quad gone) and a bent one (two quads side by
+            // side: their outline is not in a plane).
+            std::vector<Id> quads;
+            for (Id f = 0; f < (Id)ball.faces.size(); ++f)
+                if (ball.faces[f].alive && ball.faces[f].outer.size() == 4) quads.push_back(f);
+            const Id lone = quads[quads.size() / 3];
+            Id pairA = kNone, pairB = kNone;
+            for (size_t i = quads.size() * 2 / 3; i < quads.size() && pairB == kNone; ++i)
+                for (Id e : ball.faceEdges(quads[i]))
+                    for (Id g : ball.edgeFaces(e))
+                        if (g != quads[i] && ball.faces[g].outer.size() == 4 && pairB == kNone &&
+                            std::fabs(ball.faces[g].normal.z - ball.faces[quads[i]].normal.z) > 1e-3)
+                            pairA = quads[i], pairB = g;
+            CHECK(pairB != kNone);
+            for (Id f : {lone, pairA, pairB}) ball.eraseFace(f);
+            ball.touch();
+            CHECK(!isSolid(ball));
+            Mesh m = ball;
+            std::string err;
+            CHECK(effectSolidify(m, allFaces(m), coarse, nullptr, &err));
+            CHECK(isSolid(m));
+            CHECK(std::fabs(solidVolume(m) - v0) < v0 * 1e-3);
+            const int n1 = m.aliveFaceCount();
+            CHECK(n1 >= n0 - 1); // the flat hole one face, the bent one triangles
+            // Again: nothing more to do, nothing taken away.
+            CHECK(effectSolidify(m, allFaces(m), coarse, nullptr, &err));
+            CHECK(isSolid(m));
+            CHECK_EQ(m.aliveFaceCount(), n1);
+            // Off: the holes stay.
+            Mesh k = ball;
+            SolidifyParams keepOpen = coarse;
+            keepOpen.closeHoles = false;
+            effectSolidify(k, allFaces(k), keepOpen, nullptr, &err);
+            CHECK(!isSolid(k));
+            // A small loose sheet next to a solid is not "closed" into a
+            // flat double face: it goes as before.
+            Mesh s;
+            triBox(s, Vec3(0, 0, 0), Vec3(2, 2, 2));
+            s.drawPolyline({{3, 0, 0}, {3.05, 0, 0}, {3.05, 0.05, 0}, {3, 0.05, 0}}, true);
+            CHECK(effectSolidify(s, allFaces(s), SolidifyParams{}, nullptr, &err));
+            CHECK_EQ(s.aliveFaceCount(), 12);
+            CHECK(isSolid(s));
         });
     }
 

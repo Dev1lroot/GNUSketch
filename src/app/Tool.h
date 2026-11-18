@@ -24,7 +24,8 @@ enum class ToolId {
     Mountain, Pit, Flatten, TextureBrush,
     SolidUnion, SolidIntersect, SolidSubtract, SolidTrim, SolidSplit,
     PlaceCharacter, Bend, TexturePosition,
-    PlacePointLight, PlaceSpotLight, PlaceDirectionalLight, PlaceCamera
+    PlacePointLight, PlaceSpotLight, PlaceDirectionalLight, PlaceCamera,
+    SolidKnife
 };
 
 struct MouseEvent {

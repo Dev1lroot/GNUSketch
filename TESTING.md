@@ -75,8 +75,10 @@ bottom. Screenshots help.
 - [ ] Quads / Hexagons / Triangles on a plane, a box, a terrain; Rotation; textures and materials stay on
 - [ ] Voxelate a box (exact size with a fitting cube size), a sphere, a terrain, a textured face: live preview with the size slider, materials stay; Merge flat sides; very small size says the detail was reduced; result works with Push/Pull and Solid Tools
 - [ ] De-triangulate an imported STL/3MF (or a Triangulated model): flat sides become single faces, straight outlines lose their extra points; with "Quads on curved surfaces" a sphere/cylinder becomes quads; the tolerance joins slightly uneven sides
+- [ ] Knife (Solid Tools): a rectangle through a box, a sphere, a torus (ring-shaped cut), an open dome, an imported STL; a knife too small or not touching says so; a flat component as the knife; parts the knife misses stay in the component; undo
+- [ ] Thicken: a half sphere inward and outward (flat ring at the cut, wall thickness right with Tape Measure), a single rectangle (a plate), an open box (rim on top), a closed box/sphere (a shell); faces turned the wrong way first; too thick a wall says so
 - [ ] Hollow a box, a sphere, a torus, a model with thin parts, an imported figurine: the wall thickness is right (Tape Measure / section), thin parts stay solid, the inside faces point into the cavity (back colour inside), slicer sees a hollow part; too thick a wall says so; an open surface is refused
-- [ ] Solidify: two overlapping boxes become one; a box with an inner wall, a sealed hollow inside and a loose plane sticking out keeps only the outer skin; a face turned inside out is turned back; an imported model with internal junk prints as one solid
+- [ ] Solidify: two overlapping boxes become one; a box with an inner wall, a sealed hollow inside and a loose plane sticking out keeps only the outer skin; a face turned inside out is turned back; an imported model with internal junk prints as one solid; a sculpted model with a few small holes is closed (no open edges left) and Solidify run again changes nothing; then the Slicer cuts it into closed pieces
 - [ ] Subdivide, Triangulate, Merge Flat Faces; Ctrl+F repeats; effects on a component with copies change only the selected one
 
 ## Sun and culling

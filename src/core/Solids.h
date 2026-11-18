@@ -10,6 +10,7 @@
 #include "Document.h"
 
 #include <string>
+#include <vector>
 
 namespace gs {
 
@@ -47,6 +48,25 @@ bool instanceIsSolid(const ModelState& st, Id inst, std::string* why = nullptr);
 // instance. Definitions shared with other instances are copied, not changed.
 // Resulting instances go to `result`. On failure nothing is changed.
 bool solidOperation(ModelState& st, SolidOp op, Id first, Id second, Selection* result = nullptr,
+                    std::string* error = nullptr);
+
+// ---- Knife ------------------------------------------------------------------
+// Cuts any geometry (closed solids, open surfaces, loose sheets) along a flat
+// knife: the faces of `knife` lying in one plane, given in the same
+// coordinates as `target`. The cut follows the knife's outline exactly: only
+// what lies within the knife's faces is cut. Each separated part becomes one
+// piece; a closed solid gets the cut openings closed with flat faces, so both
+// parts stay solids. Fails (pieces empty) if the knife is not flat or does not
+// cut the target into at least two parts.
+bool knifeIsFlat(const Mesh& knife, Plane* plane = nullptr, std::string* why = nullptr);
+bool knifeMesh(const Mesh& target, const Mesh& knife, std::vector<Mesh>& pieces, std::string* error = nullptr);
+
+// Cuts component `target` with a knife: the flat component `knifeInstance`
+// or, if that is kNone, face `knifeFace` of the top-level geometry together
+// with the faces joined to it in its plane. The first part stays in `target`,
+// the others become new components next to it; the knife is kept. Resulting
+// instances go to `result`. On failure nothing is changed.
+bool knifeOperation(ModelState& st, Id knifeInstance, Id knifeFace, Id target, Selection* result = nullptr,
                     std::string* error = nullptr);
 
 } // namespace gs

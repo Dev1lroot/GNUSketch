@@ -89,6 +89,7 @@ void Viewport::setTool(ToolId id) {
     case ToolId::SolidIntersect:
     case ToolId::SolidSubtract:
     case ToolId::SolidTrim:
+    case ToolId::SolidKnife:
     case ToolId::SolidSplit: tool_ = std::make_unique<SolidTool>(this, id); break;
     case ToolId::TexturePosition: tool_ = std::make_unique<TextureTool>(this); break;
     case ToolId::Bend: tool_ = std::make_unique<BendTool>(this); break;

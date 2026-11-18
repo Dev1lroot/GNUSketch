@@ -761,6 +761,38 @@ int runSelfTest(MainWindow& w) {
         d.click(d.screen(Vec3(100.5, 3, 0.5)));
         d.check(cardInst != kNone && doc.undoName() == before && doc.selection.instances.empty(),
                 "a component that isn't closed can't be picked");
+
+        // Knife: a loose flat face across the open card cuts it in two.
+        doc.beginOp("Knife face");
+        d.mesh().drawPolyline({{99.6, 2.6, 0.5}, {101.4, 2.6, 0.5}, {101.4, 3.4, 0.5}, {99.6, 3.4, 0.5}}, true);
+        doc.commitOp();
+        doc.selection.clear();
+        doc.notifySelection();
+        double cardArea = 0;
+        {
+            const Mesh& cm = doc.state.defs[doc.state.instances[cardInst].def].mesh;
+            for (Id f = 0; f < (Id)cm.faces.size(); ++f)
+                if (cm.faces[f].alive) cardArea += cm.faceArea(f);
+        }
+        const int cardFaces = doc.state.defs[doc.state.instances[cardInst].def].mesh.aliveFaceCount();
+        vp->setTool(ToolId::SolidKnife);
+        d.click(d.screen(Vec3(101.3, 3.3, 0.5)));
+        d.check(doc.selection.faces.size() == 1 && doc.selection.instances.empty(), "Knife: the first click picks the flat face");
+        d.click(d.screen(Vec3(100.5, 3, 0.85)));
+        int halves = 0;
+        double area = 0;
+        for (Id i : doc.selection.instances) {
+            const Mesh& cm = doc.state.defs[doc.state.instances[i].def].mesh;
+            ++halves;
+            for (Id f = 0; f < (Id)cm.faces.size(); ++f)
+                if (cm.faces[f].alive) area += cm.faceArea(f);
+        }
+        d.check(doc.undoName() == "Knife" && halves == 2 && std::fabs(area - cardArea) < 1e-6,
+                "Knife cuts the open card into two components along the face");
+        d.check(!vp->grabFramebuffer().isNull(), "renders the cut parts");
+        doc.undo();
+        d.check(doc.state.instances[cardInst].alive && doc.state.defs[doc.state.instances[cardInst].def].mesh.aliveFaceCount() == cardFaces,
+                "undo puts the card back in one piece");
         vp->setTool(ToolId::Select);
     }
 
@@ -3816,6 +3848,12 @@ int runSelfTest(MainWindow& w) {
         d.check(isSolid(doc.state.defs[0].mesh) && v1 > 0 && v1 < v0 * 0.8, "with less material, still a solid");
         doc.undo();
         d.check(std::fabs(solidVolume(doc.state.defs[0].mesh) - v0) < 1e-12, "one undo takes the hollow away");
+        d.check(action("effect_thicken") != nullptr, "Thicken is in Effects");
+        d.check(run("Thicken", {{"thickness", 1.0}, {"direction", 0}}).empty(), "Thicken runs on it (1 mm inward)");
+        const double v2 = solidVolume(doc.state.defs[0].mesh);
+        d.check(isSolid(doc.state.defs[0].mesh) && v2 > 0 && v2 < v0 * 0.5, "a 1 mm shell, still a solid");
+        doc.undo();
+        d.check(std::fabs(solidVolume(doc.state.defs[0].mesh) - v0) < 1e-12, "one undo takes the wall away");
         doc.reset();
         w.clearRecentFiles();
     }

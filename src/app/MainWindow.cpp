@@ -82,7 +82,7 @@ namespace {
 
 // Solid Tools toolbar/menu order.
 const ToolId kSolidTools[] = {ToolId::SolidIntersect, ToolId::SolidUnion, ToolId::SolidSubtract, ToolId::SolidTrim,
-                              ToolId::SolidSplit};
+                              ToolId::SolidSplit, ToolId::SolidKnife};
 
 QJsonArray vec(const Vec3& v) { return QJsonArray{v.x, v.y, v.z}; }
 Vec3 vec(const QJsonValue& j, const Vec3& def) {
@@ -217,6 +217,7 @@ void MainWindow::buildActions() {
     toolAction(ToolId::SolidSubtract, QStringLiteral("Subtract"), QString());
     toolAction(ToolId::SolidTrim, QStringLiteral("Trim"), QString());
     toolAction(ToolId::SolidSplit, QStringLiteral("Split"), QString());
+    toolAction(ToolId::SolidKnife, QStringLiteral("Knife"), QString());
     toolAction(ToolId::Bend, QStringLiteral("Bend"), QStringLiteral("Ctrl+B"));
     toolAction(ToolId::TexturePosition, QStringLiteral("Position Texture"), QStringLiteral("Ctrl+U"));
     toolActions_[ToolId::TexturePosition]->setObjectName(QStringLiteral("textureposition"));

@@ -91,14 +91,33 @@ struct HollowParams {
 };
 bool effectHollow(Mesh& m, const std::set<Id>& faces, const HollowParams& p, EffectResult* out = nullptr, std::string* error = nullptr);
 
+// Gives a surface of flat polygons a wall of exact thickness, open or closed,
+// any shape (a dome, a bent sheet, a box): every face gets a parallel copy
+// `thickness` behind it (inward) or in front of it (outward), and open edges
+// get a rim joining the two. Each corner of the copy lies where the moved
+// planes of its faces meet, so the copy's faces stay flat and exactly the
+// thickness away; a flat open outline keeps its rim in its plane (a half
+// sphere gets a flat ring). Faces are first turned to one consistent side.
+// Fails if the wall would turn inside out (thicker than the tightest curve).
+struct ThickenParams {
+    double thickness = 0.002; // meters
+    bool outward = false;     // grow in front of the faces instead of behind
+};
+bool effectThicken(Mesh& m, const std::set<Id>& faces, const ThickenParams& p, EffectResult* out = nullptr,
+                   std::string* error = nullptr);
+
 // Leaves only the outside of the geometry: overlapping closed parts are merged
 // (union), and faces that cannot be seen from outside go: inner walls, the
 // walls of sealed hollows (they become solid), loose sheets. Faces seen from
 // outside with their back are turned around. Gaps narrower than a grid cell
-// (`detail` cells along the longest side) count as closed.
+// (`detail` cells along the longest side) count as closed. With
+// `closeHoles`, holes in the surface up to four grid cells across (the open
+// edges of a model that is almost closed) are first filled with new faces:
+// one flat face if the hole's edges lie in a plane, else smooth triangles.
 struct SolidifyParams {
     int detail = 128;
     bool mergeParts = true;
+    bool closeHoles = true;
 };
 bool effectSolidify(Mesh& m, const std::set<Id>& faces, const SolidifyParams& p, EffectResult* out = nullptr,
                     std::string* error = nullptr);

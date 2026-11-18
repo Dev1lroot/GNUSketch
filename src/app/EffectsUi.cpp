@@ -230,6 +230,33 @@ std::vector<EffectDef> buildRegistry() {
     }
     {
         EffectDef d;
+        d.name = d.menuText = QStringLiteral("Thicken");
+        d.submenu = QStringLiteral("Solid");
+        d.icon = QStringLiteral("fx_thicken");
+        d.tip = QStringLiteral("Gives the selected faces a wall of exact thickness: a dome becomes a bowl, a sheet a plate, a closed "
+                               "shape a shell. Every face gets a flat copy parallel to it, open edges get a rim (flat when the "
+                               "outline is flat). Works on any surface of flat polygons.");
+        EffectParam direction;
+        direction.key = "direction";
+        direction.label = QStringLiteral("Direction");
+        direction.type = EffectParam::Choice;
+        direction.choices = {QStringLiteral("Inward (behind the faces)"), QStringLiteral("Outward (in front of the faces)")};
+        direction.def = 0;
+        direction.tip = QStringLiteral("Inward: the wall grows behind the faces, into a closed shape or under a dome; the outside stays "
+                                       "where it is. Outward: it grows in front of them and the faces become the inside.");
+        d.params = {real("thickness", QStringLiteral("Wall thickness"), 0.01, 10000, 2, 2, QStringLiteral(" mm"), true,
+                         QStringLiteral("Distance between each face and its copy, measured square to the face.")),
+                    direction};
+        d.apply = [](Mesh& m, const std::set<Id>& f, const QVariantMap& v, EffectResult* out, std::string* err) {
+            ThickenParams p;
+            p.thickness = v["thickness"].toDouble() * 0.001;
+            p.outward = v["direction"].toInt() == 1;
+            return effectThicken(m, f, p, out, err);
+        };
+        r.push_back(std::move(d));
+    }
+    {
+        EffectDef d;
         d.name = d.menuText = QStringLiteral("Hollow");
         d.submenu = QStringLiteral("Solid");
         d.icon = QStringLiteral("fx_hollow");
@@ -250,13 +277,16 @@ std::vector<EffectDef> buildRegistry() {
         d.name = d.menuText = QStringLiteral("Solidify");
         d.submenu = QStringLiteral("Solid");
         d.icon = QStringLiteral("fx_solidify");
-        d.tip = QStringLiteral("Leaves one solid seen from outside: overlapping parts merge, inner walls, sealed hollows and loose sheets go, faces showing their back outside are turned around. Gaps narrower than a grid cell count as closed.");
-        d.params = {whole("detail", QStringLiteral("Detail"), 32, 400, 128), flag("merge", QStringLiteral("Merge overlapping parts"), true)};
+        d.tip = QStringLiteral("Leaves one solid seen from outside: small holes are closed, overlapping parts merge, inner walls, sealed hollows and loose sheets go, faces showing their back outside are turned around. Gaps narrower than a grid cell count as closed.");
+        d.params = {whole("detail", QStringLiteral("Detail"), 32, 400, 128), flag("merge", QStringLiteral("Merge overlapping parts"), true),
+                    flag("holes", QStringLiteral("Close small holes"), true)};
+        d.params.back().tip = QStringLiteral("Fills holes up to four grid cells across with new faces (flat if the hole's edges lie in a plane, else smooth triangles): the open edges of a model that is almost closed.");
         d.params.front().tip = QStringLiteral("Grid cells along the longest side for finding the outside.");
         d.apply = [](Mesh& m, const std::set<Id>& f, const QVariantMap& v, EffectResult* out, std::string* err) {
             SolidifyParams p;
             p.detail = v["detail"].toInt();
             p.mergeParts = v["merge"].toBool();
+            p.closeHoles = v.value("holes", true).toBool();
             return effectSolidify(m, f, p, out, err);
         };
         r.push_back(std::move(d));

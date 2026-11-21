@@ -12,6 +12,7 @@
 #include "Panels.h"
 #include "io/ArchMaterials.h"
 #include "TextureTool.h"
+#include "DrawTools.h"
 #include "io/AssetLibrary.h"
 #include "io/ObjIO.h"
 #include "render/OffscreenRenderer.h"
@@ -1272,6 +1273,80 @@ int runSelfTest(MainWindow& w) {
             QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
             vp->tool()->keyPress(&esc);
             vp->setTool(ToolId::Select);
+            doc.undo();
+            eng.resetMemory();
+        }
+        // 3D Curve: a line whose anchors move anywhere in space.
+        {
+            double one = 1;
+            doc.units.parseLength("1", one);
+            const Vec3 ca(350, 0, 0), cb(353, 0, 0);
+            vp->setStandardView(Vec3(0, 0, -1));
+            vp->camera().zoomExtents(Vec3(349, -2, 0), Vec3(354, 2, 0));
+            d.pump();
+            eng.resetMemory();
+            vp->setTool(ToolId::Curve3D);
+            auto* ct = dynamic_cast<Curve3DTool*>(vp->tool());
+            d.click(d.screen(ca));
+            d.click(d.screen(cb));
+            const std::vector<Vec3> a0 = ct->anchors();
+            d.check(a0.size() == 4 && a0.front().nearlyEquals(ca, 1e-6) && a0.back().nearlyEquals(cb, 1e-6) &&
+                        a0[1].nearlyEquals(Vec3(351, 0, 0), 1e-6),
+                    "3D Curve: the line gets four evenly spaced anchors");
+            // Click an anchor, type where it goes: out of the drawing plane.
+            d.click(d.screen(a0[1]));
+            d.type("<0,0,1>");
+            d.check(ct->anchors()[1].nearlyEquals(a0[1] + Vec3(0, 0, one), 1e-6), "3D Curve: typed <x,y,z> moves the anchor up");
+            // Drag another one along the blue axis in a 3D view.
+            vp->setStandardView(Vec3(-1, 0.8, -0.7));
+            vp->camera().zoomExtents(Vec3(349, -2, -1), Vec3(354, 2, 2));
+            d.pump();
+            vp->tool()->holdAxis(2);
+            const Vec3 a2 = ct->anchors()[2];
+            d.drag(d.screen(a2), d.screen(a2 + Vec3(0, 0, 0.8)));
+            vp->tool()->holdAxis(-1);
+            const Vec3 m2 = ct->anchors()[2];
+            d.check(std::fabs(m2.x - a2.x) < 1e-9 && std::fabs(m2.y - a2.y) < 1e-9 && m2.z > 0.3 && ct->activeAnchor() < 0,
+                    "3D Curve: dragging an anchor with blue locked moves it straight up");
+            const std::vector<Vec3> pts = ct->curvePoints();
+            bool smooth = pts.size() >= 20;
+            for (size_t i = 2; i < pts.size(); ++i) { // no kinks between neighbouring segments
+                const Vec3 u = (pts[i - 1] - pts[i - 2]).normalized(), v = (pts[i] - pts[i - 1]).normalized();
+                smooth = smooth && u.dot(v) > 0.7;
+            }
+            d.check(smooth && pts.front().nearlyEquals(ca, 1e-9) && pts.back().nearlyEquals(cb, 1e-9), "3D Curve: a smooth curve through the anchors");
+            // Click the curve: a new anchor there; Esc leaves it where it was.
+            std::vector<int> span;
+            const std::vector<Vec3> sp = ct->curvePoints(&span);
+            std::vector<size_t> first;
+            for (size_t i = 1; i < sp.size(); ++i)
+                if (span[i] == 0) first.push_back(i);
+            const Vec3 onCurve = lerp(sp[first[first.size() / 2] - 1], sp[first[first.size() / 2]], 0.5);
+            d.click(d.screen(onCurve));
+            d.key(Qt::Key_Escape);
+            d.check(ct->anchors().size() == 5 && ct->busy(), "3D Curve: clicking the curve adds an anchor");
+            d.click(d.screen(ct->anchors()[1]), Qt::ControlModifier);
+            d.check(ct->anchors().size() == 4, "3D Curve: Ctrl+click removes an anchor");
+            d.type("6");
+            d.check(ct->anchors().size() == 6 && ct->anchors().front().nearlyEquals(ca, 1e-9) && ct->anchors().back().nearlyEquals(cb, 1e-9),
+                    "3D Curve: typing 6 resamples it to six anchors");
+            const std::vector<Vec3> fin = ct->curvePoints();
+            const size_t e0 = d.mesh().aliveEdgeCount();
+            d.key(Qt::Key_Return);
+            bool all = !ct->busy() && d.mesh().aliveEdgeCount() == e0 + fin.size() - 1;
+            for (const Vec3& p : fin) all = all && d.mesh().findVertex(p, 1e-6) != kNone;
+            d.check(all, "3D Curve: Enter makes it edges");
+            doc.undo();
+            // Switching tools keeps a curve being edited.
+            vp->setStandardView(Vec3(0, 0, -1));
+            vp->camera().zoomExtents(Vec3(349, -2, 0), Vec3(354, 2, 0));
+            d.pump();
+            vp->setTool(ToolId::Curve3D);
+            d.click(d.screen(ca));
+            d.click(d.screen(cb));
+            const size_t e1 = d.mesh().aliveEdgeCount();
+            vp->setTool(ToolId::Select);
+            d.check(d.mesh().aliveEdgeCount() > e1, "3D Curve: switching tools keeps the curve");
             doc.undo();
             eng.resetMemory();
         }

@@ -891,4 +891,394 @@ void ArcTool::buildPreview(Preview& pv) {
     if (stage_ != 2) engine().addPreview(inf_, pv);
 }
 
+// ===========================================================================
+// 3D Curve
+// ===========================================================================
+
+namespace {
+
+// Centripetal Catmull-Rom between p1 (u = 0) and p2 (u = 1): no loops or
+// cusps, however unevenly the anchors are spaced.
+Vec3 catmullRom(const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, double u) {
+    auto knot = [](double t, const Vec3& a, const Vec3& b) { return t + std::max(std::sqrt((b - a).length()), 1e-6); };
+    const double t0 = 0, t1 = knot(t0, p0, p1), t2 = knot(t1, p1, p2), t3 = knot(t2, p2, p3);
+    const double t = t1 + (t2 - t1) * u;
+    const Vec3 a1 = p0 * ((t1 - t) / (t1 - t0)) + p1 * ((t - t0) / (t1 - t0));
+    const Vec3 a2 = p1 * ((t2 - t) / (t2 - t1)) + p2 * ((t - t1) / (t2 - t1));
+    const Vec3 a3 = p2 * ((t3 - t) / (t3 - t2)) + p3 * ((t - t2) / (t3 - t2));
+    const Vec3 b1 = a1 * ((t2 - t) / (t2 - t0)) + a2 * ((t - t0) / (t2 - t0));
+    const Vec3 b2 = a2 * ((t3 - t) / (t3 - t1)) + a3 * ((t - t1) / (t3 - t1));
+    return b1 * ((t2 - t) / (t2 - t1)) + b2 * ((t - t1) / (t2 - t1));
+}
+
+const Color kCurveColor = Color::rgb8(40, 40, 40);
+const Color kHullColor = Color::rgb8(130, 130, 130);
+
+} // namespace
+
+QString Curve3DTool::status() const {
+    switch (stage_) {
+    case 0: return QStringLiteral("Click the start point of the line to bend. Type a number for the anchor points (now %1), e.g. 32s for segments.").arg(anchorCount_);
+    case 1: return QStringLiteral("Click the end point or enter a length.");
+    default:
+        if (active_ >= 0)
+            return QStringLiteral("Click where the anchor goes, or type a distance or <x,y,z>. Arrow keys or X/Y/Z lock an axis, Shift the inference. Esc puts it back.");
+        return QStringLiteral("Drag an anchor (or click it, move, click) to bend the curve in 3D. Click the curve to add an anchor, "
+                              "Ctrl+click one to remove it. Enter or double-click to finish, Esc to cancel.");
+    }
+}
+
+QString Curve3DTool::vcbLabel() const {
+    if (stage_ == 1) return QStringLiteral("Length");
+    if (stage_ == 2 && active_ >= 0) return QStringLiteral("Distance");
+    return QStringLiteral("Anchors");
+}
+
+void Curve3DTool::reset() {
+    if (stage_ == 2 && active_ >= 0) { // Esc while moving an anchor puts it back
+        anchors_[active_] = orig_;
+        active_ = -1;
+        dragging_ = false;
+        clearLocks();
+        refreshStatus();
+        update();
+        return;
+    }
+    stage_ = 0;
+    anchors_.clear();
+    active_ = hot_ = last_ = -1;
+    dragging_ = false;
+    clearLocks();
+    setVcb(QString::number(anchorCount_));
+    refreshStatus();
+    update();
+}
+
+void Curve3DTool::deactivate() {
+    if (stage_ == 2) {
+        if (active_ >= 0) anchors_[active_] = orig_;
+        active_ = -1;
+        commit();
+    }
+    reset();
+}
+
+std::vector<Vec3> Curve3DTool::curvePoints(std::vector<int>* span, int segments) const {
+    std::vector<Vec3> pts;
+    if (span) span->clear();
+    const int n = (int)anchors_.size();
+    if (n < 2) return pts;
+    if (segments <= 0) segments = segments_;
+    double total = 0;
+    for (int i = 0; i + 1 < n; ++i) total += (anchors_[i + 1] - anchors_[i]).length();
+    pts.push_back(anchors_[0]);
+    if (span) span->push_back(0);
+    for (int i = 0; i + 1 < n; ++i) {
+        const Vec3& p1 = anchors_[i];
+        const Vec3& p2 = anchors_[i + 1];
+        // Mirrored neighbours at the open ends.
+        const Vec3 p0 = i > 0 ? anchors_[i - 1] : p1 * 2.0 - p2;
+        const Vec3 p3 = i + 2 < n ? anchors_[i + 2] : p2 * 2.0 - p1;
+        const double len = (p2 - p1).length();
+        const int k = total > kTol ? std::max(1, (int)std::lround(segments * len / total)) : 1;
+        for (int j = 1; j <= k; ++j) {
+            const Vec3 q = j == k ? p2 : catmullRom(p0, p1, p2, p3, (double)j / k);
+            if (q.nearlyEquals(pts.back())) continue;
+            pts.push_back(q);
+            if (span) span->push_back(i);
+        }
+    }
+    return pts;
+}
+
+void Curve3DTool::finishLine(const Vec3& end) {
+    if (end.nearlyEquals(start_)) return;
+    anchors_.clear();
+    const int n = std::max(2, anchorCount_);
+    for (int i = 0; i < n; ++i) anchors_.push_back(lerp(start_, end, (double)i / (n - 1)));
+    stage_ = 2;
+    active_ = hot_ = last_ = -1;
+    dragging_ = false;
+    clearLocks();
+    setVcb(QString::number(n));
+    refreshStatus();
+    update();
+}
+
+void Curve3DTool::commit() {
+    const std::vector<Vec3> pts = curvePoints();
+    if (pts.size() >= 2) {
+        doc().beginOp("3D Curve");
+        mesh().drawPolyline(pts, false, pts.size() > 2 ? mesh().newCurveId() : kNone);
+        doc().commitOp();
+    }
+    stage_ = 0;
+    anchors_.clear();
+    active_ = hot_ = last_ = -1;
+    dragging_ = false;
+    clearLocks();
+    setVcb(QString::number(anchorCount_));
+    refreshStatus();
+    update();
+}
+
+void Curve3DTool::setAnchorCount(int n) {
+    n = std::clamp(n, 2, 64);
+    anchorCount_ = n;
+    if (stage_ != 2) return;
+    // The same shape, resampled evenly along its length.
+    const std::vector<Vec3> dense = curvePoints(nullptr, 64 * (int)anchors_.size());
+    std::vector<double> at(dense.size(), 0.0);
+    for (size_t i = 1; i < dense.size(); ++i) at[i] = at[i - 1] + (dense[i] - dense[i - 1]).length();
+    const double total = at.back();
+    std::vector<Vec3> out{dense.front()};
+    size_t j = 1;
+    for (int i = 1; i + 1 < n; ++i) {
+        const double s = total * i / (n - 1);
+        while (j + 1 < dense.size() && at[j] < s) ++j;
+        const double seg = at[j] - at[j - 1];
+        out.push_back(seg > 1e-12 ? lerp(dense[j - 1], dense[j], (s - at[j - 1]) / seg) : dense[j]);
+    }
+    out.push_back(dense.back());
+    anchors_ = out;
+    active_ = hot_ = last_ = -1;
+    update();
+}
+
+int Curve3DTool::anchorAt(double x, double y) const {
+    int best = -1;
+    double bestD = 10.0;
+    for (int i = 0; i < (int)anchors_.size(); ++i) {
+        double sx, sy;
+        if (!vp_->camera().project(anchors_[i], sx, sy)) continue;
+        const double d = std::hypot(sx - x, sy - y);
+        if (d < bestD) {
+            bestD = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+bool Curve3DTool::curveAt(double x, double y, Vec3& p, int& insertAt) const {
+    std::vector<int> span;
+    const std::vector<Vec3> pts = curvePoints(&span, 32 * (int)anchors_.size());
+    double bestD = 6.0;
+    bool hit = false;
+    for (size_t i = 1; i < pts.size(); ++i) {
+        double ax, ay, bx, by;
+        if (!vp_->camera().project(pts[i - 1], ax, ay) || !vp_->camera().project(pts[i], bx, by)) continue;
+        const double dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        const double t = l2 > 1e-12 ? std::clamp(((x - ax) * dx + (y - ay) * dy) / l2, 0.0, 1.0) : 0.0;
+        const double d = std::hypot(ax + dx * t - x, ay + dy * t - y);
+        if (d < bestD) {
+            bestD = d;
+            p = lerp(pts[i - 1], pts[i], t);
+            insertAt = span[i] + 1;
+            hit = true;
+        }
+    }
+    return hit;
+}
+
+void Curve3DTool::pick(int anchor, const MouseEvent& e) {
+    active_ = last_ = hot_ = anchor;
+    orig_ = anchors_[anchor];
+    dragging_ = true;
+    pressX_ = e.x;
+    pressY_ = e.y;
+    travelled_ = false;
+    clearLocks();
+    setVcb(QString());
+    refreshStatus();
+}
+
+void Curve3DTool::placeAnchor(const MouseEvent& e) {
+    if (active_ < 0) return;
+    // From where the anchor was: the axes, geometry and the locks infer.
+    const InferenceResult r = inferPoint(e, orig_);
+    anchors_[active_] = r.p;
+    setVcb(fmtLen((r.p - orig_).length()));
+}
+
+void Curve3DTool::mousePress(const MouseEvent& e) {
+    if (e.button != Qt::LeftButton) return;
+    lastMouse_ = e;
+    if (stage_ == 0) {
+        start_ = inferPoint(e, std::nullopt).p;
+        stage_ = 1;
+        dragging_ = true;
+        pressX_ = e.x;
+        pressY_ = e.y;
+        travelled_ = false;
+        refreshStatus();
+    } else if (stage_ == 1) {
+        finishLine(inferPoint(e, start_).p);
+    } else if (active_ >= 0) { // click-move-click: the second click places it
+        placeAnchor(e);
+        active_ = -1;
+        clearLocks();
+        refreshStatus();
+    } else if (const int a = anchorAt(e.x, e.y); a >= 0) {
+        if (e.ctrl()) {
+            if (anchors_.size() > 2) {
+                anchors_.erase(anchors_.begin() + a);
+                anchorCount_ = (int)anchors_.size();
+                hot_ = last_ = -1;
+            }
+        } else {
+            pick(a, e);
+        }
+    } else {
+        Vec3 p;
+        int at = 0;
+        if (curveAt(e.x, e.y, p, at)) { // a new anchor where the curve is clicked
+            anchors_.insert(anchors_.begin() + at, p);
+            anchorCount_ = (int)anchors_.size();
+            pick(at, e);
+        } else {
+            commit(); // a click away from the curve finishes it
+        }
+    }
+    update();
+}
+
+void Curve3DTool::mouseMove(const MouseEvent& e) {
+    lastMouse_ = e;
+    if (dragging_) travelled_ = travelled_ || std::hypot(e.x - pressX_, e.y - pressY_) > 6;
+    if (stage_ == 0) {
+        inferPoint(e, std::nullopt);
+    } else if (stage_ == 1) {
+        const InferenceResult r = inferPoint(e, start_);
+        setVcb(fmtLen((r.p - start_).length()));
+    } else if (active_ >= 0) {
+        placeAnchor(e);
+    } else {
+        hot_ = anchorAt(e.x, e.y);
+    }
+    update();
+}
+
+void Curve3DTool::mouseRelease(const MouseEvent& e) {
+    if (e.button != Qt::LeftButton) return;
+    travelled_ = travelled_ || std::hypot(e.x - pressX_, e.y - pressY_) > 6;
+    if (dragging_ && travelled_) {
+        if (stage_ == 1) {
+            finishLine(inferPoint(e, start_).p);
+        } else if (stage_ == 2 && active_ >= 0) {
+            placeAnchor(e);
+            active_ = -1;
+            clearLocks();
+            refreshStatus();
+        }
+    }
+    // Released where it was pressed: the anchor follows the mouse until the next click.
+    dragging_ = false;
+    update();
+}
+
+void Curve3DTool::mouseDoubleClick(const MouseEvent&) {
+    if (stage_ != 2) return;
+    if (active_ >= 0) anchors_[active_] = orig_;
+    active_ = -1;
+    commit();
+}
+
+bool Curve3DTool::keyPress(QKeyEvent* e) {
+    if (stage_ == 2 && (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter)) {
+        if (active_ >= 0) anchors_[active_] = orig_;
+        active_ = -1;
+        commit();
+        return true;
+    }
+    const bool r = Tool::keyPress(e);
+    if (active_ >= 0) placeAnchor(lastMouse_); // an axis lock applies at once
+    return r;
+}
+
+bool Curve3DTool::vcbEnter(const QString& text) {
+    int s;
+    if (parseSides(text, s)) {
+        segments_ = std::clamp(s, 2, 2000);
+        update();
+        return true;
+    }
+    bool isInt = false;
+    const int n = text.trimmed().toInt(&isInt);
+    if (stage_ == 0) {
+        if (!isInt || n < 2 || n > 64) return false;
+        setAnchorCount(n);
+        setVcb(QString::number(anchorCount_));
+        refreshStatus();
+        return true;
+    }
+    Vec3 c;
+    bool rel = false;
+    if (stage_ == 1) {
+        if (parseCoords(text, doc().units, c, rel)) {
+            finishLine(rel ? start_ + c : c);
+            return true;
+        }
+        double len;
+        if (!parseLen(text, len) || std::fabs(len) < kTol) return false;
+        Vec3 dir = inf_.p - start_;
+        if (dir.length() < kTol) dir = lockDir_ ? *lockDir_ : Vec3(1, 0, 0);
+        finishLine(start_ + dir.normalized() * len);
+        return true;
+    }
+    // Moving anchors: coordinates for the anchor being moved (or moved last),
+    // a distance along the way it is moving, or else a new anchor count.
+    const int idx = active_ >= 0 ? active_ : last_;
+    if (idx >= 0 && idx < (int)anchors_.size() && parseCoords(text, doc().units, c, rel)) {
+        anchors_[idx] = rel ? (active_ >= 0 ? orig_ : anchors_[idx]) + c : c;
+        active_ = -1;
+        last_ = idx;
+        clearLocks();
+        refreshStatus();
+        update();
+        return true;
+    }
+    if (active_ >= 0) {
+        double len;
+        const Vec3 dir = anchors_[active_] - orig_;
+        if (!parseLen(text, len) || dir.length() < kTol) return false;
+        anchors_[active_] = orig_ + dir.normalized() * len;
+        active_ = -1;
+        clearLocks();
+        refreshStatus();
+        update();
+        return true;
+    }
+    if (isInt && n >= 2 && n <= 64) {
+        setAnchorCount(n);
+        setVcb(QString::number(anchorCount_));
+        return true;
+    }
+    return false;
+}
+
+void Curve3DTool::buildPreview(Preview& pv) {
+    using MK = Preview::MarkerKind;
+    if (stage_ == 1) {
+        pv.line(start_, inf_.p, hasLock() ? lockColor() : lineColor(start_, inf_.p), hasLock() ? 2.5f : 1.6f);
+        // Where the anchors will be.
+        const int n = std::max(2, anchorCount_);
+        for (int i = 0; i < n; ++i) pv.markers.push_back({lerp(start_, inf_.p, (double)i / (n - 1)), MK::Grip});
+    } else if (stage_ == 2) {
+        for (size_t i = 1; i < anchors_.size(); ++i) pv.line(anchors_[i - 1], anchors_[i], kHullColor, 1.0f, Dash::Dashed);
+        const std::vector<Vec3> pts = curvePoints();
+        for (size_t i = 1; i < pts.size(); ++i) pv.line(pts[i - 1], pts[i], kCurveColor, 2.2f);
+        if (active_ >= 0) {
+            const Vec3& a = anchors_[active_];
+            // How far it moved, in the colour of the axis it follows.
+            if (!a.nearlyEquals(orig_)) pv.line(orig_, a, hasLock() ? lockColor() : lineColor(orig_, a), 2.0f, Dash::Dashed);
+            // Its height over the level it started from.
+            const Vec3 foot(a.x, a.y, orig_.z);
+            if (std::fabs(a.z - orig_.z) > kTol && !foot.nearlyEquals(orig_)) pv.line(a, foot, kHullColor, 1.0f, Dash::Dotted);
+        }
+        for (int i = 0; i < (int)anchors_.size(); ++i) pv.markers.push_back({anchors_[i], i == active_ || i == hot_ ? MK::GripHot : MK::Grip});
+    }
+    if (stage_ < 2 || active_ >= 0) engine().addPreview(inf_, pv);
+}
+
 } // namespace gs

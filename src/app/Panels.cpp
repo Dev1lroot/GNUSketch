@@ -976,6 +976,9 @@ void InstructorPanel::showTool(ToolId id) {
         "Arrow keys choose the drawing plane: Right = perpendicular to red, Left = green, Up = blue (ground). The pink diagonal shows a square or golden section."}; break;
     case ToolId::Circle: i = {"Circle", "Draws a circle made of edges (one curve).", "Click the center, then a point on the circumference, or type the radius. Type e.g. 48s to change the number of segments.", "Arrow keys choose the plane."}; break;
     case ToolId::Polygon: i = {"Polygon", "Draws a regular polygon.", "Click the center, then the radius. Type e.g. 8s for an octagon.", "Arrow keys choose the plane."}; break;
+    case ToolId::Curve3D: i = {"3D Curve", "Draws a smooth curve that can bend in all three dimensions (one curve of short edges).",
+        "Click the start and the end of a straight line, or type its length. Then drag its anchor points (or click one, move, click) anywhere in space: the curve runs smoothly through them. Click the curve to add an anchor. Enter, a double-click or a click away from the curve finishes it.",
+        "Right/Left/Up arrows or holding X/Y/Z: move the anchor along red/green/blue &nbsp; Shift: lock the inference &nbsp; Ctrl+click: remove an anchor &nbsp; Type 6 for six anchors, 48s for segments, a distance, or &lt;x,y,z&gt; / [x,y,z] for the anchor &nbsp; Esc: put the anchor back, or cancel"}; break;
     case ToolId::Arc: i = {"2 Point Arc", "Draws an arc through two end points with a bulge.", "Click start, click end, then move to set the bulge and click. Type a value for the bulge, or e.g. 24s for segments.", "A half circle snaps automatically."}; break;
     case ToolId::PushPull: i = {"Push/Pull", "Extrudes a face along its normal, creating side faces.",
         "Click a face, move, click again (or drag). Type an exact distance. Hover over another point to push/pull to its height. After finishing, type a new value to adjust.",

@@ -304,7 +304,7 @@ void PropertiesPanel::refresh() {
     // The tools that draw lengths show the snapping and precision settings
     // (above what is selected).
     const bool lengths = tool_ == ToolId::Line || tool_ == ToolId::Rectangle || tool_ == ToolId::Circle || tool_ == ToolId::Polygon ||
-                         tool_ == ToolId::Arc || tool_ == ToolId::PushPull || tool_ == ToolId::Move || tool_ == ToolId::Offset ||
+                         tool_ == ToolId::Arc || tool_ == ToolId::Curve3D || tool_ == ToolId::PushPull || tool_ == ToolId::Move || tool_ == ToolId::Offset ||
                          tool_ == ToolId::Tape;
     units_->setVisible(lengths || scale);
     if (lengths || scale) units_->refresh();

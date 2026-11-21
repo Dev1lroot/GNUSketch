@@ -70,6 +70,7 @@ void Viewport::setTool(ToolId id) {
     case ToolId::Circle: tool_ = std::make_unique<CircleTool>(this, false); break;
     case ToolId::Polygon: tool_ = std::make_unique<CircleTool>(this, true); break;
     case ToolId::Arc: tool_ = std::make_unique<ArcTool>(this); break;
+    case ToolId::Curve3D: tool_ = std::make_unique<Curve3DTool>(this); break;
     case ToolId::PushPull: tool_ = std::make_unique<PushPullTool>(this); break;
     case ToolId::Move: tool_ = std::make_unique<MoveTool>(this); break;
     case ToolId::Rotate: tool_ = std::make_unique<RotateTool>(this); break;

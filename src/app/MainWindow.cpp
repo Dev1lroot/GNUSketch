@@ -197,6 +197,7 @@ void MainWindow::buildActions() {
     toolAction(ToolId::Circle, QStringLiteral("Circle"), QStringLiteral("C"));
     toolAction(ToolId::Polygon, QStringLiteral("Polygon"), QStringLiteral("G"));
     toolAction(ToolId::Arc, QStringLiteral("2 Point Arc"), QStringLiteral("A"));
+    toolAction(ToolId::Curve3D, QStringLiteral("3D Curve"), QString());
     toolAction(ToolId::PushPull, QStringLiteral("Push/Pull"), QStringLiteral("P"));
     toolAction(ToolId::Move, QStringLiteral("Move"), QStringLiteral("M"));
     toolAction(ToolId::Rotate, QStringLiteral("Rotate"), QStringLiteral("Q"));
@@ -601,6 +602,7 @@ void MainWindow::buildMenus() {
     QMenu* lines = draw->addMenu(QStringLiteral("&Lines"));
     lines->addAction(toolActions_[ToolId::Line]);
     lines->addAction(toolActions_[ToolId::Freehand]);
+    lines->addAction(toolActions_[ToolId::Curve3D]);
     QMenu* arcs = draw->addMenu(QStringLiteral("&Arcs"));
     arcs->addAction(toolActions_[ToolId::Arc]);
     QMenu* lightsMenu = draw->addMenu(Icons::get("light_point"), QStringLiteral("L&ights"));
@@ -786,6 +788,7 @@ void MainWindow::buildToolbars() {
         {(int)ToolId::Line, (int)ToolId::Freehand},
         {(int)ToolId::Rectangle, (int)ToolId::Circle},
         {(int)ToolId::Polygon, (int)ToolId::Arc},
+        {(int)ToolId::Curve3D, -1},
         {-2, -2},
         {(int)ToolId::Move, (int)ToolId::PushPull},
         {(int)ToolId::Rotate, (int)ToolId::Offset},

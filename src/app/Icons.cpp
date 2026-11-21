@@ -52,6 +52,7 @@ const char* svgFor(const QString& n) {
         {"eraser", R"svg(<g transform="rotate(-38 12 12)"><rect x="3" y="8" width="18" height="8.5" rx="1.6" fill="#f08a96" stroke="#7a2a33" stroke-width="1"/><rect x="3" y="8" width="6.5" height="8.5" rx="1.4" fill="#f4f1ec" stroke="#7a2a33" stroke-width="1"/><path d="M11 9.2 L19.5 9.2" stroke="#fbd0d6" stroke-width="1.2"/></g>)svg"},
         {"paint", R"svg(<path d="M4.5 10.5 L11 4 L18.5 11.5 L12 18 Z" fill="#cfd8e3" stroke="#334" stroke-width="1"/><path d="M4.5 10.5 L11 4 L13 6 L6.5 12.5 Z" fill="#9fb2c8"/><path d="M11 4 C9 1.5 6 2 5.5 4" fill="none" stroke="#334" stroke-width="1"/><path d="M18.5 11.5 C21 14.5 21.5 17 19.8 18.4 C18.2 19.6 16.8 17.6 17.5 15.5 Z" fill="#2f7de1" stroke="#1a4f96" stroke-width=".8"/><rect x="3" y="19.5" width="10" height="2.5" rx="1" fill="#2f7de1"/>)svg"},
         {"line", R"svg(<g transform="rotate(45 12 12)"><rect x="9.6" y="1.5" width="4.8" height="15" fill="#f2c230" stroke="#6b5310" stroke-width=".9"/><rect x="9.6" y="1.5" width="4.8" height="3" fill="#e57b8c" stroke="#6b5310" stroke-width=".9"/><path d="M9.6 16.5 L12 22 L14.4 16.5 Z" fill="#f4dfb0" stroke="#6b5310" stroke-width=".9"/><path d="M11.2 20.2 L12 22 L12.8 20.2 Z" fill="#222"/></g>)svg"},
+        {"curve3d", R"svg(<path d="M3 19 L21 5" stroke="#d6262e" stroke-width="1" stroke-dasharray="2 1.5"/><path d="M3 19 C6 6 15 22 21 5" fill="none" stroke="#222" stroke-width="1.7" stroke-linecap="round"/><g stroke="#222" stroke-width=".7"><rect x="1.5" y="17.5" width="3" height="3" fill="#2fae3a"/><rect x="6.2" y="11.9" width="3" height="3" fill="#2fae3a"/><rect x="12.8" y="11.8" width="3" height="3" fill="#e0302a"/><rect x="19.5" y="3.5" width="3" height="3" fill="#2fae3a"/></g><path d="M14.3 11 L14.3 4.5 M12.8 6 L14.3 4.5 L15.8 6" fill="none" stroke="#2f7de1" stroke-width="1.2" stroke-linecap="round"/>)svg"},
         {"freehand", R"svg(<path d="M2.5 18 C5 10 8 22 11 14 C13.5 7 16 16 21.5 6" fill="none" stroke="#d6262e" stroke-width="2" stroke-linecap="round"/><circle cx="2.5" cy="18" r="1.4" fill="#222"/>)svg"},
         {"rectangle", R"svg(<rect x="3.5" y="5.5" width="17" height="13" fill="#dfe6ee" stroke="#222" stroke-width="1.4"/><path d="M3.5 18.5 L20.5 5.5" stroke="#d6262e" stroke-width="1.1" stroke-dasharray="2 1.5"/><circle cx="3.5" cy="18.5" r="1.8" fill="#d6262e"/><circle cx="20.5" cy="5.5" r="1.8" fill="#d6262e"/>)svg"},
         {"circle", R"svg(<circle cx="12" cy="12" r="8.5" fill="#dfe6ee" stroke="#222" stroke-width="1.4"/><path d="M12 12 L20.5 12" stroke="#d6262e" stroke-width="1.2"/><circle cx="12" cy="12" r="1.6" fill="#d6262e"/>)svg"},
@@ -207,6 +208,7 @@ QString toolIconName(ToolId id) {
     case ToolId::Circle: return "circle";
     case ToolId::Polygon: return "polygon";
     case ToolId::Arc: return "arc";
+    case ToolId::Curve3D: return "curve3d";
     case ToolId::PushPull: return "pushpull";
     case ToolId::Move: return "move";
     case ToolId::Rotate: return "rotate";

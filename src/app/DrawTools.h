@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - drawing tools: Line, Freehand, Rectangle, Circle, Polygon, Arc.
+// GNUSketch - drawing tools: Line, Freehand, Rectangle, Circle, Polygon, Arc, 3D Curve.
 #pragma once
 
 #include "Tool.h"
@@ -154,6 +154,53 @@ private:
     double bulge_ = 0;
     int segments_ = 12;
     std::string hint_;
+};
+
+// 3D Curve: draw a straight line, then move its anchor points anywhere in
+// space; the curve is a smooth spline through them.
+class Curve3DTool : public Tool {
+public:
+    using Tool::Tool;
+    ToolId id() const override { return ToolId::Curve3D; }
+    QString status() const override;
+    QString vcbLabel() const override;
+    void reset() override;
+    void deactivate() override; // a curve being edited is kept
+    bool busy() const override { return stage_ > 0; }
+    void mousePress(const MouseEvent& e) override;
+    void mouseMove(const MouseEvent& e) override;
+    void mouseRelease(const MouseEvent& e) override;
+    void mouseDoubleClick(const MouseEvent& e) override;
+    bool keyPress(QKeyEvent* e) override;
+    bool vcbEnter(const QString& text) override;
+    void buildPreview(Preview& pv) override;
+
+    const std::vector<Vec3>& anchors() const { return anchors_; }
+    int activeAnchor() const { return active_; } // being moved, or -1
+    // The edges the curve becomes; span[i] is the anchor span point i ends.
+    std::vector<Vec3> curvePoints(std::vector<int>* span = nullptr, int segments = 0) const;
+
+private:
+    void finishLine(const Vec3& end);
+    void commit();
+    void setAnchorCount(int n);
+    void placeAnchor(const MouseEvent& e);
+    void pick(int anchor, const MouseEvent& e);
+    int anchorAt(double x, double y) const;
+    // Point on the curve under the cursor and the anchor index it would get.
+    bool curveAt(double x, double y, Vec3& p, int& insertAt) const;
+    int stage_ = 0; // 0 nothing, 1 start set, 2 moving anchors
+    Vec3 start_;
+    std::vector<Vec3> anchors_;
+    int anchorCount_ = 4;
+    int segments_ = 24;
+    int active_ = -1; // anchor being moved
+    int hot_ = -1;    // anchor under the cursor
+    int last_ = -1;   // anchor moved last (typed coordinates move it)
+    Vec3 orig_;       // the active anchor before it moved
+    bool dragging_ = false;
+    bool travelled_ = false; // the mouse went more than a few pixels while pressed
+    double pressX_ = 0, pressY_ = 0;
 };
 
 } // namespace gs

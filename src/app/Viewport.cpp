@@ -313,40 +313,14 @@ void Viewport::paintOverlay(QPainter& p, const Preview& pv) {
 
 Vec3 Viewport::orbitPivotAt(double x, double y) {
     if (orbitPivot_ == OrbitPivot::CameraTarget) return camera_.target;
+    // The geometry under the cursor; over empty space the scene origin, so
+    // the orbit never swings around some point off the axes.
     double t = std::numeric_limits<double>::infinity();
     inference_->pickFace(x, y, &t); // also hits components
     if (std::isfinite(t)) return camera_.ray(x, y).at(t);
-    const Mesh& m = doc_->mesh();
-    const Selection& sel = doc_->selection;
-    Vec3 mn, mx;
-    bool any = false;
-    auto grow = [&](Id v) {
-        const Vec3& p = m.pos(v);
-        if (!any) mn = mx = p;
-        for (int i = 0; i < 3; ++i) {
-            mn[i] = std::min(mn[i], p[i]);
-            mx[i] = std::max(mx[i], p[i]);
-        }
-        any = true;
-    };
-    for (Id f : sel.faces)
-        if (f >= 0 && f < (Id)m.faces.size() && m.faces[f].alive)
-            for (Id v : m.faceVertices(f)) grow(v);
-    for (Id e : sel.edges)
-        if (e >= 0 && e < (Id)m.edges.size() && m.edges[e].alive)
-            for (Id v : m.edges[e].v) grow(v);
-    for (Id i : sel.instances) {
-        Vec3 a, b;
-        if (!instanceBounds(doc_->state, i, a, b)) continue;
-        if (!any) mn = a, mx = b;
-        for (int k = 0; k < 3; ++k) {
-            mn[k] = std::min(mn[k], a[k]);
-            mx[k] = std::max(mx[k], b[k]);
-        }
-        any = true;
-    }
-    if (!any) modelBounds(doc_->state, mn, mx, any);
-    return any ? (mn + mx) * 0.5 : Vec3();
+    const PickResult pr = inference_->pick(x, y); // a loose edge with no face
+    if (pr.edge != kNone || pr.instance != kNone) return pr.p;
+    return Vec3();
 }
 
 MouseEvent Viewport::toEvent(QMouseEvent* e) const {

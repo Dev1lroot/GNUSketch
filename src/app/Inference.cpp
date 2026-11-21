@@ -1016,20 +1016,39 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
     bool edgeDir = false;
     InferenceResult::Type dirType = InferenceResult::AlongEdge;
     Vec3 edgeDirV, edgePt;
-    bool squareToBase = false; // the Perpendicular found is to the base edge
+    bool squareToBase = false; // the Perpendicular found is to an edge at the start
     if (o.ref && o.axes) {
         struct Cand {
             Vec3 dir;
             InferenceResult::Type type;
+            bool square = false;
         };
         std::vector<Cand> cands;
+        // Square to the edge(s) the line starts from: discrete lines only, so
+        // the light-blue inference never takes over a whole plane.
+        {
+            std::vector<Vec3> sq = o.squareDirs;
+            if (o.baseDir && o.baseDir->length() > kTol) {
+                const Vec3 e = o.baseDir->normalized();
+                if (o.plane && std::fabs(o.plane->n.dot(e)) < 1e-6) sq.insert(sq.begin(), o.plane->n.cross(e));
+                if (o.squareDirs.empty() && !o.plane) {
+                    const Vec3 h = e.cross(Vec3(0, 0, 1));
+                    if (h.length() > 1e-6) {
+                        sq.push_back(h);
+                        sq.push_back(h.cross(e));
+                    }
+                }
+            }
+            for (const Vec3& d : sq)
+                if (d.length() > 1e-9) cands.push_back({d.normalized(), InferenceResult::Perpendicular, true});
+        }
         Id rv = m.findVertex(*o.ref);
         if (rv != kNone)
             for (Id e : m.vertexEdges(rv)) {
                 const Edge& E = m.edges[e];
                 if (!E.alive || E.hidden) continue;
                 Vec3 d = m.pos(E.other(rv)) - *o.ref;
-                if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge});
+                if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge, false});
             }
         // Edges of components meeting at the reference point.
         const std::vector<PlacedInstance> placed = snapSources();
@@ -1039,25 +1058,25 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
             if (!pb.any || !boxContains(pb.all, placed[i].xf, *o.ref, 2 * kTol)) continue; // no corner of it at the reference point
             for (const Segment& s : instanceEdges(i, placed[i])) {
                 Vec3 d = s.a.nearlyEquals(*o.ref) ? s.b - s.a : s.b.nearlyEquals(*o.ref) ? s.a - s.b : Vec3();
-                if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge});
+                if (d.length() > kTol) cands.push_back({d.normalized(), InferenceResult::AlongEdge, false});
             }
         }
         if (rememberedEdge_) {
             Vec3 d = rememberedEdge_->b - rememberedEdge_->a;
             if (d.length() > kTol) {
                 d = d.normalized();
-                cands.push_back({d, InferenceResult::Parallel});
+                cands.push_back({d, InferenceResult::Parallel, false});
                 // Perpendicular: square to the edge within the drawing plane,
                 // or else towards the edge's line.
                 Vec3 foot = rememberedEdge_->a + d * (*o.ref - rememberedEdge_->a).dot(d);
                 Vec3 pd = foot - *o.ref;
                 if (o.plane && std::fabs(o.plane->n.dot(d)) < 1e-6)
-                    cands.push_back({o.plane->n.cross(d).normalized(), InferenceResult::Perpendicular});
+                    cands.push_back({o.plane->n.cross(d).normalized(), InferenceResult::Perpendicular, false});
                 else if (pd.length() > kTol)
-                    cands.push_back({pd.normalized(), InferenceResult::Perpendicular});
+                    cands.push_back({pd.normalized(), InferenceResult::Perpendicular, false});
             }
         }
-        if (rememberedNormal_) cands.push_back({*rememberedNormal_, InferenceResult::FaceNormal});
+        if (rememberedNormal_) cands.push_back({*rememberedNormal_, InferenceResult::FaceNormal, false});
         // The same line can come from several sources: keep the first.
         for (size_t i = 0; i < cands.size(); ++i)
             for (size_t j = i + 1; j < cands.size();)
@@ -1083,35 +1102,7 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
                 dirType = c.type;
                 edgeDirV = c.dir;
                 edgePt = q;
-            }
-        }
-    }
-    // Square to the base edge (any direction in the plane normal to it through
-    // the reference point, or the one line of it in the drawing plane). An axis
-    // in that plane keeps its colour; it is square too.
-    if (o.ref && o.axes && o.baseDir && o.baseDir->length() > kTol) {
-        const Vec3 e = o.baseDir->normalized();
-        const bool axisSquare = bestAxis >= 0 && std::fabs(kAxes[bestAxis].dot(e)) < 1e-9;
-        Vec3 raw = std::isfinite(tFace) ? r.at(tFace) : freePoint(r, o);
-        Vec3 q;
-        bool ok = true;
-        if (o.plane) {
-            const Vec3 dp = o.plane->n.cross(e);
-            ok = dp.length() > 1e-6;
-            if (ok) q = *o.ref + dp.normalized() * (o.plane->project(raw) - *o.ref).dot(dp.normalized());
-        } else {
-            q = raw - e * (raw - *o.ref).dot(e);
-        }
-        if (ok && !axisSquare && (q - *o.ref).length() > kTol) {
-            const double d = pixelDistance(q, px, py);
-            if (d < bestAD) {
-                bestAD = d;
-                bestAxis = -1;
-                edgeDir = true;
-                dirType = InferenceResult::Perpendicular;
-                edgeDirV = (q - *o.ref).normalized();
-                edgePt = q;
-                squareToBase = true;
+                squareToBase = c.square;
             }
         }
     }
@@ -1161,12 +1152,14 @@ InferenceResult InferenceEngine::infer(double px, double py, const Options& o) {
         res.p = o.plane ? o.plane->project(edgePt) : edgePt;
         res.dir = edgeDirV;
         res.hasDir = true;
+        res.square = squareToBase;
         if ((dirType == InferenceResult::Parallel || dirType == InferenceResult::Perpendicular) && !squareToBase && rememberedEdge_) {
-            // Highlight the edge the line runs parallel or square to.
+            // Highlight the edge the line runs parallel or square to. Light
+            // blue is kept for edges the line starts from.
             res.hasLine = true;
             res.lineA = rememberedEdge_->a;
             res.lineB = rememberedEdge_->b;
-            res.lineColor = dirType == InferenceResult::Perpendicular ? InferenceEngine::squareColor() : Color::rgb8(220, 0, 220);
+            res.lineColor = Color::rgb8(220, 0, 220);
         }
         return res;
     }

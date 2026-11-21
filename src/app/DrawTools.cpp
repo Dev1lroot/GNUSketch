@@ -67,6 +67,58 @@ std::vector<Vec3> arcPoints(const Vec3& A, const Vec3& B, const Vec3& n, double 
     return pts;
 }
 
+// Lines from a start point square (90 degrees) to the edges meeting there:
+// in the plane of each face along such an edge and along that face's normal,
+// square to two of the edges at once, or (an edge without faces) the level
+// and the upright line square to it. `edges` are the edges at the start.
+std::vector<Vec3> squareDirections(const Mesh& m, const std::vector<Id>& edges, std::optional<Vec3> primary) {
+    std::vector<Vec3> bases, out;
+    std::vector<std::vector<Vec3>> normals;
+    auto addBase = [&](const Vec3& d, std::vector<Vec3> ns) {
+        if (d.length() < kTol) return;
+        const Vec3 e = d.normalized();
+        for (size_t i = 0; i < bases.size(); ++i)
+            if (std::fabs(bases[i].dot(e)) > 1 - 1e-9) {
+                normals[i].insert(normals[i].end(), ns.begin(), ns.end());
+                return;
+            }
+        bases.push_back(e);
+        normals.push_back(std::move(ns));
+    };
+    if (primary) addBase(*primary, {});
+    for (Id e : edges) {
+        const Edge& E = m.edges[e];
+        std::vector<Vec3> ns;
+        for (Id f : m.edgeFaces(e))
+            if (m.faces[f].alive) ns.push_back(m.facePlane(f).n);
+        addBase(m.pos(E.v[1]) - m.pos(E.v[0]), std::move(ns));
+    }
+    for (size_t i = 0; i < bases.size(); ++i) {
+        const Vec3& e = bases[i];
+        for (const Vec3& n : normals[i]) {
+            out.push_back(n.cross(e));
+            out.push_back(n);
+        }
+        if (normals[i].empty()) {
+            const Vec3 h = e.cross(Vec3(0, 0, 1));
+            if (h.length() > 1e-6) {
+                out.push_back(h);
+                out.push_back(h.cross(e));
+            }
+        }
+        for (size_t j = i + 1; j < bases.size(); ++j) out.push_back(e.cross(bases[j]));
+    }
+    std::vector<Vec3> uniq;
+    for (const Vec3& d : out) {
+        if (d.length() < 1e-9) continue;
+        const Vec3 u = d.normalized();
+        bool dup = false;
+        for (const Vec3& w : uniq) dup = dup || std::fabs(w.dot(u)) > 1 - 1e-9;
+        if (!dup) uniq.push_back(u);
+    }
+    return uniq;
+}
+
 } // namespace
 
 // ===========================================================================
@@ -81,22 +133,36 @@ QString LineTool::status() const {
     return QStringLiteral("Select end point or enter length. Arrow keys lock axes, Shift locks the inference. Esc to finish.");
 }
 
+std::vector<Id> LineTool::edgesAt(Id vertex) {
+    std::vector<Id> es;
+    if (vertex == kNone) return es;
+    const Mesh& m = mesh();
+    for (Id e : m.vertexEdges(vertex))
+        if (m.edges[e].alive && !m.edges[e].soft && !m.edges[e].hidden) es.push_back(e);
+    return es;
+}
+
 void LineTool::setBase(const InferenceResult& r) {
     base_.reset();
     baseDir_.reset();
+    squareDirs_.clear();
     const bool onEdge = r.type == InferenceResult::Midpoint || r.type == InferenceResult::OnEdge ||
                         r.type == InferenceResult::OnIntersection || r.type == InferenceResult::Intersection;
+    const Mesh& m = mesh();
     if (onEdge && r.hasEdge && (r.edgeB - r.edgeA).length() > kTol) {
         base_ = std::make_pair(r.edgeA, r.edgeB);
         baseDir_ = (r.edgeB - r.edgeA).normalized();
+        std::vector<Id> es;
+        if (r.edge != kNone && r.edge < (Id)m.edges.size() && m.edges[r.edge].alive) es.push_back(r.edge);
+        squareDirs_ = squareDirections(m, es, baseDir_);
         return;
     }
-    // A vertex where a line was split (two edges in line), or the end of a lone edge.
+    // Only a line drawn from an edge is inferred square to it.
     if (r.type != InferenceResult::Endpoint || r.vertex == kNone) return;
-    const Mesh& m = mesh();
-    std::vector<Id> es;
-    for (Id e : m.vertexEdges(r.vertex))
-        if (m.edges[e].alive && !m.edges[e].soft && !m.edges[e].hidden) es.push_back(e);
+    const std::vector<Id> es = edgesAt(r.vertex);
+    squareDirs_ = squareDirections(m, es, std::nullopt);
+    // The angle reference: a vertex where a line was split (two edges in
+    // line), or the end of a lone edge.
     auto seg = [&](Id e) { return std::make_pair(m.pos(m.edges[e].v[0]), m.pos(m.edges[e].v[1])); };
     for (size_t i = 0; i < es.size(); ++i)
         for (size_t j = i + 1; j < es.size(); ++j) {
@@ -140,6 +206,7 @@ bool LineTool::keyRelease(QKeyEvent* e) {
 void LineTool::reset() {
     base_.reset();
     baseDir_.reset();
+    squareDirs_.clear();
     angleStep_ = false;
     hasStart_ = false;
     dragging_ = false;
@@ -189,13 +256,14 @@ void LineTool::mouseRelease(const MouseEvent& e) {
 void LineTool::mouseDoubleClick(const MouseEvent&) {
     base_.reset();
     baseDir_.reset();
+    squareDirs_.clear();
     hasStart_ = false;
     clearLocks();
     refreshStatus();
     update();
 }
 
-void LineTool::commit(const Vec3& a, const Vec3& b) {
+void LineTool::commit(Vec3 a, Vec3 b) { // by value: callers pass start_, reassigned below
     dragging_ = false;
     if (a.nearlyEquals(b)) return;
     int facesBefore = mesh().aliveFaceCount();
@@ -209,12 +277,15 @@ void LineTool::commit(const Vec3& a, const Vec3& b) {
         hasStart_ = false;
         base_.reset();
         baseDir_.reset();
+        squareDirs_.clear();
     } else {
         start_ = b;
         hasStart_ = true;
-        // The next segment measures its angles from this one.
+        // The next segment measures its angles from this one, and is square
+        // to it or to any other edge already at its end.
         base_ = std::make_pair(a, b);
         baseDir_ = (b - a).normalized();
+        squareDirs_ = squareDirections(mesh(), edgesAt(mesh().findVertex(b)), baseDir_);
     }
     setVcb(fmtLen((b - a).length()));
     refreshStatus();
@@ -230,6 +301,7 @@ bool LineTool::vcbEnter(const QString& text) {
             hasStart_ = true;
             base_.reset();
             baseDir_.reset();
+            squareDirs_.clear();
             refreshStatus();
             update();
             return true;
@@ -251,8 +323,11 @@ bool LineTool::vcbEnter(const QString& text) {
 void LineTool::buildPreview(Preview& pv) {
     if (hasStart_) {
         const Vec3 d = inf_.p - start_;
-        const bool square = baseDir_ && d.length() > kTol && std::fabs(d.normalized().dot(*baseDir_)) < 1e-6;
-        Color c = square ? InferenceEngine::squareColor() : hasLock() ? lockColor() : lineColor(start_, inf_.p);
+        // Square to the edge it starts from (a forced X/Y/Z keeps its colour).
+        const bool square = forcedAxis() < 0 && !hasLock() &&
+                            ((baseDir_ && d.length() > kTol && std::fabs(d.normalized().dot(*baseDir_)) < 1e-6) ||
+                             (inf_.type == InferenceResult::Perpendicular && inf_.square));
+        Color c = hasLock() ? lockColor() : square ? InferenceEngine::squareColor() : lineColor(start_, inf_.p);
         pv.line(start_, inf_.p, c, hasLock() || square ? 2.5f : 1.6f);
         // The edge the angle is taken from.
         if (base_ && (square || inf_.type == InferenceResult::Angle))

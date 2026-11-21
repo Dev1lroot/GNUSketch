@@ -102,6 +102,8 @@ protected:
     bool snapDistance_ = true;
     bool hasLock() const { return lockDir_.has_value() || heldAxis_ >= 0; }
     Color lockColor() const;
+    // A world axis forced with the arrow keys or by holding X/Y/Z (-1: none).
+    int forcedAxis() const { return heldAxis_ >= 0 ? heldAxis_ : lockAxis_; }
     // Colour for a rubber-band line from a to b (axis colours when aligned).
     Color lineColor(const Vec3& a, const Vec3& b) const;
 
@@ -114,6 +116,8 @@ protected:
     // Edge the drawn line starts from (Line tool): square to it is inferred,
     // and with angleStep_ the direction steps in 5 degrees from it.
     std::optional<Vec3> baseDir_;
+    // Lines square (90 degrees) to the edges meeting where the line starts.
+    std::vector<Vec3> squareDirs_;
     bool angleStep_ = false;
     MouseEvent lastMouse_;
 };

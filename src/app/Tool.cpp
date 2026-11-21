@@ -73,10 +73,13 @@ Color Tool::lockColor() const {
 }
 
 Color Tool::lineColor(const Vec3& a, const Vec3& b) const {
+    // An axis forced with the arrow keys or X/Y/Z wins over every inference.
+    if (forcedAxis() >= 0) return Renderer::axisColor(forcedAxis());
     Vec3 d = (b - a).normalized();
     // Square to the edge the line starts from: blue-green, over the axis colours.
     if (baseDir_ && (b - a).length() > kTol && std::fabs(d.dot(baseDir_->normalized())) < 1e-6) return InferenceEngine::squareColor();
-    if (inf_.type == InferenceResult::Perpendicular && inf_.p.nearlyEquals(b)) return InferenceEngine::squareColor();
+    if (inf_.type == InferenceResult::Perpendicular && inf_.square && inf_.p.nearlyEquals(b)) return InferenceEngine::squareColor();
+    if (inf_.type == InferenceResult::Perpendicular && inf_.p.nearlyEquals(b)) return Color::rgb8(220, 0, 220);
     for (int i = 0; i < 3; ++i)
         if (std::fabs(d[i]) > 1 - 1e-9) return Renderer::axisColor(i);
     if (lockDir_ && lockAxis_ < 0) return Color::rgb8(220, 0, 220);
@@ -106,6 +109,7 @@ InferenceResult Tool::inferPoint(const MouseEvent& e, std::optional<Vec3> ref, s
         o.baseDir = baseDir_;
         o.angleStepDeg = angleStep_ ? 5.0 : 0.0;
     }
+    if (ref) o.squareDirs = squareDirs_;
     inf_ = engine().infer(e.x, e.y, o);
     // Length snapping: a free point moves along its direction from the
     // reference to the nearest whole step.

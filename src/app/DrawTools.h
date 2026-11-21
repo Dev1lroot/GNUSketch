@@ -26,9 +26,10 @@ public:
     bool keyRelease(QKeyEvent* e) override;
 
 private:
-    void commit(const Vec3& a, const Vec3& b);
+    void commit(Vec3 a, Vec3 b);
     // The edge a new line starts from (clicked on its midpoint or along it).
     void setBase(const InferenceResult& r);
+    std::vector<Id> edgesAt(Id vertex); // visible hard edges at a vertex
     std::optional<std::pair<Vec3, Vec3>> base_; // for the highlight
     bool hasStart_ = false;
     bool dragging_ = false;

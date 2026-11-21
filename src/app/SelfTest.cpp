@@ -1198,6 +1198,91 @@ int runSelfTest(MainWindow& w) {
         d.check(step35, "Shift steps the angle to the edge by 5 degrees");
         for (int i = 0; i < 3; ++i) doc.undo();
         eng.resetMemory();
+
+        // From a vertical edge every level direction is square to it: only
+        // discrete lines snap, not the whole ground.
+        {
+            InferenceEngine::Options vo;
+            vo.ref = Vec3(320, 0, 0);
+            vo.baseDir = Vec3(0, 0, 1);
+            const Vec3 diag = Vec3(320, 0, 0) + Vec3(1.0, 0.63, 0); // well away from the axes
+            vp->camera().zoomExtents(Vec3(318, -2, 0), Vec3(322, 2, 0));
+            d.pump();
+            q = d.screen(diag);
+            InferenceResult rv = eng.infer(q.x(), q.y(), vo);
+            d.check(!(rv.type == InferenceResult::Perpendicular && rv.square), "no square snap anywhere on the ground from a vertical edge");
+        }
+        // Square to a hovered edge the line does not start from: not light blue.
+        {
+            const Vec3 ha(330, 0, 0), hb(332, 1, 0);
+            doc.beginOp("Line");
+            d.mesh().drawLine(ha, hb);
+            doc.commitOp();
+            vp->camera().zoomExtents(Vec3(327, -2, 0), Vec3(334, 3, 0));
+            d.pump();
+            eng.resetMemory();
+            InferenceEngine::Options none2;
+            QPointF qh = d.screen((ha + hb) * 0.5 + (hb - ha) * 0.2);
+            eng.infer(qh.x(), qh.y(), none2); // remember the edge
+            const Vec3 from(329, 2, 0), he = (hb - ha).normalized();
+            const Vec3 hp = Vec3(0, 0, 1).cross(he).normalized();
+            InferenceEngine::Options ho;
+            ho.ref = from;
+            qh = d.screen(from - hp * 1.0);
+            InferenceResult rh = eng.infer(qh.x(), qh.y(), ho);
+            d.check(rh.type == InferenceResult::Perpendicular && !rh.square &&
+                        !(rh.hasLine && rh.lineColor == InferenceEngine::squareColor()),
+                    "square to an unattached edge is magenta, not light blue");
+            doc.undo();
+            eng.resetMemory();
+        }
+        // Continuing a line: light blue only where it really is square to the
+        // previous segment (commit() once got a zero base direction because
+        // it was passed start_ by reference, so every direction looked square).
+        for (int view = 0; view < 2; ++view) {
+            const Vec3 pa(340, 0, 0), pb(342, 1, 0);
+            if (view == 0) vp->setStandardView(Vec3(0, 0, -1));
+            else vp->setStandardView(Vec3(-1, 0.8, -0.7));
+            vp->camera().zoomExtents(Vec3(338, -2, 0), Vec3(346, 4, 0));
+            d.pump();
+            eng.resetMemory();
+            vp->setTool(ToolId::Line);
+            d.move(d.screen(pa));
+            d.click(d.screen(pa));
+            d.move(d.screen(pb));
+            Vec3 pe;
+            {
+                Preview p0;
+                vp->tool()->buildPreview(p0);
+                if (!p0.lines.empty()) pe = (p0.lines[0].b - p0.lines[0].a).normalized();
+            }
+            d.click(d.screen(pb));
+            int bad = 0, good = 0;
+            for (int y = 0; y < vp->height(); y += 21)
+                for (int x = 0; x < vp->width(); x += 21) {
+                    d.move(QPointF(x, y));
+                    Preview pv;
+                    vp->tool()->buildPreview(pv);
+                    if (pv.lines.empty() || !(pv.lines[0].color == InferenceEngine::squareColor())) continue;
+                    const Vec3 dd = pv.lines[0].b - pv.lines[0].a;
+                    if (dd.length() < 1e-9) continue;
+                    (std::fabs(dd.normalized().dot(pe)) > 1e-6 ? bad : good)++;
+                }
+            d.check(pe.length() > 0.5 && bad == 0 && good > 0, "a continued line is light blue only when square to the previous segment");
+            QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            vp->tool()->keyPress(&esc);
+            vp->setTool(ToolId::Select);
+            doc.undo();
+            eng.resetMemory();
+        }
+        // Orbit over empty space turns around the origin.
+        {
+            vp->setStandardView(Vec3(0, 0, -1));
+            vp->camera().zoomExtents(Vec3(1000, 1000, 0), Vec3(1002, 1002, 0));
+            d.pump();
+            const Vec3 pv = vp->orbitPivotAt(vp->width() * 0.5, vp->height() * 0.5);
+            d.check(pv.nearlyEquals(Vec3()), "orbit pivot over empty space is the origin");
+        }
     }
 
     // Rectangles on vertical planes, front side toward the camera.

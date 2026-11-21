@@ -40,6 +40,7 @@ struct InferenceResult {
     Vec3 dir;             // direction inferred (axis / edge) for shift-locking
     bool hasDir = false;
     double angleDeg = 0;  // Angle: the stepped angle to the base edge
+    bool square = false;  // Perpendicular: square to an edge the line starts from
     std::string label() const;
     bool isSnap() const { return type == Endpoint || type == Midpoint || type == Origin || type == GuidePoint || type == Intersection; }
 };
@@ -65,6 +66,9 @@ public:
         // on it, or the previous segment): square to it is inferred, and with
         // angleStepDeg > 0 the direction steps by that many degrees from it.
         std::optional<Vec3> baseDir;
+        // Lines from ref square (90 degrees) to the edges meeting there; empty
+        // derives them from baseDir alone.
+        std::vector<Vec3> squareDirs;
         double angleStepDeg = 0;
         double snapPx = 10.0;
     };

@@ -1333,7 +1333,7 @@ int runSelfTest(MainWindow& w) {
             const std::vector<Vec3> fin = ct->curvePoints();
             const size_t e0 = d.mesh().aliveEdgeCount();
             d.key(Qt::Key_Return);
-            bool all = !ct->busy() && d.mesh().aliveEdgeCount() == e0 + fin.size() - 1;
+            bool all = !ct->busy() && (size_t)d.mesh().aliveEdgeCount() == e0 + fin.size() - 1;
             for (const Vec3& p : fin) all = all && d.mesh().findVertex(p, 1e-6) != kNone;
             d.check(all, "3D Curve: Enter makes it edges");
             doc.undo();
@@ -1346,7 +1346,7 @@ int runSelfTest(MainWindow& w) {
             d.click(d.screen(cb));
             const size_t e1 = d.mesh().aliveEdgeCount();
             vp->setTool(ToolId::Select);
-            d.check(d.mesh().aliveEdgeCount() > e1, "3D Curve: switching tools keeps the curve");
+            d.check((size_t)d.mesh().aliveEdgeCount() > e1, "3D Curve: switching tools keeps the curve");
             doc.undo();
             eng.resetMemory();
         }

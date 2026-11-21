@@ -141,6 +141,15 @@ void Camera::zoom(double factor, const Vec3* towards) {
     Vec3 p = towards ? *towards : target;
     eye = p + (eye - p) * factor;
     target = p + (target - p) * factor;
+    if (towards) {
+        // The near plane scales with distance(): a target left far behind the
+        // geometry being zoomed at would clip it away as the eye closes in.
+        // Move the target along the view axis to the zoomed point's depth;
+        // the view itself does not change.
+        Vec3 f = forward();
+        double depth = (p - eye).dot(f);
+        if (depth > 0) target = eye + f * depth;
+    }
     // Keep the orbit target at a sensible distance in front of the camera.
     if (distance() < 0.01) target = eye + forward() * 0.01;
 }

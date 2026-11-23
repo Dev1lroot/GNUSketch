@@ -66,6 +66,33 @@ protected:
     // Resolves the drawing plane through p0 (forced axis, start face, hovered face, ground).
     Plane resolvePlane(const MouseEvent& e, const Vec3& p0, Id startFace);
     void shapeBasis(const Vec3& n, Vec3& u, Vec3& v) const;
+
+    // The face a shape is drawn on and the edge direction it lines up with.
+    struct Surface {
+        bool ok = false;
+        Plane plane;
+        bool hasDir = false;
+        Vec3 dir;
+    };
+    // Faces (loose or of components) the inferred point lies on.
+    std::vector<InferenceEngine::SurfaceAt> surfacesOf(const InferenceResult& r, const MouseEvent& e);
+    // Remembers the faces under the first point (call on the first click).
+    void beginSurface(const InferenceResult& r, const MouseEvent& e);
+    // The face to draw on through p0 (and through p1 if given): one under the
+    // first point (on an edge or corner shared by several, the one under the
+    // cursor), else the face of what the cursor snaps to if it holds p0.
+    // `hover` are the faces of what the cursor snaps to (surfacesOf).
+    Surface currentSurface(const MouseEvent& e, const std::vector<InferenceEngine::SurfaceAt>& hover, const Vec3& p0,
+                           const std::optional<Vec3>& p1 = std::nullopt);
+    // Of several faces (around an edge or corner): the one under the cursor,
+    // else the last one chosen; -1 if none of them is. Faces seen almost
+    // edge-on (|normal . view ray| < kMinFaceView, about 17 degrees) are left out.
+    static constexpr double kMinFaceView = 0.3;
+    int chooseSurface(const std::vector<InferenceEngine::SurfaceAt>& c, const MouseEvent& e);
+    // u along s.dir (or the default basis of its plane), v square to it in the plane.
+    void surfaceBasis(const Surface& s, Vec3& u, Vec3& v) const;
+    std::vector<InferenceEngine::SurfaceAt> startSurfaces_;
+    std::optional<Plane> lastSurface_; // sticky choice among several faces
     int forcedAxis_ = -1;
     int heldSaved_ = -1; // forcedAxis_ before X/Y/Z was held
 public:
@@ -149,6 +176,7 @@ private:
     Plane arcPlane(const MouseEvent& e);
     int stage_ = 0; // 0 none, 1 start set, 2 end set (bulge)
     Vec3 a_, b_, cur_;
+    std::vector<InferenceEngine::SurfaceAt> endSurfaces_; // faces under the end point
     Id startFace_ = kNone;
     Plane plane_;
     double bulge_ = 0;

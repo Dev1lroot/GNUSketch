@@ -87,6 +87,18 @@ public:
     // cursor ray hits it and its world normal. False if there is none.
     bool faceUnder(double px, double py, const std::set<Id>* excludeVerts, Vec3& point, Vec3& normal) const;
     Id pickEdge(double px, double py, double tolPx, const std::set<Id>* excludeVerts = nullptr) const;
+    // A face (loose or of a component) a point lies on, in world space.
+    struct SurfaceAt {
+        Plane plane;             // the face's plane (normal = its front)
+        bool onEdge = false;     // the point is on the face's outline...
+        Vec3 edgeDir;            // ...along this outline edge (at a corner: one of the two)
+        bool hasNearest = false; // nearest straight (not arc/circle) outline edge to the point
+        Vec3 nearestDir;
+    };
+    // Faces that contain p (inside or on their outline): the face under a
+    // point, both faces along an edge, every face around a corner. Faces of
+    // components count when they are near the cursor (px, py).
+    std::vector<SurfaceAt> surfacesAt(const Vec3& p, double px, double py) const;
     int pickGuide(double px, double py, double tolPx) const;
     // Loose edges (of the mesh being edited) with a visible part within
     // radiusPx of the cursor: an eraser brush. What is behind a face (loose or

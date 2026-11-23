@@ -368,6 +368,54 @@ bool InferenceEngine::faceUnder(double px, double py, const std::set<Id>* ex, Ve
     return true;
 }
 
+std::vector<InferenceEngine::SurfaceAt> InferenceEngine::surfacesAt(const Vec3& p, double px, double py) const {
+    std::vector<SurfaceAt> out;
+    const double tol = std::max(kTol * 10, cam_.pixelSize(p) * 0.05);
+    for (const FaceRef& F : worldFaces(nullptr, px, py, 10.0)) {
+        if (!F.plane.contains(p, tol) || !faceContains(F, p)) continue;
+        SurfaceAt s;
+        s.plane = F.plane;
+        const Mesh& m = *F.mesh;
+        const Face& face = m.faces[F.face];
+        double bestOn = tol, bestNear = std::numeric_limits<double>::infinity();
+        auto loop = [&](const std::vector<Id>& L) {
+            for (size_t i = 0; i < L.size(); ++i) {
+                const Id va = L[i], vb = L[(i + 1) % L.size()];
+                const Vec3 a = F.xf.transformPoint(m.pos(va)), b = F.xf.transformPoint(m.pos(vb));
+                const Vec3 ab = b - a;
+                const double l2 = ab.length2();
+                if (l2 < 1e-18) continue;
+                const double t = std::clamp((p - a).dot(ab) / l2, 0.0, 1.0);
+                const double d = (a + ab * t - p).length();
+                if (d <= bestOn) {
+                    bestOn = d;
+                    s.onEdge = true;
+                    s.edgeDir = ab.normalized();
+                }
+                const Id e = m.findEdge(va, vb);
+                if (e != kNone && m.edges[e].curve != kNone) continue; // arcs and circles have no direction to follow
+                if (d < bestNear) {
+                    bestNear = d;
+                    s.hasNearest = true;
+                    s.nearestDir = ab.normalized();
+                }
+            }
+        };
+        loop(face.outer);
+        for (const auto& h : face.holes) loop(h);
+        // Coplanar neighbours (a face split by a line) are the same surface.
+        bool dup = false;
+        for (SurfaceAt& o : out)
+            if (o.plane.coincident(s.plane, tol)) {
+                if (!o.onEdge && s.onEdge) o = s;
+                dup = true;
+                break;
+            }
+        if (!dup) out.push_back(s);
+    }
+    return out;
+}
+
 bool InferenceEngine::outlineNearCursor(const FaceRef& F, double px, double py, double tolPx) const {
     const std::vector<Id>& L = F.mesh->faces[F.face].outer;
     std::vector<std::pair<double, double>> s(L.size());

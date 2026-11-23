@@ -449,6 +449,106 @@ void PlanarShapeTool::shapeBasis(const Vec3& n, Vec3& u, Vec3& v) const {
     planeBasis(n, u, v);
 }
 
+std::vector<InferenceEngine::SurfaceAt> PlanarShapeTool::surfacesOf(const InferenceResult& r, const MouseEvent& e) {
+    if (r.type == InferenceResult::None) return {};
+    return engine().surfacesAt(r.p, e.x, e.y);
+}
+
+void PlanarShapeTool::beginSurface(const InferenceResult& r, const MouseEvent& e) {
+    startSurfaces_ = surfacesOf(r, e);
+    lastSurface_.reset();
+}
+
+int PlanarShapeTool::chooseSurface(const std::vector<InferenceEngine::SurfaceAt>& all, const MouseEvent& e) {
+    // A face seen almost edge-on (as a wall from above) is not drawn on: you
+    // look past it, at the ground or an axis plane.
+    const Vec3 ray = cam().ray(e.x, e.y).dir.normalized();
+    std::vector<int> idx;
+    for (size_t i = 0; i < all.size(); ++i)
+        if (std::fabs(all[i].plane.n.dot(ray)) >= kMinFaceView) idx.push_back((int)i);
+    std::vector<InferenceEngine::SurfaceAt> c;
+    for (int i : idx) c.push_back(all[i]);
+    auto pick = [&](int i) { return i < 0 ? -1 : idx[i]; };
+    if (c.empty()) return -1;
+    if (c.size() == 1) return pick(0);
+    const double tol = kTol * 100;
+    Vec3 pt, n;
+    if (engine().faceUnder(e.x, e.y, nullptr, pt, n)) {
+        const Plane under(n, pt);
+        for (size_t i = 0; i < c.size(); ++i)
+            if (c[i].plane.coincident(under, tol)) return pick((int)i);
+    }
+    if (lastSurface_)
+        for (size_t i = 0; i < c.size(); ++i)
+            if (c[i].plane.coincident(*lastSurface_, tol)) return pick((int)i);
+    return -1; // none of them under the cursor yet: the usual axis planes
+}
+
+PlanarShapeTool::Surface PlanarShapeTool::currentSurface(const MouseEvent& e,
+                                                         const std::vector<InferenceEngine::SurfaceAt>& hover,
+                                                         const Vec3& p0, const std::optional<Vec3>& p1) {
+    Surface out;
+    const double tol = std::max(kTol * 10, cam().pixelSize(p0) * 0.05);
+    auto holds = [&](const Plane& P) { return P.contains(p0, tol) && (!p1 || P.contains(*p1, tol)); };
+    std::vector<InferenceEngine::SurfaceAt> cands;
+    for (const auto& s : startSurfaces_)
+        if (holds(s.plane)) cands.push_back(s);
+    int i = chooseSurface(cands, e);
+    const bool fromStart = i >= 0;
+    if (!fromStart) {
+        // Nothing usable at the start (or only faces seen edge-on): the face
+        // of what the cursor is on, if it holds the start.
+        cands.clear();
+        for (const auto& s : hover)
+            if (holds(s.plane)) cands.push_back(s);
+        i = chooseSurface(cands, e);
+    }
+    if (i < 0) return out;
+    const InferenceEngine::SurfaceAt& c = cands[i];
+    lastSurface_ = c.plane;
+    out.ok = true;
+    out.plane = c.plane;
+    // Line up with the edge the shape starts from, else the edge of this face
+    // the cursor is on, else the face's edge nearest the start.
+    if (fromStart && c.onEdge) {
+        out.hasDir = true;
+        out.dir = c.edgeDir;
+        return out;
+    }
+    for (const auto& h : hover)
+        if (h.onEdge && h.plane.coincident(c.plane, tol)) {
+            out.hasDir = true;
+            out.dir = h.edgeDir;
+            return out;
+        }
+    if (c.onEdge) {
+        out.hasDir = true;
+        out.dir = c.edgeDir;
+    } else if (c.hasNearest) {
+        out.hasDir = true;
+        out.dir = c.nearestDir;
+    }
+    return out;
+}
+
+void PlanarShapeTool::surfaceBasis(const Surface& s, Vec3& u, Vec3& v) const {
+    const Vec3 n = s.plane.n;
+    if (s.hasDir) {
+        Vec3 d = s.dir - n * s.dir.dot(n);
+        if (d.length() > 1e-9) {
+            u = d.normalized();
+            v = n.cross(u).normalized();
+            // Width runs along the more level of the two sides.
+            if (std::fabs(v.z) < std::fabs(u.z) - 1e-9) {
+                u = v;
+                v = n.cross(u).normalized();
+            }
+            return;
+        }
+    }
+    shapeBasis(n, u, v);
+}
+
 // ===========================================================================
 // Rectangle
 // ===========================================================================
@@ -479,6 +579,7 @@ void RectangleTool::mousePress(const MouseEvent& e) {
         InferenceResult r = inferPoint(e, std::nullopt);
         p0_ = r.p;
         startFace_ = r.face;
+        beginSurface(r, e);
         hasStart_ = true;
         dragging_ = true;
         pressX_ = e.x;
@@ -500,9 +601,23 @@ void RectangleTool::mouseMove(const MouseEvent& e) {
         update();
         return;
     }
-    int axis = forcedAxis_ < 0 ? cursorAxis(e) : -1;
-    plane_ = axis >= 0 ? Plane(kAxes[axis], p0_) : resolvePlane(e, p0_, startFace_);
-    shapeBasis(plane_.n, u_, v_);
+    // On a face the shape follows the face (and its edges); X/Y/Z or the
+    // arrow keys still force an axis plane.
+    Surface surf;
+    if (forcedAxis_ < 0) {
+        snapDistance_ = false;
+        const InferenceResult hover = inferPoint(e, p0_);
+        snapDistance_ = true;
+        surf = currentSurface(e, surfacesOf(hover, e), p0_);
+    }
+    if (surf.ok) {
+        plane_ = surf.plane;
+        surfaceBasis(surf, u_, v_);
+    } else {
+        int axis = forcedAxis_ < 0 ? cursorAxis(e) : -1;
+        plane_ = axis >= 0 ? Plane(kAxes[axis], p0_) : resolvePlane(e, p0_, startFace_);
+        shapeBasis(plane_.n, u_, v_);
+    }
     snapDistance_ = false; // each side snaps on its own
     InferenceResult r = inferPoint(e, p0_, plane_);
     snapDistance_ = true;
@@ -641,11 +756,14 @@ void CircleTool::mousePress(const MouseEvent& e) {
         InferenceResult r = inferPoint(e, std::nullopt);
         center_ = r.p;
         startFace_ = r.face;
+        beginSurface(r, e);
         hasCenter_ = true;
         dragging_ = true;
         pressX_ = e.x;
         pressY_ = e.y;
-        plane_ = resolvePlane(e, center_, startFace_);
+        if (forcedAxis_ >= 0) plane_ = Plane(kAxes[forcedAxis_], center_);
+        else if (Surface s = currentSurface(e, {}, center_); s.ok) plane_ = s.plane;
+        else plane_ = resolvePlane(e, center_, startFace_);
         refreshStatus();
         vp_->refreshToolStatus();
         update();
@@ -659,13 +777,25 @@ void CircleTool::mouseMove(const MouseEvent& e) {
     lastMouse_ = e;
     if (!hasCenter_) {
         InferenceResult r = inferPoint(e, std::nullopt);
-        plane_ = forcedAxis_ >= 0 ? Plane(kAxes[forcedAxis_], r.p)
-               : r.face != kNone ? mesh().facePlane(r.face) : Plane(viewPlaneNormal(), r.p);
+        if (forcedAxis_ >= 0) {
+            plane_ = Plane(kAxes[forcedAxis_], r.p);
+        } else {
+            // Show the plane of the face (or the faces around the edge) under the cursor.
+            auto c = surfacesOf(r, e);
+            lastSurface_.reset();
+            const int i = chooseSurface(c, e);
+            plane_ = i >= 0 ? Plane(c[i].plane.n, r.p) : r.face != kNone ? mesh().facePlane(r.face) : Plane(viewPlaneNormal(), r.p);
+        }
         update();
         return;
     }
-    if (forcedAxis_ >= 0) plane_ = Plane(kAxes[forcedAxis_], center_);
-    else if (startFace_ == kNone) plane_ = resolvePlane(e, center_, kNone);
+    if (forcedAxis_ >= 0) {
+        plane_ = Plane(kAxes[forcedAxis_], center_);
+    } else {
+        const InferenceResult hover = inferPoint(e, center_);
+        if (Surface s = currentSurface(e, surfacesOf(hover, e), center_); s.ok) plane_ = s.plane;
+        else plane_ = resolvePlane(e, center_, kNone);
+    }
     InferenceResult r = inferPoint(e, center_, plane_);
     Vec3 d = r.p - center_;
     d = d - plane_.n * d.dot(plane_.n);
@@ -766,10 +896,8 @@ Plane ArcTool::arcPlane(const MouseEvent& e) {
         Vec3 n = kAxes[forcedAxis_];
         if (std::fabs(n.dot(d.normalized())) < 1e-6) return Plane(n, a_);
     }
-    if (startFace_ != kNone && mesh().faces[startFace_].alive) {
-        Plane fp = mesh().facePlane(startFace_);
-        if (fp.contains(b_, kTol * 10)) return fp;
-    }
+    // A face holding both ends (the start's faces first, then the end's).
+    if (Surface s = currentSurface(e, endSurfaces_, a_, b_); s.ok) return s.plane;
     Id f = engine().pickFace(e.x, e.y);
     if (f != kNone) {
         Plane fp = mesh().facePlane(f);
@@ -793,11 +921,14 @@ void ArcTool::mousePress(const MouseEvent& e) {
         InferenceResult r = inferPoint(e, std::nullopt);
         a_ = r.p;
         startFace_ = r.face;
+        beginSurface(r, e);
+        endSurfaces_.clear();
         stage_ = 1;
     } else if (stage_ == 1) {
         InferenceResult r = inferPoint(e, a_);
         if (r.p.nearlyEquals(a_)) return;
         b_ = r.p;
+        endSurfaces_ = surfacesOf(r, e);
         stage_ = 2;
         clearLocks();
         plane_ = arcPlane(e);
@@ -865,6 +996,7 @@ bool ArcTool::vcbEnter(const QString& text) {
         Vec3 d = cur_ - a_;
         if (d.length() < kTol) d = Vec3(1, 0, 0);
         b_ = a_ + d.normalized() * v;
+        endSurfaces_.clear();
         stage_ = 2;
         plane_ = arcPlane(lastMouse_);
         refreshStatus();

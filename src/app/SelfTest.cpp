@@ -4793,6 +4793,109 @@ int runSelfTest(MainWindow& w) {
         doc.modified = false;
     }
 
+    // Shapes drawn on a tilted, turned face follow the face (not the axes),
+    // and a rectangle started on its edge lines up with that edge; also on a
+    // face of a component.
+    {
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        d.pump();
+        const double a30 = kPi / 6, a40 = kPi * 40 / 180;
+        const Vec3 O(0, 0, 0);
+        const Vec3 e1 = Vec3(std::cos(a30), std::sin(a30), 0) * 3.0;
+        const Vec3 e2 = Vec3(-std::sin(a30) * std::cos(a40), std::cos(a30) * std::cos(a40), std::sin(a40)) * 3.0;
+        const Vec3 n = e1.cross(e2).normalized();
+        auto lookAt = [&](const Vec3& c) {
+            vp->setStandardView((-n + Vec3(0.15, -0.1, 0)).normalized());
+            vp->camera().zoomExtents(c - Vec3(2.5, 2.5, 2.5), c + Vec3(2.5, 2.5, 2.5));
+            d.pump();
+        };
+        doc.beginOp("Tilted");
+        d.mesh().drawPolyline({O, O + e1, O + e1 + e2, O + e2}, true);
+        doc.commitOp();
+        lookAt(O + (e1 + e2) * 0.5);
+        const Plane P(n, O);
+        vp->setTool(ToolId::Rectangle);
+        d.click(d.screen(O + e1 * 0.3));
+        d.click(d.screen(O + e1 * 0.7 + e2 * 0.5));
+        int off = 0, onEdge = 0;
+        for (const Vertex& v : d.mesh().vertices) {
+            if (!v.alive) continue;
+            off += !P.contains(v.p, 1e-6);
+            const double t = (v.p - O).dot(e1) / e1.length2();
+            onEdge += t > -1e-9 && t < 1 + 1e-9 && (O + e1 * t - v.p).length() < 1e-6;
+        }
+        std::printf("  tilted rectangle: %d faces, %d points off the face, %d on its edge\n", d.mesh().aliveFaceCount(), off, onEdge);
+        d.check(off == 0 && d.mesh().aliveFaceCount() == 2, "a rectangle on a tilted face lies in the face");
+        d.check(onEdge == 4, "started on the face's edge, it runs along that edge");
+
+        // The same face pulled into a box made a component: a circle and a
+        // rectangle drawn on its top (from the top's edge) lie on it.
+        doc.reset();
+        d.pump();
+        doc.beginOp("Tilted box");
+        Mesh& m = d.mesh();
+        m.drawPolyline({O, O + e1, O + e1 + e2, O + e2}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) {
+                if (m.faces[f].normal.dot(n) < 0) m.reverseFace(f);
+                m.pushPull(f, 1.0);
+                break;
+            }
+        doc.commitOp();
+        Selection all;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) all.faces.insert(f);
+        for (Id e = 0; e < (Id)m.edges.size(); ++e)
+            if (m.edges[e].alive) all.edges.insert(e);
+        doc.beginOp("Make Component");
+        const Id inst = makeComponent(doc.state, all, "Tilted");
+        doc.selection.clear();
+        doc.commitOp();
+        doc.notifySelection();
+        d.check(inst != kNone && d.mesh().aliveVertexCount() == 0, "the tilted box is a component");
+        const Vec3 T = O + n;
+        const Plane top(n, T);
+        lookAt(T + (e1 + e2) * 0.5);
+        vp->setTool(ToolId::Circle);
+        d.click(d.screen(T + e1 * 0.5 + e2 * 0.5));
+        d.click(d.screen(T + e1 * 0.7 + e2 * 0.5));
+        vp->setTool(ToolId::Rectangle);
+        d.click(d.screen(T + e2 * 0.2));
+        d.click(d.screen(T + e1 * 0.2 + e2 * 0.3));
+        int offTop = 0, loose = 0, onSide = 0;
+        for (const Vertex& v : d.mesh().vertices) {
+            if (!v.alive) continue;
+            ++loose;
+            offTop += !top.contains(v.p, 1e-6);
+            const double t = (v.p - T).dot(e2) / e2.length2();
+            onSide += (T + e2 * t - v.p).length() < 1e-6;
+        }
+        std::printf("  on a component: %d loose points, %d off its face, %d along its edge\n", loose, offTop, onSide);
+        d.check(loose >= 12 + 4 && offTop == 0, "a circle and a rectangle on a component's tilted face lie on it");
+        d.check(onSide == 2, "the rectangle from the component's edge runs along that edge");
+        // A wall (x,z) seen from almost straight above: a rectangle from its
+        // bottom edge goes on the ground, not up the wall seen edge-on.
+        doc.reset();
+        d.pump();
+        doc.beginOp("Wall");
+        d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 0, 1}, {0, 0, 1}}, true);
+        doc.commitOp();
+        vp->setStandardView(Vec3(0, 0.15, -1).normalized());
+        vp->camera().zoomExtents(Vec3(-0.5, -0.5, 0), Vec3(2.5, 2, 1));
+        d.pump();
+        vp->setTool(ToolId::Rectangle);
+        d.click(d.screen(Vec3(0.5, 0, 0)));
+        d.click(d.screen(Vec3(1.5, 1, 0)));
+        int ground = 0;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive && std::fabs(d.mesh().faces[f].normal.z) > 0.99) ++ground;
+        d.check(ground == 1 && d.mesh().aliveFaceCount() == 2, "from a wall's edge seen from above, a rectangle goes on the ground");
+        doc.reset();
+        doc.modified = false;
+    }
+
     // File > Export Selection: the File > Export formats (and .gsketch) for
     // what is selected only.
     {

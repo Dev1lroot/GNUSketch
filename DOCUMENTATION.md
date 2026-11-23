@@ -54,7 +54,15 @@ where the old ones were soft or hidden). Points where another edge meets it stay
 ![Rectangle](docs/media/rectangle.gif) ![Circle and polygon](docs/media/circle.gif)
 
 Rectangles go on the ground, on faces, or on vertical planes (drag up the blue axis or
-use the arrow keys); type `width,height`. Circles and polygons take a radius and `Ns`
+use the arrow keys); type `width,height`. On a face — loose or of a component, tilted or
+turned — rectangles, circles, polygons and arcs stay in that face's plane even when the
+cursor strays off it or onto an axis; X/Y/Z or the arrow keys still force an axis plane.
+Started on an edge or a corner where several faces meet, they take the face the cursor
+moves over; started in free space, they take the face of the edge or point they finish
+on, if that face holds the start. A rectangle lines up with the face's edge it starts
+on (or finishes on, else the nearest straight edge of the face). A face seen almost
+edge-on (within about 17°, like a wall from above) is skipped: from its edge you draw on
+the ground or the plane you look at. Circles and polygons take a radius and `Ns`
 for the number of sides. Arcs are curves of segments that stay together.
 Clicking one edge of a circle, an arc or any smooth curve (also an imported one)
 selects the whole curve, up to the points where another edge divides it: a line

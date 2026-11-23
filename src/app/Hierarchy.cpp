@@ -5,6 +5,7 @@
 #include "Tool.h"
 #include "Viewport.h"
 #include "core/Components.h"
+#include "core/Solids.h"
 
 #include <QAction>
 #include <QEvent>
@@ -91,7 +92,9 @@ QString HierarchyPanel::structure() const {
     QString s = QStringLiteral("%1,%2;").arg(st.mesh.aliveFaceCount()).arg(st.mesh.aliveEdgeCount());
     for (Id i = 0; i < (Id)st.instances.size(); ++i) {
         const Instance& I = st.instances[i];
-        if (I.alive) s += QStringLiteral("%1:%2:%3:%4:%5;").arg(i).arg(I.def).arg(I.parent).arg(I.hidden).arg(instanceLabel(st, i));
+        if (I.alive)
+            s += QStringLiteral("%1:%2:%3:%4:%5:%6;").arg(i).arg(I.def).arg(I.parent).arg(I.hidden).arg(instanceLabel(st, i))
+                     .arg(I.def >= 0 && I.def < (Id)st.defs.size() && isSolidCached(st.defs[I.def].mesh));
     }
     for (Id i = 0; i < (Id)st.objects.size(); ++i) {
         const SceneObject& o = st.objects[i];
@@ -136,6 +139,9 @@ void HierarchyPanel::rebuild() {
         key += QStringLiteral("/%1").arg(i);
         fill(it, instanceLabel(st, i), !I.hidden, InstanceKind, i, key, path);
         if (I.entity.isEntity()) it->setIcon(0, Icons::get("character"));
+        else if (isSolidCached(st.defs[I.def].mesh)) it->setIcon(0, Icons::get("fx_solidify"));
+        if (isSolidCached(st.defs[I.def].mesh))
+            it->setToolTip(0, QStringLiteral("Solid: its faces close up with no holes, so the Solid Tools work on it"));
         if (depth > 32) return;
         path << i;
         for (Id c : kids[I.def]) addInst(it, c, path, key, depth + 1);

@@ -4892,6 +4892,124 @@ int runSelfTest(MainWindow& w) {
         for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
             if (d.mesh().faces[f].alive && std::fabs(d.mesh().faces[f].normal.z) > 0.99) ++ground;
         d.check(ground == 1 && d.mesh().aliveFaceCount() == 2, "from a wall's edge seen from above, a rectangle goes on the ground");
+
+        // Rectangle sides snap to the length of an edge hovered while drawing.
+        doc.reset();
+        d.pump();
+        doc.beginOp("Ruler");
+        d.mesh().drawLine(Vec3(0, 2, 0), Vec3(1.37, 2, 0));
+        doc.commitOp();
+        vp->setStandardView(Vec3(0, 0, -1));
+        vp->camera().zoomExtents(Vec3(-0.5, -0.5, 0), Vec3(2.5, 2.5, 0));
+        d.pump();
+        vp->setTool(ToolId::Rectangle);
+        d.click(d.screen(Vec3(0, 0, 0)));
+        d.move(d.screen(Vec3(0.685, 2, 0))); // over the edge's midpoint
+        const double pxw = vp->camera().pixelSize(Vec3(1.4, 0.5, 0));
+        d.move(d.screen(Vec3(1.37 + pxw * 3, 0.5, 0)));
+        d.click(d.screen(Vec3(1.37 + pxw * 3, 0.5, 0)));
+        bool atLen = false;
+        for (const Vertex& v : d.mesh().vertices)
+            atLen = atLen || (v.alive && std::fabs(v.p.x - 1.37) < 1e-9 && std::fabs(v.p.y - 0.5) < 1e-3);
+        d.check(atLen, "a rectangle's side snaps to the length of an edge hovered on the way");
+        doc.reset();
+        doc.modified = false;
+    }
+
+    // Solid components are flagged (Outliner icon and tip, green edges with
+    // View > Edge Style > Highlight Solids) and the flag follows edits.
+    {
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        d.pump();
+        doc.beginOp("Box");
+        Mesh& m = d.mesh();
+        m.drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) { m.pushPull(f, 1.0 * (m.faces[f].normal.z < 0 ? -1 : 1)); break; }
+        Selection all;
+        for (Id f = 0; f < (Id)m.faces.size(); ++f)
+            if (m.faces[f].alive) all.faces.insert(f);
+        for (Id e = 0; e < (Id)m.edges.size(); ++e)
+            if (m.edges[e].alive) all.edges.insert(e);
+        const Id box = makeComponent(doc.state, all, "Box");
+        doc.commitOp();
+        d.pump();
+        auto* hp = w.findChild<HierarchyPanel*>();
+        auto* tree = hp ? hp->findChild<QTreeWidget*>() : nullptr;
+        auto solidRows = [&] {
+            int n = 0;
+            if (tree)
+                for (int k = 0; k < tree->topLevelItemCount(); ++k) n += tree->topLevelItem(k)->toolTip(0).startsWith("Solid");
+            return n;
+        };
+        const Id def = box != kNone ? doc.state.instances[box].def : kNone;
+        d.check(def != kNone && isSolidCached(doc.state.defs[def].mesh) && solidRows() == 1, "a closed box component is flagged solid in the Outliner");
+        QAction* hl = w.findChild<QAction*>(QStringLiteral("highlightsolids"));
+        d.check(hl && hl->isCheckable() && hl->isChecked() && doc.style.highlightSolids, "View has Highlight Solids, on by default");
+        if (hl) {
+            hl->setChecked(false);
+            d.pump();
+            d.check(!doc.style.highlightSolids, "Highlight Solids can be turned off");
+            hl->setChecked(true);
+        }
+        if (def != kNone) {
+            doc.beginOp("Hole");
+            Mesh& dm = doc.state.defs[def].mesh;
+            for (Id f = 0; f < (Id)dm.faces.size(); ++f)
+                if (dm.faces[f].alive) { dm.eraseFace(f); break; }
+            doc.commitOp();
+            d.pump();
+            d.check(!isSolidCached(dm) && solidRows() == 0, "with a face erased it is no longer flagged solid");
+            doc.undo();
+            d.pump();
+            d.check(isSolidCached(doc.state.defs[def].mesh) && solidRows() == 1, "undo brings the solid flag back");
+        }
+        doc.reset();
+        doc.modified = false;
+    }
+
+    // Back faces are red with white dots; turned around, the same face shows
+    // no red at all.
+    {
+        vp->setTool(ToolId::Select);
+        vp->cancelTool();
+        doc.reset();
+        d.pump();
+        doc.beginOp("Quad");
+        d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}}, true);
+        doc.commitOp();
+        Id quad = kNone;
+        for (Id f = 0; f < (Id)d.mesh().faces.size(); ++f)
+            if (d.mesh().faces[f].alive) quad = f;
+        if (quad != kNone && d.mesh().faces[quad].normal.z > 0) d.mesh().reverseFace(quad); // its back up
+        d.mesh().revision = nextMeshRevision();
+        vp->setStandardView(Vec3(0, 0, -1));
+        vp->camera().zoomExtents(Vec3(-0.5, -0.5, 0), Vec3(2.5, 2.5, 0));
+        d.pump();
+        auto sample = [&](int& red, int& white) {
+            red = white = 0;
+            const QImage fb = vp->grabFramebuffer();
+            const QPointF c = d.screen(Vec3(1, 1, 0)) * fb.devicePixelRatio();
+            for (int y = (int)c.y() - 30; y < (int)c.y() + 30; ++y)
+                for (int x = (int)c.x() - 30; x < (int)c.x() + 30; ++x) {
+                    const QColor q = fb.pixelColor(x, y);
+                    red += q.red() > q.green() + 60 && q.red() > q.blue() + 60;
+                    white += q.red() > 240 && q.green() > 240 && q.blue() > 240;
+                }
+        };
+        int red, white;
+        sample(red, white);
+        std::printf("  back face: %d red, %d white pixels of 3600\n", red, white);
+        d.check(red > 2000 && white > 150, "a back face is red with white dots");
+        if (quad != kNone) d.mesh().reverseFace(quad);
+        d.mesh().revision = nextMeshRevision();
+        vp->update();
+        d.pump();
+        sample(red, white);
+        std::printf("  front face: %d red, %d white pixels\n", red, white);
+        d.check(red == 0, "the front of the face is not red");
         doc.reset();
         doc.modified = false;
     }

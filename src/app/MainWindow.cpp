@@ -416,6 +416,8 @@ void MainWindow::buildActions() {
     sunAct_->setStatusTip(QStringLiteral("Sunlight and the sun in the sky. Window > Sun sets its direction and height."));
     cullAct_ = styleToggle("backfaceculling", "", QStringLiteral("&Backface Culling"), &RenderStyle::backfaceCulling);
     cullAct_->setStatusTip(QStringLiteral("Do not draw or pick the back of a face. A face looked at from behind becomes see-through."));
+    solidsAct_ = styleToggle("highlightsolids", "", QStringLiteral("Highlight &Solids"), &RenderStyle::highlightSolids);
+    solidsAct_->setStatusTip(QStringLiteral("Draw the edges of solid components (closed, usable with the Solid Tools) in green."));
 
     act("repeateffect", "effects", QStringLiteral("&Repeat Effect"), QKeySequence(QStringLiteral("Ctrl+F")), [this] {
         if (lastEffect_) runEffect(*lastEffect_, true);
@@ -556,6 +558,8 @@ void MainWindow::buildMenus() {
     edgeStyle->addAction(edgesAct_);
     edgeStyle->addAction(backEdgesAct_);
     edgeStyle->addAction(profilesAct_);
+    edgeStyle->addSeparator();
+    edgeStyle->addAction(solidsAct_);
     QMenu* faceStyle = view->addMenu(QStringLiteral("&Face Style"));
     faceStyle->addAction(xrayAct_);
     faceStyle->addSeparator();
@@ -992,7 +996,7 @@ void MainWindow::updateUndoActions() {
 
 void MainWindow::syncStyleActions() {
     const RenderStyle& s = doc_.style;
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, cinematicAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_}) a->blockSignals(true);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, cinematicAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_, solidsAct_}) a->blockSignals(true);
     xrayAct_->setChecked(s.xray);
     backEdgesAct_->setChecked(s.backEdges);
     edgesAct_->setChecked(s.edges);
@@ -1007,7 +1011,8 @@ void MainWindow::syncStyleActions() {
     antialiasAct_->setChecked(s.antialiasing);
     sunAct_->setChecked(s.sun);
     cullAct_->setChecked(s.backfaceCulling);
-    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, cinematicAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_}) a->blockSignals(false);
+    solidsAct_->setChecked(s.highlightSolids);
+    for (QAction* a : {xrayAct_, backEdgesAct_, edgesAct_, profilesAct_, axesAct_, guidesAct_, hiddenAct_, shadowsAct_, cinematicAct_, aoAct_, antialiasAct_, sunAct_, cullAct_, objectsAct_, solidsAct_}) a->blockSignals(false);
     auto it = faceStyleActs_.find((int)s.faceStyle);
     if (it != faceStyleActs_.end()) it->second->setChecked(true);
     perspectiveAct_->setChecked(viewport_->camera().perspective);

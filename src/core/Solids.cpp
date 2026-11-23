@@ -7,8 +7,10 @@
 
 #include <array>
 #include <map>
+#include <mutex>
 #include <set>
 #include <string>
+#include <unordered_map>
 
 namespace gs {
 
@@ -866,6 +868,21 @@ const char* solidOpName(SolidOp op) {
 bool isSolid(const Mesh& m, std::string* why) {
     Mesh c = m;
     return orientSolid(c, nullptr, why);
+}
+
+bool isSolidCached(const Mesh& m) {
+    static std::mutex lock;
+    static std::unordered_map<uint64_t, bool> known; // by mesh revision (copies share it, with the same content)
+    {
+        std::lock_guard<std::mutex> g(lock);
+        auto it = known.find(m.revision);
+        if (it != known.end()) return it->second;
+    }
+    const bool solid = m.aliveFaceCount() > 0 && isSolid(m);
+    std::lock_guard<std::mutex> g(lock);
+    if (known.size() > 4096) known.clear();
+    known[m.revision] = solid;
+    return solid;
 }
 
 double solidVolume(const Mesh& m) {

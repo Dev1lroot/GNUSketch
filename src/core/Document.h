@@ -160,6 +160,7 @@ struct RenderStyle {
     bool ambientOcclusion = false; // darkening in creases and corners (screen space)
     bool antialiasing = true;  // multisampling
     bool backfaceCulling = false; // the back of a face is not drawn or picked
+    bool highlightSolids = true;  // edges of solid components drawn in green
     bool sun = true;           // sunlight and the sun in the sky
     double sunAzimuth = 207;   // degrees clockwise from +Y (north, green axis)
     double sunAltitude = 48;   // degrees above the horizon

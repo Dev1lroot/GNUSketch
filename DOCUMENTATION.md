@@ -62,7 +62,10 @@ moves over; started in free space, they take the face of the edge or point they 
 on, if that face holds the start. A rectangle lines up with the face's edge it starts
 on (or finishes on, else the nearest straight edge of the face). A face seen almost
 edge-on (within about 17°, like a wall from above) is skipped: from its edge you draw on
-the ground or the plane you look at. Circles and polygons take a radius and `Ns`
+the ground or the plane you look at. While drawing a rectangle, a side snaps to the
+length of an existing edge: one you hovered lately (before or after the first click) or
+a side of the face you started on; that edge and the side turn magenta ("Edge Length").
+Circles and polygons take a radius and `Ns`
 for the number of sides. Arcs are curves of segments that stay together.
 Clicking one edge of a circle, an arc or any smooth curve (also an imported one)
 selects the whole curve, up to the points where another edge divides it: a line
@@ -431,6 +434,14 @@ precision and length snapping.
 * **Backface Culling** (View > Render, off by default): the back of a face is neither
   drawn nor picked, as in a game engine. New faces drawn on the ground face down, so
   they vanish from above with this on: use Reverse Faces.
+* **Back faces** are red with small white dots wherever nothing is painted on the back,
+  so a face turned the wrong way is not mistaken for a front in shade (selection uses
+  finer blue dots). The back colour can still be changed (Window > Environment, Styles);
+  the dots stay. Files saved with the old grey-blue back colour open with the red one.
+* **Highlight Solids** (View > Edge Style, on by default): components whose faces close
+  up with no holes (solids, which the Solid Tools work on) get green edges. The check
+  is redone whenever a component's geometry changes. Solids also have a cube icon in
+  the Outliner, with a tooltip, whether or not the highlight is on.
 * **Game Mode** (Ctrl+G, Tools menu, tool set): click to place a character and a separate
   window opens to walk around the model. The character is 1.80 m tall and 0.30 m
   across and collides with every visible face. WASD walks, the mouse (or arrow keys)

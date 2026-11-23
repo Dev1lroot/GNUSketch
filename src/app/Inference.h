@@ -94,6 +94,7 @@ public:
         Vec3 edgeDir;            // ...along this outline edge (at a corner: one of the two)
         bool hasNearest = false; // nearest straight (not arc/circle) outline edge to the point
         Vec3 nearestDir;
+        std::vector<std::pair<Vec3, Vec3>> outline; // the face's outline edges (all loops)
     };
     // Faces that contain p (inside or on their outline): the face under a
     // point, both faces along an edge, every face around a corner. Faces of

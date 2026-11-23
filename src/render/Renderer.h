@@ -125,7 +125,7 @@ private:
     // while a component is open for editing).
     void drawMeshFaces(const MeshGpu& g, const Document& doc, const Camera& cam, const Mat4& model, float fade);
     void collectEdges(const Mesh& m, const Mat4& model, const Document& doc, const Camera& cam, const Preview& preview,
-                      bool active, bool faded, EdgeLists& out);
+                      bool active, bool faded, EdgeLists& out, bool solid = false);
     void drawOverlayFaces(const std::vector<float>& tris, const Camera& cam, const Color& c, bool stipple);
     void drawLines(const std::vector<float>& data, const Camera& cam, float width, Dash dash, double dpr);
     void pushLine(std::vector<float>& d, const Vec3& a, const Vec3& b, const Color& c);

@@ -721,6 +721,7 @@ QJsonObject styleToJson(const RenderStyle& s) {
     st["ambientOcclusion"] = s.ambientOcclusion;
     st["antialiasing"] = s.antialiasing;
     st["backfaceCulling"] = s.backfaceCulling;
+    st["highlightSolids"] = s.highlightSolids;
     st["sun"] = s.sun;
     st["sunAzimuth"] = s.sunAzimuth;
     st["sunAltitude"] = s.sunAltitude;
@@ -751,6 +752,7 @@ void styleFromJson(const QJsonObject& st, RenderStyle& s) {
     s.ambientOcclusion = st["ambientOcclusion"].toBool(s.ambientOcclusion);
     s.antialiasing = st["antialiasing"].toBool(s.antialiasing);
     s.backfaceCulling = st["backfaceCulling"].toBool(s.backfaceCulling);
+    s.highlightSolids = st["highlightSolids"].toBool(s.highlightSolids);
     s.sun = st["sun"].toBool(s.sun);
     s.sunAzimuth = st["sunAzimuth"].toDouble(s.sunAzimuth);
     s.sunAltitude = st["sunAltitude"].toDouble(s.sunAltitude);
@@ -760,6 +762,11 @@ void styleFromJson(const QJsonObject& st, RenderStyle& s) {
     s.background = colorFrom(st["background"], s.background);
     s.frontColor = colorFrom(st["frontColor"], s.frontColor);
     s.backColor = colorFrom(st["backColor"], s.backColor);
+    {
+        const Color old = legacyBackColor();
+        auto same = [](float a, float b) { return std::fabs(a - b) < 0.5f / 255.0f; };
+        if (same(s.backColor.r, old.r) && same(s.backColor.g, old.g) && same(s.backColor.b, old.b)) s.backColor = defaultBackColor();
+    }
 }
 
 } // namespace gs

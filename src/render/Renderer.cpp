@@ -2,6 +2,7 @@
 #include "Renderer.h"
 
 #include "core/Components.h"
+#include "core/Solids.h"
 #include "core/Triangulate.h"
 #include "io/ImageUtil.h"
 
@@ -261,6 +262,15 @@ void main() {
     if (!front) n = -n;
     if (uMode == 2) { fragColor = vec4(mix(uBg.rgb, vec3(1.0), uFade), uAlpha); return; }
     vec4 base = front ? vColF : vColB;
+    // A back side with nothing painted on it (alpha flagged negative): white
+    // dots over it, staggered, every 6 pixels.
+    bool plainBack = !front && vColB.a < 0.0;
+    if (base.a < 0.0) base.a = 1.0;
+    if (plainBack) {
+        ivec2 p = ivec2(gl_FragCoord.xy);
+        ivec2 q = ivec2((p.x + ((p.y / 6) % 2) * 3) % 6, p.y % 6);
+        if (q.x < 2 && q.y < 2) { fragColor = vec4(1.0, 1.0, 1.0, base.a * uAlpha); return; }
+    }
     if (uMode == 1) {
         if (front && uTexF) base = vec4(texture(uSamF, vUvF).rgb, base.a);
         if (!front && uTexB) base = vec4(texture(uSamB, vUvB).rgb, base.a);
@@ -344,6 +354,7 @@ void main() {
     bool front = gl_FrontFacing;
     vec2 uv = front ? vUvF : vUvB;
     vec4 vertexColor = front ? vColF : vColB;
+    if (vertexColor.a < 0.0) vertexColor.a = 1.0; // the unpainted-back flag
     vec3 Ng = normalize(vN);
     if (!front) Ng = -Ng;
     vec3 V = uPerspective ? normalize(uEye - vWorld) : -uForward;
@@ -1157,6 +1168,8 @@ void Renderer::buildMesh(MeshGpu& g, const Mesh& m, const Document& doc) {
         const bool advF = mf && mf->advanced(), advB = mb && mb->advanced();
         Color cf = colorOf(F.front.material, true), cb = colorOf(F.back.material, false);
         bool transparent = cf.a < 0.999f || cb.a < 0.999f || (mf && mf->blended()) || (mb && mb->blended());
+        // Nothing painted on the back: the face shader dots it (negative alpha flags it).
+        if (!mb) cb.a = -1.0f;
         const bool keyF = texF || advF, keyB = texB || advB;
         auto gk = std::make_tuple(keyF ? F.front.material : -1, keyB ? F.back.material : -1, transparent ? 1 : 0);
         Entry& en = groups[gk];
@@ -1951,7 +1964,7 @@ void Renderer::renderShadowMap(const std::vector<std::pair<const MeshGpu*, Mat4>
 }
 
 void Renderer::collectEdges(const Mesh& m, const Mat4& model, const Document& doc, const Camera& cam,
-                            const Preview& preview, bool active, bool faded, EdgeLists& out) {
+                            const Preview& preview, bool active, bool faded, EdgeLists& out, bool solid) {
     const RenderStyle& st = doc.style;
     const bool identity = model.isIdentity();
     const bool persp = cam.perspective;
@@ -1966,6 +1979,8 @@ void Renderer::collectEdges(const Mesh& m, const Mat4& model, const Document& do
     const bool anySelected = active && (!doc.selection.edges.empty() || !preview.highlightEdges.empty());
     if (!drawEdges && !st.showHidden && !anySelected) return;
     Color edgeColor = st.edgeColor;
+    // A solid component (View > Edge Style > Highlight Solids): green edges.
+    if (solid) edgeColor = Color::rgb8(0, 150, 60);
     // Faded geometry keeps its edges, just dimmer than the open component's.
     if (faded) edgeColor = Color(edgeColor.r * 0.5f + 0.42f, edgeColor.g * 0.5f + 0.42f, edgeColor.b * 0.5f + 0.42f, 0.9f);
     for (Id e = 0; e < (Id)m.edges.size(); ++e) {
@@ -2141,10 +2156,13 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
 
     // Edges.
     EdgeLists el;
-    collectEdges(active, Mat4(), doc, cam, preview, true, false, el);
+    // Solid components stand out from open ones (only components: loose
+    // geometry is not one thing).
+    auto solidDef = [&](Id def) { return st.highlightSolids && def != kNone && isSolidCached(ms.defs[def].mesh); };
+    collectEdges(active, Mat4(), doc, cam, preview, true, false, el, solidDef(editDef));
     if (editing) collectEdges(ms.mesh, Mat4(), doc, cam, preview, false, true, el);
     for (const Placed& p : placed)
-        if (p.seen) collectEdges(ms.defs[p.def].mesh, p.xf, doc, cam, preview, false, !p.active, el);
+        if (p.seen) collectEdges(ms.defs[p.def].mesh, p.xf, doc, cam, preview, false, !p.active, el, solidDef(p.def));
 
     // Component boxes: selected / hovered instances, and the open one.
     std::vector<float> boxes, openBox;

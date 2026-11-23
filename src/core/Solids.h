@@ -28,6 +28,9 @@ const char* solidOpName(SolidOp op);
 // be oriented consistently. Edges without faces are ignored. `why` explains a
 // failure.
 bool isSolid(const Mesh& m, std::string* why = nullptr);
+// isSolid(m), worked out once per change of the mesh (its revision) and
+// remembered: cheap to ask every frame.
+bool isSolidCached(const Mesh& m);
 // Enclosed volume of a solid (model units cubed), 0 if it is not a solid.
 double solidVolume(const Mesh& m);
 

@@ -128,6 +128,16 @@ private:
     double w_ = 0, h_ = 0;
     std::string hint_;
     double pressX_ = 0, pressY_ = 0;
+    // Existing edges whose length a side snaps to: the ones hovered lately
+    // (before or while drawing) and the outline of the face started on.
+    struct LenRef {
+        Vec3 a, b;
+    };
+    void rememberEdge(const InferenceResult& r);
+    // Snaps len (signed) to a reference edge's length within tol; ref gets that edge.
+    bool snapToEdgeLength(double& len, double tol, std::optional<LenRef>& ref) const;
+    std::vector<LenRef> hoveredEdges_, faceEdges_;
+    std::optional<LenRef> refW_, refH_; // edges the sides snapped to
 };
 
 class CircleTool : public PlanarShapeTool {

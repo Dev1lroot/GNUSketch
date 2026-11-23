@@ -385,6 +385,7 @@ std::vector<InferenceEngine::SurfaceAt> InferenceEngine::surfacesAt(const Vec3& 
                 const Vec3 ab = b - a;
                 const double l2 = ab.length2();
                 if (l2 < 1e-18) continue;
+                s.outline.emplace_back(a, b);
                 const double t = std::clamp((p - a).dot(ab) / l2, 0.0, 1.0);
                 const double d = (a + ab * t - p).length();
                 if (d <= bestOn) {

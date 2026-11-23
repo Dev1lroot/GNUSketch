@@ -124,6 +124,10 @@ const char* surfaceShaderTemplate();
 
 // SketchUp-like default colours for faces without a material.
 inline Color defaultFrontColor() { return Color::rgb8(255, 255, 255); }
-inline Color defaultBackColor() { return Color::rgb8(164, 178, 187); }
+// Back faces are red (and dotted white where nothing is painted on them) so
+// they cannot be mistaken for a shaded front.
+inline Color defaultBackColor() { return Color::rgb8(208, 64, 64); }
+// The grey-blue back colour of files saved before (moved to the red one on load).
+inline Color legacyBackColor() { return Color::rgb8(164, 178, 187); }
 
 } // namespace gs

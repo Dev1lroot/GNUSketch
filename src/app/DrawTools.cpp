@@ -558,10 +558,47 @@ QString RectangleTool::status() const {
     return QStringLiteral("Select opposite corner or enter dimensions (width,height).");
 }
 
+void RectangleTool::rememberEdge(const InferenceResult& r) {
+    if (!r.hasEdge || (r.edgeB - r.edgeA).length() < kTol * 10) return;
+    for (size_t i = 0; i < hoveredEdges_.size(); ++i) {
+        const LenRef& o = hoveredEdges_[i];
+        if ((o.a.nearlyEquals(r.edgeA) && o.b.nearlyEquals(r.edgeB)) || (o.a.nearlyEquals(r.edgeB) && o.b.nearlyEquals(r.edgeA))) {
+            hoveredEdges_.erase(hoveredEdges_.begin() + i);
+            break;
+        }
+    }
+    hoveredEdges_.push_back({r.edgeA, r.edgeB});
+    if (hoveredEdges_.size() > 8) hoveredEdges_.erase(hoveredEdges_.begin());
+}
+
+bool RectangleTool::snapToEdgeLength(double& len, double tol, std::optional<LenRef>& ref) const {
+    const double a = std::fabs(len);
+    double best = tol;
+    auto consider = [&](const std::vector<LenRef>& refs) {
+        // Most recently hovered first: on a tie it wins.
+        for (auto it = refs.rbegin(); it != refs.rend(); ++it) {
+            const double l = (it->b - it->a).length();
+            if (std::fabs(l - a) < best) {
+                best = std::fabs(l - a);
+                ref = *it;
+            }
+        }
+    };
+    consider(faceEdges_);
+    consider(hoveredEdges_);
+    if (!ref) return false;
+    len = (len < 0 ? -1 : 1) * (ref->b - ref->a).length();
+    return true;
+}
+
 void RectangleTool::reset() {
     hasStart_ = dragging_ = false;
     w_ = h_ = 0;
     hint_.clear();
+    hoveredEdges_.clear();
+    faceEdges_.clear();
+    refW_.reset();
+    refH_.reset();
     clearLocks();
     setVcb(QString());
     refreshStatus();
@@ -580,6 +617,12 @@ void RectangleTool::mousePress(const MouseEvent& e) {
         p0_ = r.p;
         startFace_ = r.face;
         beginSurface(r, e);
+        faceEdges_.clear();
+        for (const auto& sf : startSurfaces_)
+            if (sf.outline.size() <= 32) // not the many small sides of a circle or terrain
+                for (const auto& [a, b] : sf.outline) faceEdges_.push_back({a, b});
+        refW_.reset();
+        refH_.reset();
         hasStart_ = true;
         dragging_ = true;
         pressX_ = e.x;
@@ -597,7 +640,7 @@ void RectangleTool::mousePress(const MouseEvent& e) {
 void RectangleTool::mouseMove(const MouseEvent& e) {
     lastMouse_ = e;
     if (!hasStart_) {
-        inferPoint(e, std::nullopt);
+        rememberEdge(inferPoint(e, std::nullopt));
         update();
         return;
     }
@@ -608,6 +651,7 @@ void RectangleTool::mouseMove(const MouseEvent& e) {
         snapDistance_ = false;
         const InferenceResult hover = inferPoint(e, p0_);
         snapDistance_ = true;
+        rememberEdge(hover);
         surf = currentSurface(e, surfacesOf(hover, e), p0_);
     }
     if (surf.ok) {
@@ -621,6 +665,7 @@ void RectangleTool::mouseMove(const MouseEvent& e) {
     snapDistance_ = false; // each side snaps on its own
     InferenceResult r = inferPoint(e, p0_, plane_);
     snapDistance_ = true;
+    rememberEdge(r);
     Vec3 d = r.p - p0_;
     w_ = d.dot(u_);
     h_ = d.dot(v_);
@@ -641,6 +686,13 @@ void RectangleTool::mouseMove(const MouseEvent& e) {
             w_ = (w_ < 0 ? -1 : 1) * std::fabs(h_) * 0.618034;
             hint_ = "Golden Section";
         }
+    }
+    // A side as long as an existing edge (hovered lately or of the face started on).
+    refW_.reset();
+    refH_.reset();
+    if (hint_.empty() && lengthSnappable(r)) {
+        snapToEdgeLength(w_, px * 6, refW_);
+        snapToEdgeLength(h_, px * 6, refH_);
     }
     setVcb(fmtLen(std::fabs(w_)) + ", " + fmtLen(std::fabs(h_)));
     update();
@@ -687,6 +739,10 @@ void RectangleTool::commit() {
     doc().commitOp();
     hasStart_ = false;
     hint_.clear();
+    hoveredEdges_.clear();
+    faceEdges_.clear();
+    refW_.reset();
+    refH_.reset();
     clearLocks();
     refreshStatus();
     update();
@@ -711,6 +767,18 @@ void RectangleTool::buildPreview(Preview& pv) {
         if (!hint_.empty()) {
             pv.line(c[0], c[2], Color::rgb8(220, 0, 220), 1.0f, Dash::Dashed);
             pv.labels.push_back({c[2], hint_});
+        }
+        // Sides snapped to an edge's length: that edge and the side in magenta.
+        const Color mag = Color::rgb8(220, 0, 220);
+        if (refW_) {
+            pv.line(refW_->a, refW_->b, mag, 3.0f);
+            pv.line(c[0], c[1], mag, 2.4f);
+            pv.labels.push_back({(c[0] + c[1]) * 0.5, "Edge Length"});
+        }
+        if (refH_) {
+            pv.line(refH_->a, refH_->b, mag, 3.0f);
+            pv.line(c[1], c[2], mag, 2.4f);
+            pv.labels.push_back({(c[1] + c[2]) * 0.5, "Edge Length"});
         }
     }
     engine().addPreview(inf_, pv);

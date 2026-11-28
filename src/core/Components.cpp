@@ -6,7 +6,7 @@
 #include <map>
 #include <random>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -582,4 +582,4 @@ Mesh flattenModel(const ModelState& st) {
     return out;
 }
 
-} // namespace gs
+} // namespace forma

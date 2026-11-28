@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Camera.h"
 
-namespace gs {
+namespace forma {
 
 Vec3 Camera::right() const {
     Vec3 r = forward().cross(up);
@@ -198,4 +198,4 @@ Camera Camera::lerped(const Camera& o, double t) const {
     return c;
 }
 
-} // namespace gs
+} // namespace forma

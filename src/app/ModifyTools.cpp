@@ -15,7 +15,7 @@
 #include <cmath>
 #include <functional>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -2164,4 +2164,4 @@ void TapeTool::buildPreview(Preview& pv) {
     engine().addPreview(inf_, pv);
 }
 
-} // namespace gs
+} // namespace forma

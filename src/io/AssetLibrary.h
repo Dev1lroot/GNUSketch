@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - files shared between models, kept in the application's data
-// directory: prefabs (share/prefabs/*.gsketch), materials (share/materials/*.gsmat)
+// Forma - files shared between models, kept in the application's data
+// directory: prefabs (share/prefabs/*.forma), materials (share/materials/*.fmat)
 // and texture images (share/textures).
 #pragma once
 
@@ -10,13 +10,13 @@
 #include <QString>
 #include <QStringList>
 
-namespace gs {
+namespace forma {
 
 // The writable directory for a kind of asset ("prefabs", "materials", "textures"),
-// created on demand: ~/.local/share/GNUSketch/<kind>. The environment variable
-// GNUSKETCH_DATA_DIR replaces ~/.local/share/GNUSketch.
+// created on demand: ~/.local/share/Forma/<kind>. The environment variable
+// FORMA_DATA_DIR replaces ~/.local/share/Forma.
 QString assetDir(const QString& kind);
-// That directory first, then the read-only system ones (/usr/share/GNUSketch/<kind>).
+// That directory first, then the read-only system ones (/usr/share/Forma/<kind>).
 QStringList assetDirs(const QString& kind);
 
 struct PrefabInfo {
@@ -45,4 +45,4 @@ QStringList textureFiles(const QStringList& extraFolders);
 // (see guessMapSlot; the first unnamed image becomes the base colour).
 bool materialFromImages(const QStringList& paths, Material& out, QString* error = nullptr);
 
-} // namespace gs
+} // namespace forma

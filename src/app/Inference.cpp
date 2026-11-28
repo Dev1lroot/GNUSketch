@@ -7,7 +7,7 @@
 #include <cmath>
 #include <limits>
 
-namespace gs {
+namespace forma {
 
 static const Vec3 kAxes[3] = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)};
 
@@ -1310,4 +1310,4 @@ void InferenceEngine::addPreview(const InferenceResult& r, Preview& pv) const {
     if (!l.empty()) pv.labels.push_back({r.p, l});
 }
 
-} // namespace gs
+} // namespace forma

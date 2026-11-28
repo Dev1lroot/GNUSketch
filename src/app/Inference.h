@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - inference engine: snaps the cursor to endpoints, midpoints,
+// Forma - inference engine: snaps the cursor to endpoints, midpoints,
 // edges, faces, axis directions and "from point" alignments. Components
 // (other than the moved ones) offer the same snaps as loose geometry.
 #pragma once
@@ -15,7 +15,7 @@
 #include <set>
 #include <string>
 
-namespace gs {
+namespace forma {
 
 struct InferenceResult {
     enum Type {
@@ -214,4 +214,4 @@ private:
     mutable std::map<Id, CachedEdges> instEdges_;
 };
 
-} // namespace gs
+} // namespace forma

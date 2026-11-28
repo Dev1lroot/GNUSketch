@@ -32,7 +32,7 @@
 #include <cmath>
 #include <limits>
 
-namespace gs {
+namespace forma {
 
 Viewport::Viewport(Document* doc, QWidget* parent) : QOpenGLWidget(parent), doc_(doc) {
     setMouseTracking(true);
@@ -864,4 +864,4 @@ bool Viewport::dropImage(const QString& path, double x, double y, bool tile) {
     return true;
 }
 
-} // namespace gs
+} // namespace forma

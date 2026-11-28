@@ -5,7 +5,7 @@
 #include <cmath>
 #include <limits>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -304,4 +304,4 @@ void flipDegenerateTriangles(const std::vector<Vec2>& flat, std::vector<std::arr
     }
 }
 
-} // namespace gs
+} // namespace forma

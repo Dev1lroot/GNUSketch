@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -512,4 +512,4 @@ void TextureTool::paintOverlay(QPainter& p) {
     }
 }
 
-} // namespace gs
+} // namespace forma

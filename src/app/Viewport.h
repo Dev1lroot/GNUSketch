@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - the 3D modelling viewport (OpenGL widget hosting the tools).
+// Forma - the 3D modelling viewport (OpenGL widget hosting the tools).
 #pragma once
 
 #include "Inference.h"
@@ -15,7 +15,7 @@
 
 class QTimer;
 
-namespace gs {
+namespace forma {
 
 class Viewport : public QOpenGLWidget {
     Q_OBJECT
@@ -66,19 +66,19 @@ public:
     // Applies a material (as if with the Paint Bucket) to what is under (x, y).
     bool dropMaterial(const Material& m, double x, double y, Qt::KeyboardModifiers mods);
     // What the browsers drag: a material as JSON, a prefab as its file path.
-    static const char* materialMime() { return "application/x-gnusketch-material"; }
-    static const char* prefabMime() { return "application/x-gnusketch-prefab"; }
+    static const char* materialMime() { return "application/x-forma-material"; }
+    static const char* prefabMime() { return "application/x-forma-prefab"; }
 
 signals:
     void statusText(const QString& text);
     void vcbChanged(const QString& label, const QString& value);
-    void toolChanged(gs::ToolId id);
+    void toolChanged(forma::ToolId id);
     void materialPicked();
-    void contextMenuAt(const QPoint& globalPos, gs::PickResult pick);
+    void contextMenuAt(const QPoint& globalPos, forma::PickResult pick);
     void imageDropped(const QString& path);
     void glFailed(const QString& log);
     // Game Mode: where the character was placed and which way it looks (radians).
-    void characterPlaced(const gs::Vec3& feet, double yaw);
+    void characterPlaced(const forma::Vec3& feet, double yaw);
 
 protected:
     void initializeGL() override;
@@ -136,4 +136,4 @@ private:
     static int axisArrowFor(const QKeyEvent* e);
 };
 
-} // namespace gs
+} // namespace forma

@@ -11,7 +11,7 @@ CONFIG_DIR="$(mktemp -d)"
 trap 'rm -rf "$FRAMES" "$CONFIG_DIR"' EXIT
 env -u WAYLAND_DISPLAY -u QT_QPA_PLATFORMTHEME XDG_CONFIG_HOME="$CONFIG_DIR" \
     QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 \
-    xvfb-run -a -s "-screen 0 1600x1000x24" "$BUILD_DIR/gnusketch" --screenshots "$FRAMES"
+    xvfb-run -a -s "-screen 0 1600x1000x24" "$BUILD_DIR/forma" --screenshots "$FRAMES"
 python3 -I - "$FRAMES" docs/media <<'PY'
 import sys, glob, os, re
 from PIL import Image

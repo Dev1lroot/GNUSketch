@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - large searchable windows for materials, textures and prefabs.
+// Forma - large searchable windows for materials, textures and prefabs.
 #pragma once
 
 #include "core/Document.h"
@@ -21,7 +21,7 @@ class QListWidgetItem;
 class QSlider;
 class QTimer;
 
-namespace gs {
+namespace forma {
 
 class Viewport;
 class MaterialsPanel;
@@ -133,4 +133,4 @@ private:
     QHash<QString, Cached> cache_;
 };
 
-} // namespace gs
+} // namespace forma

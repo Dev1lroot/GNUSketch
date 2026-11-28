@@ -15,7 +15,7 @@
 #include <numeric>
 #include <unordered_map>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -2279,4 +2279,4 @@ void Renderer::render(const Document& doc, const Camera& cam, const Preview& pre
     glUseProgram(0);
 }
 
-} // namespace gs
+} // namespace forma

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Bend tool: click the start and end of the stretch to bend, then
+// Forma - Bend tool: click the start and end of the stretch to bend, then
 // set the angle with the mouse or by typing. See BendParams in core/Effects.h.
 #pragma once
 
@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 class BendTool : public Tool {
 public:
@@ -45,4 +45,4 @@ private:
     std::vector<std::pair<Vec3, Vec3>> ghost_; // selected edges in world coordinates
 };
 
-} // namespace gs
+} // namespace forma

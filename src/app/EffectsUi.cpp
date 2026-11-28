@@ -23,7 +23,7 @@
 #include <cmath>
 #include <memory>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -694,4 +694,4 @@ void EffectDialog::runPreview() {
     buttons_->button(QDialogButtonBox::Ok)->setEnabled(ok);
 }
 
-} // namespace gs
+} // namespace forma

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - application look: dark/light palette and the duotone icon colours.
+// Forma - application look: dark/light palette and the duotone icon colours.
 // Stored in QSettings under "ui/…" and edited in Window → Settings.
 #pragma once
 
@@ -13,7 +13,7 @@ class QSlider;
 class QSpinBox;
 class QToolButton;
 
-namespace gs {
+namespace forma {
 
 struct ThemeSettings {
     bool dark = true;            // dark window chrome (false = the classic light one)
@@ -86,4 +86,4 @@ private:
     QWidget* preview_ = nullptr;
 };
 
-} // namespace gs
+} // namespace forma

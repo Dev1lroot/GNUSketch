@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - the small window of a component's game behaviour: its class, its
+// Forma - the small window of a component's game behaviour: its class, its
 // name and target as in Valve Hammer, its animation states and its script.
 #pragma once
 
@@ -21,7 +21,7 @@ class QPushButton;
 class QTableWidget;
 class QTabWidget;
 
-namespace gs {
+namespace forma {
 
 class FormatPlugin;
 class Viewport;
@@ -97,4 +97,4 @@ private:
     bool updating_ = false;
 };
 
-} // namespace gs
+} // namespace forma

@@ -10,7 +10,7 @@
 #include <cstdio>
 #include <tuple>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -470,4 +470,4 @@ bool sliceSelection(ModelState& st, Selection& sel, const SlicerParams& p, Slice
     return true;
 }
 
-} // namespace gs
+} // namespace forma

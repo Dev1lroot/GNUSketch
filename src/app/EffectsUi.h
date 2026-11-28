@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - the Effects menu: a list of effects and their settings dialog
+// Forma - the Effects menu: a list of effects and their settings dialog
 // with live preview.
 #pragma once
 
@@ -18,7 +18,7 @@
 class QLabel;
 class QDialogButtonBox;
 
-namespace gs {
+namespace forma {
 
 struct EffectParam {
     enum Type { Double, Int, Bool, Choice, Seed };
@@ -73,4 +73,4 @@ private:
     QDialogButtonBox* buttons_ = nullptr;
 };
 
-} // namespace gs
+} // namespace forma

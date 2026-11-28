@@ -2,7 +2,7 @@
   "name": "Open Block Model",
   "extensions": ["obm"],
   "description": "GNUBlocks' model format: boxes, groups, pictures from the game's textures folder",
-  "vendor": "GNUSketch contributors",
+  "vendor": "Dev1lroot Software",
   "license": "GPL-3.0-or-later",
   "version": "1.0"
 }

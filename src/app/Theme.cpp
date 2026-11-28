@@ -24,7 +24,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 ThemeSettings ThemeSettings::load() {
     QSettings s;
@@ -408,4 +408,4 @@ void SettingsDialog::refresh() {
     preview_->update();
 }
 
-} // namespace gs
+} // namespace forma

@@ -13,7 +13,7 @@
 #include <map>
 #include <set>
 
-namespace gs::valve {
+namespace forma::valve {
 
 namespace {
 
@@ -233,7 +233,7 @@ std::string sourceMaterial(const std::string& nameIn, const std::string& fallbac
 QByteArray vmfText(const Document& doc, const VmfOptions& o, QStringList* messages) {
     const ModelState st = closedState(doc.state);
     Writer w;
-    w.text += "// Exported by GNUSketch (Valve Source export, after Valve's SketchUp Source Tools)\n";
+    w.text += "// Exported by Forma (Valve Source export, after Valve's SketchUp Source Tools)\n";
     w.text += "versioninfo\n{\n\t\"editorversion\" \"400\"\n\t\"editorbuild\" \"6157\"\n\t\"mapversion\" \"1\"\n\t\"formatversion\" \"100\"\n\t\"prefab\" \"0\"\n}\n";
     w.text += "visgroups\n{\n}\n";
     w.text += "viewsettings\n{\n\t\"bSnapToGrid\" \"1\"\n\t\"bShowGrid\" \"1\"\n\t\"bShowLogicalGrid\" \"0\"\n\t\"nGridSpacing\" \"64\"\n\t\"bShow3DGrid\" \"0\"\n}\n";
@@ -372,7 +372,7 @@ QByteArray vmfText(const Document& doc, const VmfOptions& o, QStringList* messag
     for (const SceneObject& ob : st.objects) {
         if (!ob.alive || !ob.isLight() || !ob.enabled) continue;
         const Vec3 origin = ob.pos * kUnitsPerMeter;
-        // Brightness: GNUSketch's intensity (at 1 m) to Hammer's scale.
+        // Brightness: Forma's intensity (at 1 m) to Hammer's scale.
         const QByteArray light = colorAndBrightness(ob.color, ob.intensity * 100);
         const Vec3 aim = (ob.target - ob.pos).length2() > 1e-12 ? (ob.target - ob.pos).normalized() : Vec3(0, 0, -1);
         if (ob.kind == SceneObject::PointLight) {
@@ -458,8 +458,8 @@ QByteArray smdText(const Document& doc, QStringList* messages) {
 QByteArray qcText(const QString& smdFileName, const SmdOptions& o) {
     const QByteArray base = QFileInfo(smdFileName).completeBaseName().toUtf8();
     QByteArray qc = "// Compile with studiomdl (the game's bin folder): studiomdl " + base + ".qc\n";
-    qc += "$modelname \"gnusketch/" + base + ".mdl\"\n";
-    qc += "$cdmaterials \"models/gnusketch/\"\n";
+    qc += "$modelname \"forma/" + base + ".mdl\"\n";
+    qc += "$cdmaterials \"models/forma/\"\n";
     qc += "$body body \"" + smdFileName.toUtf8() + "\"\n";
     if (o.staticProp) qc += "$staticprop\n";
     qc += "$surfaceprop \"" + QByteArray::fromStdString(o.surfaceProp) + "\"\n";
@@ -479,4 +479,4 @@ bool writeSmd(const Document& doc, const QString& path, const SmdOptions& o, QSt
     return true;
 }
 
-} // namespace gs::valve
+} // namespace forma::valve

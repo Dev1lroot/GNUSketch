@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - moving a texture over its faces: an affine change of a face side's
+// Forma - moving a texture over its faces: an affine change of a face side's
 // texture coordinates (move, resize, rotate, skew, mirror).
 #pragma once
 
 #include "Mesh.h"
 
-namespace gs {
+namespace forma {
 
 // (x, y) -> (a x + b y + e, c x + d y + f)
 struct UvAffine {
@@ -48,4 +48,4 @@ private:
     double t_[2] = {0, 0};       // uv of the plane's origin point
 };
 
-} // namespace gs
+} // namespace forma

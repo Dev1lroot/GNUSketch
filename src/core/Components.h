@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - components: shared definitions placed as transformed instances.
+// Forma - components: shared definitions placed as transformed instances.
 //
 // Editing a definition changes every instance of it. To let all tools edit a
 // component in place without knowing about transforms, opening an instance
@@ -19,7 +19,7 @@
 #include <map>
 #include <string>
 
-namespace gs {
+namespace forma {
 
 // Transform an instance is drawn and picked with (accounts for an open component).
 Mat4 instanceWorldXf(const ModelState& st, Id inst);
@@ -99,4 +99,4 @@ ModelState closedState(const ModelState& st);
 // coordinates (for exporters that have no notion of instancing).
 Mesh flattenModel(const ModelState& st);
 
-} // namespace gs
+} // namespace forma

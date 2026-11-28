@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - solid tools: boolean operations on closed components.
+// Forma - solid tools: boolean operations on closed components.
 //
 // A solid is a mesh whose faces close up: every edge of a face bounds exactly
 // two faces. Faces stay n-gons through the operations; the intersection
@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 enum class SolidOp {
     Union,     // both solids merged into one, inner faces removed
@@ -72,4 +72,4 @@ bool knifeMesh(const Mesh& target, const Mesh& knife, std::vector<Mesh>& pieces,
 bool knifeOperation(ModelState& st, Id knifeInstance, Id knifeFace, Id target, Selection* result = nullptr,
                     std::string* error = nullptr);
 
-} // namespace gs
+} // namespace forma

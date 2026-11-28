@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - tool base class (SketchUp-style modal tools).
+// Forma - tool base class (SketchUp-style modal tools).
 #pragma once
 
 #include "Inference.h"
@@ -14,7 +14,7 @@
 class QKeyEvent;
 class QPainter;
 
-namespace gs {
+namespace forma {
 
 class Viewport;
 
@@ -122,4 +122,4 @@ protected:
     MouseEvent lastMouse_;
 };
 
-} // namespace gs
+} // namespace forma

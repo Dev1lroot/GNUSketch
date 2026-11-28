@@ -7,7 +7,7 @@
 #include <array>
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -489,4 +489,4 @@ void TerrainStroke::paint(Mesh& m, const Vec3& c, double dt, const std::vector<c
     if (any) m.touch();
 }
 
-} // namespace gs
+} // namespace forma

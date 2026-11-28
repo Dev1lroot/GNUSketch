@@ -29,7 +29,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -679,4 +679,4 @@ void MaterialEditor::dropEvent(QDropEvent* e) {
     addMaps(paths);
 }
 
-} // namespace gs
+} // namespace forma

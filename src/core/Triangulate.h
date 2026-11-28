@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - polygon-with-holes triangulation (used only for GPU display and
+// Forma - polygon-with-holes triangulation (used only for GPU display and
 // triangle-based exporters; the model itself keeps true n-gon faces).
 #pragma once
 
@@ -8,7 +8,7 @@
 #include <array>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 // loops[0] is the outer boundary, loops[1..] are holes. Orientation of the input
 // does not matter. Returned triangles index into the concatenation of all loops
@@ -20,4 +20,4 @@ std::vector<std::array<int, 3>> triangulatePolygon(const std::vector<std::vector
 // the points of all loops, in the indices the triangles use.
 void flipDegenerateTriangles(const std::vector<Vec2>& flat, std::vector<std::array<int, 3>>& tris);
 
-} // namespace gs
+} // namespace forma

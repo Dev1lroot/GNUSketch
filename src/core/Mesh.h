@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - boundary-representation mesh with SketchUp-like semantics:
+// Forma - boundary-representation mesh with SketchUp-like semantics:
 //  * edges are first-class, faces are planar n-gons (outer loop + holes),
 //  * drawing an edge splits other edges at intersections and automatically
 //    creates faces for every closed planar loop (and splits/merges faces),
@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 using Id = int32_t;
 constexpr Id kNone = -1;
@@ -286,4 +286,4 @@ Vec2 projectedTexCoord(const Face& f, bool frontSide, const Vec3& p, const Mater
 // Explicit mapping that stretches one copy of the texture over the face extents.
 TexMap fitTextureToFace(const Mesh& mesh, Id f, bool frontSide);
 
-} // namespace gs
+} // namespace forma

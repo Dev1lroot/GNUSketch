@@ -1,5 +1,5 @@
 <RCC>
   <qresource prefix="/">
-    <file alias="gnusketch.svg">gnusketch.svg</file>
+    <file alias="forma.png">forma.png</file>
   </qresource>
 </RCC>

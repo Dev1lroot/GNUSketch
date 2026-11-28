@@ -5,7 +5,7 @@
 #include <map>
 #include <optional>
 
-namespace gs {
+namespace forma {
 
 std::vector<Id> edgeChain(const Mesh& m, Id start) {
     if (start < 0 || start >= (Id)m.edges.size() || !m.edges[start].alive) return {};
@@ -267,4 +267,4 @@ bool followMe(Mesh& m, Id profile, const std::set<Id>& pathIn, std::string* erro
     return true;
 }
 
-} // namespace gs
+} // namespace forma

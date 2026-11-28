@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - effects: whole-surface operations on the selected faces.
+// Forma - effects: whole-surface operations on the selected faces.
 //
 // Every effect takes the faces out of the mesh as a shared-vertex triangle
 // surface, works on that and writes polygons back. Vertices shared with faces
@@ -18,7 +18,7 @@
 #include <set>
 #include <string>
 
-namespace gs {
+namespace forma {
 
 // A result of an effect. On failure the mesh is unchanged.
 struct EffectResult {
@@ -184,4 +184,4 @@ bool applyEffect(ModelState& st, Selection& sel, const EffectFn& fn, bool* limit
 // Faces an effect on this selection works on.
 int effectFaceCount(const ModelState& st, const Selection& sel);
 
-} // namespace gs
+} // namespace forma

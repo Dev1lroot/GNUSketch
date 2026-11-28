@@ -3,7 +3,7 @@
 
 #include "Components.h"
 
-namespace gs {
+namespace forma {
 
 Document::Document() = default;
 
@@ -110,7 +110,7 @@ void Document::restored() {
 
 void Document::openComponent(Id instance) {
     if (opDepth_ > 0 || instance < 0 || instance >= (Id)state.instances.size() || !state.instances[instance].alive) return;
-    gs::openComponent(state, instance);
+    forma::openComponent(state, instance);
     selection.clear();
     notifySelection();
     notifyChanged();
@@ -119,7 +119,7 @@ void Document::openComponent(Id instance) {
 void Document::closeComponent() {
     if (opDepth_ > 0 || state.editing == kNone) return;
     Id inst = state.editing;
-    gs::closeComponent(state);
+    forma::closeComponent(state);
     selection.clear();
     selection.instances.insert(inst);
     notifySelection();
@@ -204,4 +204,4 @@ void Document::validateSelection() {
     if (!(before == selection)) notifySelection();
 }
 
-} // namespace gs
+} // namespace forma

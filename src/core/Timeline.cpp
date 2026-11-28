@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 int TimelineLayer::keyAt(int frame) const {
     for (int i = 0; i < (int)keys.size(); ++i)
@@ -227,4 +227,4 @@ int setKey(TimelineLayer& l, const TimelineKey& k) {
     return (int)(l.keys.insert(it, k) - l.keys.begin());
 }
 
-} // namespace gs
+} // namespace forma

@@ -1,10 +1,10 @@
-# Contributing to GNUSketch
+# Contributing to Forma
 
 Thanks for helping! A few ground rules keep the project healthy.
 
 ## Clean-room policy
 
-GNUSketch re-implements the *behaviour* and general look of SketchUp-style
+Forma re-implements the *behaviour* and general look of SketchUp-style
 modelling. It must never contain anything taken from proprietary products:
 
 * no code, decompiled or otherwise derived from closed-source software;

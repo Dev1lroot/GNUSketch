@@ -1,6 +1,6 @@
-# GNUSketch documentation
+# Forma documentation
 
-Every tool, effect and panel, with a picture of it at work (rendered by GNUSketch
+Every tool, effect and panel, with a picture of it at work (rendered by Forma
 itself). The second half is the in-depth [reference](#reference).
 
 **Contents:** [The window](#the-window) · [Navigating](#navigating) ·
@@ -313,7 +313,7 @@ Collisions, stairs and slopes, physics bodies and scripted entities work as in a
 
 ## Files and 3D printing
 
-- **`.gsketch`**: open, documented JSON; everything is kept (n-gons, materials with
+- **`.forma`**: open, documented JSON; everything is kept (n-gons, materials with
   embedded images, components, animations, timeline, lights, view).
 - **Import:** OBJ, 3MF, AMF, STL, PLY, OFF (File → Import, or Open). 3D printing files
   come in at their real size as a component, flat triangles joined back into faces.
@@ -322,7 +322,7 @@ Collisions, stairs and slopes, physics bodies and scripted entities work as in a
 - **Too big for the printer?** Effects → Solid → Slicer cuts the model into parts that
   fit the build plate, with pegs, keys or ribs to glue them together (see Effects).
 - **Export Selection** (File → Export Selection): any of those formats, plugin formats
-  included, or a `.gsketch` model, with only what is selected: faces, edges,
+  included, or a `.forma` model, with only what is selected: faces, edges,
   components with everything inside them, lights and cameras, and just the materials
   they use. It stays where it is in the model (no move to the origin), so pieces
   exported one by one still fit together.
@@ -479,7 +479,7 @@ precision and length snapping.
   triangles collide (edge against edge does not), good for crates and blocks, less so for
   long thin bars crossing.
 * **Prefabs**: right-click a component (or selected geometry) and choose **Save as
-  Prefab**. It becomes its own `.gsketch` file in `~/.local/share/GNUSketch/prefabs`
+  Prefab**. It becomes its own `.forma` file in `~/.local/share/Forma/prefabs`
   (with its materials and a picture). **Window → Prefab Browser** lists them with
   search: **drag one into the model**, where it lands with its base on the surface
   under the cursor, or double-click it to carry it on the mouse. Everything placed
@@ -516,7 +516,7 @@ precision and length snapping.
   opens by that button only. In Game Mode, **E** or a click presses what you look at.
 
   Behaviour is a JavaScript script you can read and change, starting from a preset
-  (Save as Preset keeps yours in `~/.local/share/GNUSketch/scripts`):
+  (Save as Preset keeps yours in `~/.local/share/Forma/scripts`):
 
   ```js
   var closed = self.states[0], open = self.states[1];
@@ -613,7 +613,7 @@ precision and length snapping.
   any surface, on top of its own texture, with the shared Radius and Hardness
   (Ctrl/Alt+wheel). Painting another material over it mixes them; painting with
   the Default material erases. Paint is stored per vertex as blend weights (the
-  faces under the brush are subdivided to carry it) and saved in `.gsketch`;
+  faces under the brush are subdivided to carry it) and saved in `.forma`;
   OBJ/glTF/STL exports show only the faces' own materials.
   Vertices shared with untouched faces stay put, so neighbouring walls stay flat.
 
@@ -756,8 +756,8 @@ PBR shading shows in the *Shaded With Textures* style. **Window → Material Bro
 is a large window with search and adjustable picture size for the model's materials,
 ready-made PBR materials, your library, generated and folder textures and colours:
 click to paint with one, **drag one onto a face**. Save to Library (right-click) keeps a
-material in `~/.local/share/GNUSketch/materials`; images in
-`~/.local/share/GNUSketch/textures` or an added folder are listed as textures.
+material in `~/.local/share/Forma/materials`; images in
+`~/.local/share/Forma/textures` or an added folder are listed as textures.
 
 **Images as planes:** drop an image file from the desktop or Dolphin onto **empty
 space** and it becomes a flat rectangle showing the image, at 1 pixel = 1 mm. It lies
@@ -773,10 +773,10 @@ viewer, or image files copied in Dolphin.
 
 Copy (Ctrl+C) and Cut put the selected geometry on the **system clipboard**, together
 with its soft/smooth edges, curves, materials and textures. Paste it into another
-GNUSketch window, even a separate instance with a different model open. The paste
+Forma window, even a separate instance with a different model open. The paste
 lands at the same coordinates and the Move tool starts, so you can place it right away.
 Materials with the same name and image are reused instead of duplicated. The clipboard
-data uses the documented `.gsketch` JSON under the MIME type `application/x-gnusketch`,
+data uses the documented `.forma` JSON under the MIME type `application/x-forma`,
 so other programs can read and write it too.
 
 ### Trace Image
@@ -805,7 +805,7 @@ the image is traced, so on a tiled texture fit the image to the face first.
 
 ### File formats
 
-* **`.gsketch` (native)** is plain, documented JSON (see `src/io/NativeFormat.h`). It
+* **`.forma` (native)** is plain, documented JSON (see `src/io/NativeFormat.h`). It
   stores vertices, edges (soft/smooth/hidden/curve flags), n-gon faces with holes,
   per-side materials (with PBR maps and shader code) and planar UV mappings, guides,
   lights and cameras, view camera and style. Textures are embedded as their original PNG/JPEG bytes (base64).
@@ -822,7 +822,7 @@ the image is traced, so on a tiled texture fit the image to the face first.
     in the chosen unit and the header/comment says which.
   * The same formats **import** (File → Import → 3D Printing, or File → Open): 3MF
     and AMF (also zipped AMF) in their own unit, with 3MF components, transforms and
-    colours; STL/PLY/OFF written by GNUSketch in theirs, others in the unit you pick
+    colours; STL/PLY/OFF written by Forma in theirs, others in the unit you pick
     (millimeters by default). Each file becomes a component named after it, its
     triangles welded and flat ones joined back into n-gons, colours as materials.
 

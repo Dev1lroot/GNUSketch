@@ -24,7 +24,7 @@
 
 #include <algorithm>
 
-namespace gs::obm {
+namespace forma::obm {
 
 namespace {
 
@@ -253,4 +253,4 @@ bool ObmTab::showFor(Id instance) {
     return true;
 }
 
-} // namespace gs::obm
+} // namespace forma::obm

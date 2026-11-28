@@ -88,7 +88,7 @@
 #include <cmath>
 #include <cstdio>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -498,7 +498,7 @@ int runSelfTest(MainWindow& w) {
         vp->zoomExtents();
     }
 
-    // System clipboard: geometry (as GNUSketch data) and images.
+    // System clipboard: geometry (as Forma data) and images.
     {
         auto action = [&](const char* name) { return w.findChild<QAction*>(QString::fromLatin1(name)); };
         Id top = d.topFace();
@@ -509,8 +509,8 @@ int runSelfTest(MainWindow& w) {
             action("copy")->trigger();
             const QMimeData* md = QApplication::clipboard()->mimeData();
             ModelState clip;
-            bool decoded = md && md->hasFormat(QStringLiteral("application/x-gnusketch")) &&
-                           modelFromJson(md->data(QStringLiteral("application/x-gnusketch")), clip);
+            bool decoded = md && md->hasFormat(QStringLiteral("application/x-forma")) &&
+                           modelFromJson(md->data(QStringLiteral("application/x-forma")), clip);
             d.check(decoded && clip.mesh.aliveFaceCount() == 1, "copy puts geometry on the system clipboard");
             int facesBefore = d.mesh().aliveFaceCount();
             Vec3 origin = d.mesh().faceInteriorPoint(top);
@@ -1628,7 +1628,7 @@ int runSelfTest(MainWindow& w) {
     d.check(d.mesh().aliveFaceCount() > 10, "redo restores the model");
 
     // Save / load roundtrip.
-    QString file = tmp.filePath("selftest.gsketch");
+    QString file = tmp.filePath("selftest.forma");
     int facesNow = d.mesh().aliveFaceCount();
     QString err;
     bool saved = saveNative(doc, file, {}, &err);
@@ -1887,7 +1887,7 @@ int runSelfTest(MainWindow& w) {
         QObject::disconnect(conn);
 
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("game.gsketch"));
+        const QString path = dir.filePath(QStringLiteral("game.forma"));
         solidBoxAt(d.mesh(), Vec3(8, -5, 1), Vec3(10, 5, 4)); // a wall ahead
         doc.style.shadows = true;
         QJsonObject view;
@@ -2215,7 +2215,7 @@ int runSelfTest(MainWindow& w) {
     // Physically based materials, world lights and cameras, browsers, prefabs.
     {
         QTemporaryDir data; // nothing lands in the user's real library
-        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        qputenv("FORMA_DATA_DIR", data.path().toUtf8());
         doc.reset();
         doc.style = RenderStyle();
         vp->setTool(ToolId::Select);
@@ -2563,7 +2563,7 @@ int runSelfTest(MainWindow& w) {
         d.check(boxInst != kNone, "a component to make a prefab of");
         const QString prefabPath = w.savePrefabOf(boxInst, QStringLiteral("Crate"));
         d.check(!prefabPath.isEmpty() && prefabPath.startsWith(data.path()), "Save as Prefab writes a file in the data directory");
-        d.check(QFileInfo(prefabPath).suffix() == QLatin1String("gsketch"), "the prefab is a .gsketch file");
+        d.check(QFileInfo(prefabPath).suffix() == QLatin1String("forma"), "the prefab is a .forma file");
         {
             ModelState st;
             QString name;
@@ -2653,7 +2653,7 @@ int runSelfTest(MainWindow& w) {
             QApplication::sendEvent(vp, &esc);
             d.pump();
             d.check(!doc.inOp() && doc.state.instances.size() == n + 1, "Esc cancels the placing");
-            d.check(!w.startPrefabPlacement(QStringLiteral("/nonexistent/file.gsketch")) && !doc.inOp(), "a missing file is refused");
+            d.check(!w.startPrefabPlacement(QStringLiteral("/nonexistent/file.forma")) && !doc.inOp(), "a missing file is refused");
         }
         // Primitives: built as a component that follows the cursor like a prefab.
         {
@@ -3026,7 +3026,7 @@ int runSelfTest(MainWindow& w) {
             ed->close();
         }
         d.check(OffscreenRenderer::instance().materialBall(doc.state.materials[0], 32).width() == 32, "the offscreen renderer still works");
-        qunsetenv("GNUSKETCH_DATA_DIR");
+        qunsetenv("FORMA_DATA_DIR");
         doc.reset();
         doc.style = RenderStyle();
         vp->setTool(ToolId::Select);
@@ -3035,7 +3035,7 @@ int runSelfTest(MainWindow& w) {
     // --- Animation: states with F5, Properties, and playing in Game Mode.
     {
         QTemporaryDir data;
-        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        qputenv("FORMA_DATA_DIR", data.path().toUtf8());
         doc.reset();
         doc.style = RenderStyle();
         vp->setTool(ToolId::Select);
@@ -3154,7 +3154,7 @@ int runSelfTest(MainWindow& w) {
         d.check(doc.state.instances[door].entity.script != "var x = ;", "and undo");
         props->refresh();
 
-        const QString path = QDir(data.path()).filePath(QStringLiteral("anim.gsketch"));
+        const QString path = QDir(data.path()).filePath(QStringLiteral("anim.forma"));
         QString err;
         d.check(saveNative(doc, path, {}, &err), "the model with its entities saves");
 
@@ -3226,7 +3226,7 @@ int runSelfTest(MainWindow& w) {
             if (!ents->errors().isEmpty()) std::printf("%s\n", qPrintable(ents->errors().join('\n')));
         }
         game.close();
-        qunsetenv("GNUSKETCH_DATA_DIR");
+        qunsetenv("FORMA_DATA_DIR");
         doc.reset();
         doc.style = RenderStyle();
         vp->setTool(ToolId::Select);
@@ -3235,7 +3235,7 @@ int runSelfTest(MainWindow& w) {
     // --- Components inside components, in the real UI.
     {
         QTemporaryDir data;
-        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        qputenv("FORMA_DATA_DIR", data.path().toUtf8());
         doc.reset();
         doc.style = RenderStyle();
         doc.style.showAxes = false;
@@ -3335,7 +3335,7 @@ int runSelfTest(MainWindow& w) {
         d.check(mn.x < -9.9 && mx.x > -5.1, "the outer component's box includes it");
         ModelState saved;
         d.check(modelFromJson(modelToJson(doc.state), saved) && saved.defs.size() == 4 && saved.instances.size() == 5, "all of it saves");
-        qunsetenv("GNUSKETCH_DATA_DIR");
+        qunsetenv("FORMA_DATA_DIR");
         doc.reset();
         doc.style = RenderStyle();
         vp->setTool(ToolId::Select);
@@ -3344,7 +3344,7 @@ int runSelfTest(MainWindow& w) {
     // --- Hierarchy panel and physics in the real window.
     {
         QTemporaryDir data;
-        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        qputenv("FORMA_DATA_DIR", data.path().toUtf8());
         doc.reset();
         doc.style = RenderStyle();
         doc.style.showAxes = false;
@@ -3454,7 +3454,7 @@ int runSelfTest(MainWindow& w) {
         doc.state.instances[b].entity.physics = true;
         doc.state.instances[b].entity.mass = 5000;
         doc.commitOp();
-        const QString path = QDir(data.path()).filePath(QStringLiteral("phys.gsketch"));
+        const QString path = QDir(data.path()).filePath(QStringLiteral("phys.forma"));
         QString err;
         d.check(saveNative(doc, path, {}, &err), "it saves");
         GameWindow game;
@@ -3513,7 +3513,7 @@ int runSelfTest(MainWindow& w) {
             d.check(!game.grabFramebuffer().isNull(), "it renders");
         }
         game.close();
-        qunsetenv("GNUSKETCH_DATA_DIR");
+        qunsetenv("FORMA_DATA_DIR");
         doc.reset();
         doc.style = RenderStyle();
         vp->setTool(ToolId::Select);
@@ -3911,7 +3911,7 @@ int runSelfTest(MainWindow& w) {
             anim->stop();
             d.check(anim->frame() > 1, "Play runs the timeline");
             QTemporaryDir dir;
-            const QString path = QDir(dir.path()).filePath(QStringLiteral("anim.gsketch"));
+            const QString path = QDir(dir.path()).filePath(QStringLiteral("anim.forma"));
             d.check(saveNative(doc, path, {}), "an animated model saves");
             Document again;
             if (loadNative(again, path, nullptr)) {
@@ -4251,7 +4251,7 @@ int runSelfTest(MainWindow& w) {
             for (int i = 0; i < list->count(); ++i)
                 if (list->item(i)->text().startsWith(QStringLiteral("Valve Studio Model"))) list->setCurrentRow(i);
             const QString html = info->toPlainText();
-            d.check(html.contains(QStringLiteral("GNUSketch contributors")) && html.contains(QStringLiteral("GPL-3.0-or-later")) &&
+            d.check(html.contains(QStringLiteral("Dev1lroot Software")) && html.contains(QStringLiteral("GPL-3.0-or-later")) &&
                         html.contains(QStringLiteral("Valve")),
                     "with vendor, license and credits");
             QListWidgetItem* it = list->currentItem();
@@ -4272,7 +4272,7 @@ int runSelfTest(MainWindow& w) {
             if (d.mesh().faces[f].alive) { d.mesh().pushPull(f, d.mesh().faces[f].normal.z < 0 ? -2 : 2); break; }
         doc.style.sun = true;
         doc.style.shadows = false; // Game Mode turns them on by itself
-        const QString path = QDir(dir.path()).filePath(QStringLiteral("shadow.gsketch"));
+        const QString path = QDir(dir.path()).filePath(QStringLiteral("shadow.forma"));
         QString err;
         d.check(saveNative(doc, path, {}, &err), "a box to cast a shadow saves");
         const Vec3 sun = doc.style.sunDirection();
@@ -4382,7 +4382,7 @@ int runSelfTest(MainWindow& w) {
                 "File > Export lists the model and 3D printing formats");
         QTemporaryDir dir;
         doc.mesh().drawPolyline({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, true);
-        const QString path = QDir(dir.path()).filePath(QStringLiteral("recent.gsketch"));
+        const QString path = QDir(dir.path()).filePath(QStringLiteral("recent.forma"));
         d.check(saveNative(doc, path, {}), "a model to reopen saves");
         w.openFile(path);
         d.check(!w.recentFiles().isEmpty() && w.recentFiles().first() == QFileInfo(path).absoluteFilePath(), "an opened file goes to the top of Open Recent");
@@ -4390,7 +4390,7 @@ int runSelfTest(MainWindow& w) {
         bool listed = false;
         if (recent) {
             emit recent->aboutToShow();
-            for (QAction* a : recent->actions()) listed = listed || a->text().contains(QStringLiteral("recent.gsketch"));
+            for (QAction* a : recent->actions()) listed = listed || a->text().contains(QStringLiteral("recent.forma"));
         }
         d.check(listed, "and is listed in File > Open Recent");
         w.clearRecentFiles();
@@ -5014,7 +5014,7 @@ int runSelfTest(MainWindow& w) {
         doc.modified = false;
     }
 
-    // File > Export Selection: the File > Export formats (and .gsketch) for
+    // File > Export Selection: the File > Export formats (and .forma) for
     // what is selected only.
     {
         vp->setTool(ToolId::Select);
@@ -5037,8 +5037,8 @@ int runSelfTest(MainWindow& w) {
             int formats = 0, selFormats = 0;
             for (QAction* a : expMenu->actions()) formats += a->isSeparator() ? 0 : 1;
             for (QAction* a : selMenu->actions()) selFormats += a->isSeparator() ? 0 : 1;
-            d.check(selFormats == formats + 1 && w.findChild<QAction*>(QStringLiteral("exportsel_gsketch")),
-                    "it offers every File > Export format, and .gsketch");
+            d.check(selFormats == formats + 1 && w.findChild<QAction*>(QStringLiteral("exportsel_forma")),
+                    "it offers every File > Export format, and .forma");
             QTemporaryDir dir;
             const QString objPath = QDir(dir.path()).filePath(QStringLiteral("selection.obj"));
             bool ran = false, wrote = false, whole = false;
@@ -5310,4 +5310,4 @@ int runInteractBench(MainWindow& w) {
     return 0;
 }
 
-} // namespace gs
+} // namespace forma

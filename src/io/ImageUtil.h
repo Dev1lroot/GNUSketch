@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - texture image helpers (Qt image codecs).
+// Forma - texture image helpers (Qt image codecs).
 #pragma once
 
 #include "core/ImageTrace.h"
@@ -8,7 +8,7 @@
 #include <QImage>
 #include <QString>
 
-namespace gs {
+namespace forma {
 
 // Loads an image file into a Texture. PNG and JPEG bytes are kept verbatim;
 // other formats are re-encoded to PNG so saved models stay portable.
@@ -27,4 +27,4 @@ enum class TraceSource { Alpha, Dark, Light };
 ScalarImage scalarImage(const QImage& img, TraceSource src, int maxSide = 2048);
 bool hasTransparency(const QImage& img);
 
-} // namespace gs
+} // namespace forma

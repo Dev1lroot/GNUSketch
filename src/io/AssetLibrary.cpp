@@ -18,7 +18,7 @@
 
 #include <algorithm>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -48,8 +48,8 @@ QStringList filesIn(const QStringList& dirs, const QStringList& filters) {
 } // namespace
 
 QString assetDir(const QString& kind) {
-    const QString root = qEnvironmentVariableIsSet("GNUSKETCH_DATA_DIR") ? qEnvironmentVariable("GNUSKETCH_DATA_DIR")
-                                                                         : QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath(QStringLiteral("GNUSketch"));
+    const QString root = qEnvironmentVariableIsSet("FORMA_DATA_DIR") ? qEnvironmentVariable("FORMA_DATA_DIR")
+                                                                         : QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath(QStringLiteral("Forma"));
     const QString path = QDir(root).filePath(kind);
     QDir().mkpath(path);
     return path;
@@ -57,9 +57,9 @@ QString assetDir(const QString& kind) {
 
 QStringList assetDirs(const QString& kind) {
     QStringList dirs{assetDir(kind)};
-    if (qEnvironmentVariableIsSet("GNUSKETCH_DATA_DIR")) return dirs;
+    if (qEnvironmentVariableIsSet("FORMA_DATA_DIR")) return dirs;
     for (const QString& d : QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation)) {
-        const QString p = QDir(d).filePath(QStringLiteral("GNUSketch/") + kind);
+        const QString p = QDir(d).filePath(QStringLiteral("Forma/") + kind);
         if (!dirs.contains(p) && QDir(p).exists()) dirs << p;
     }
     return dirs;
@@ -84,8 +84,8 @@ QString savePrefab(const ModelState& state, Id def, const QString& name, const Q
     }
     const QDir dir(assetDir(QStringLiteral("prefabs")));
     const QString base = safeFileName(name);
-    QString path = dir.filePath(base + QStringLiteral(".gsketch"));
-    for (int i = 2; QFileInfo::exists(path); ++i) path = dir.filePath(QStringLiteral("%1 %2.gsketch").arg(base).arg(i));
+    QString path = dir.filePath(base + QStringLiteral(".forma"));
+    for (int i = 2; QFileInfo::exists(path); ++i) path = dir.filePath(QStringLiteral("%1 %2.forma").arg(base).arg(i));
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
         if (error) *error = f.errorString();
@@ -145,17 +145,17 @@ bool loadPrefab(const QString& path, ModelState& out, QString* name, QImage* thu
     return true;
 }
 
-QStringList prefabFiles() { return filesIn(assetDirs(QStringLiteral("prefabs")), {QStringLiteral("*.gsketch")}); }
+QStringList prefabFiles() { return filesIn(assetDirs(QStringLiteral("prefabs")), {QStringLiteral("*.forma"), QStringLiteral("*.gsketch")}); }
 
 QString saveLibraryMaterial(const Material& m, QString* error) {
-    const QString path = QDir(assetDir(QStringLiteral("materials"))).filePath(safeFileName(QString::fromStdString(m.name)) + QStringLiteral(".gsmat"));
+    const QString path = QDir(assetDir(QStringLiteral("materials"))).filePath(safeFileName(QString::fromStdString(m.name)) + QStringLiteral(".fmat"));
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
         if (error) *error = f.errorString();
         return {};
     }
     QJsonObject root = materialToJson(m);
-    root["format"] = "GNUSketch Material";
+    root["format"] = "Forma Material";
     f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
     if (!f.commit()) {
         if (error) *error = f.errorString();
@@ -164,13 +164,14 @@ QString saveLibraryMaterial(const Material& m, QString* error) {
     return path;
 }
 
-QStringList libraryMaterialFiles() { return filesIn(assetDirs(QStringLiteral("materials")), {QStringLiteral("*.gsmat")}); }
+QStringList libraryMaterialFiles() { return filesIn(assetDirs(QStringLiteral("materials")), {QStringLiteral("*.fmat"), QStringLiteral("*.gsmat")}); }
 
 bool loadLibraryMaterial(const QString& path, Material& out) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return false;
     const QJsonDocument d = QJsonDocument::fromJson(f.readAll());
-    if (!d.isObject() || d.object()["format"].toString() != QLatin1String("GNUSketch Material")) return false;
+    const QString format = d.isObject() ? d.object()["format"].toString() : QString();
+    if (format != QLatin1String("Forma Material") && format != QLatin1String("GNUSketch Material")) return false; // (.gsmat from before the rename)
     out = materialFromJson(d.object());
     return true;
 }
@@ -246,4 +247,4 @@ bool materialFromImages(const QStringList& paths, Material& out, QString* error)
     return true;
 }
 
-} // namespace gs
+} // namespace forma

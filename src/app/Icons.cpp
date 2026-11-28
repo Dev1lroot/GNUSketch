@@ -9,11 +9,11 @@
 #include <QScreen>
 #include <QSvgRenderer>
 
-namespace gs::Icons {
+namespace forma::Icons {
 
 namespace {
 
-// All icons use a 24x24 view box. Drawn from scratch for GNUSketch.
+// All icons use a 24x24 view box. Drawn from scratch for Forma.
 const char* svgFor(const QString& n) {
     static const QHash<QString, const char*> map = {
         {"light_point", R"svg(<circle cx="12" cy="12" r="5" fill="#f7cd46" stroke="#7d5e0c" stroke-width="1"/><path d="M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 M5 5 L7 7 M17 17 L19 19 M19 5 L17 7 M7 17 L5 19" stroke="#b78a10" stroke-width="1.6" stroke-linecap="round"/>)svg"},
@@ -293,4 +293,4 @@ QCursor toolCursor(ToolId id) {
     return QCursor(pm, hx, hy);
 }
 
-} // namespace gs::Icons
+} // namespace forma::Icons

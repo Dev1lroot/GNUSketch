@@ -8,7 +8,7 @@
 
 #include <atomic>
 
-namespace gs {
+namespace forma {
 
 static uint64_t nextRevision() {
     static std::atomic<uint64_t> r{1};
@@ -134,4 +134,4 @@ bool isImageFile(const QString& path) {
     return exts.contains(s);
 }
 
-} // namespace gs
+} // namespace forma

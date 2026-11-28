@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - the Animator's timeline (like a Flash timeline): layers, each
+// Forma - the Animator's timeline (like a Flash timeline): layers, each
 // moving one component placement, light or camera through keyframes; a
 // motion tween between two keyframes moves it smoothly, otherwise it holds.
 //
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 struct ModelState;
 using Id = int32_t;
@@ -70,4 +70,4 @@ int setKey(TimelineLayer& l, const TimelineKey& k);
 // separately, so a turning component does not shrink on the way).
 Mat4 interpolateTransform(const Mat4& a, const Mat4& b, double t);
 
-} // namespace gs
+} // namespace forma

@@ -10,7 +10,7 @@
 #include <map>
 #include <unordered_set>
 
-namespace gs {
+namespace forma {
 
 uint64_t nextMeshRevision() {
     static std::atomic<uint64_t> counter{0};
@@ -2074,4 +2074,4 @@ TexMap fitTextureToFace(const Mesh& mesh, Id f, bool frontSide) {
     return t;
 }
 
-} // namespace gs
+} // namespace forma

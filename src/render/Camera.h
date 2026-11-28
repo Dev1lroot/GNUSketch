@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - orbit camera (Z-up), perspective or parallel projection.
+// Forma - orbit camera (Z-up), perspective or parallel projection.
 #pragma once
 
 #include "core/Math.h"
 
-namespace gs {
+namespace forma {
 
 class Camera {
 public:
@@ -65,4 +65,4 @@ private:
     const Mat4& cachedViewProjection() const;
 };
 
-} // namespace gs
+} // namespace forma

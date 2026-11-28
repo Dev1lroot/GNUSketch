@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Game Mode: place a character on the model, then walk around in a
+// Forma - Game Mode: place a character on the model, then walk around in a
 // separate window (WASD + mouse).
 //
 // The game window is its own process working on a snapshot of the model. On
@@ -21,7 +21,7 @@
 #include <memory>
 #include <set>
 
-namespace gs {
+namespace forma {
 
 class PlaceCharacterTool : public Tool {
 public:
@@ -97,4 +97,4 @@ private:
 // Runs the game window in this process (the `--game` command line). Returns the exit code.
 int runGameWindow(const QString& path, const Vec3& feet, double yaw);
 
-} // namespace gs
+} // namespace forma

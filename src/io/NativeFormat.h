@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch native model format (.gsketch): open, documented JSON.
+// Forma native model format (.forma): open, documented JSON.
 //
 // {
-//   "format": "GNUSketch", "version": 1, "units": "meter", "up": "Z",
+//   "format": "Forma", "version": 1, "units": "meter", "up": "Z",
 //   "materials": [ { "name", "color": [r,g,b,a], "opacity",
 //                    "texture": { "mime", "width", "height", "data": base64 },
 //                    optional PBR: "pbr", "baseStrength", "emission": [r,g,b,a], "flipNormalY", "blend",
@@ -36,12 +36,12 @@
 #include <QJsonObject>
 #include <QString>
 
-namespace gs {
+namespace forma {
 
 bool saveNative(const Document& doc, const QString& path, const QJsonObject& view, QString* error = nullptr);
 bool loadNative(Document& doc, const QString& path, QJsonObject* view, QString* error = nullptr);
 
-// The whole model (mesh, materials, guides) as .gsketch JSON bytes and back;
+// The whole model (mesh, materials, guides) as .forma JSON bytes and back;
 // also used for the system clipboard.
 // The display style in the file's "view" object.
 QJsonObject styleToJson(const RenderStyle& s);
@@ -50,7 +50,7 @@ void styleFromJson(const QJsonObject& o, RenderStyle& s);
 QByteArray modelToJson(const ModelState& state, const QJsonObject& view = {});
 bool modelFromJson(const QByteArray& json, ModelState& state, QJsonObject* view = nullptr, QString* error = nullptr);
 
-// One material as JSON (also the content of a library .gsmat file).
+// One material as JSON (also the content of a library .fmat file).
 QJsonObject materialToJson(const Material& m);
 Material materialFromJson(const QJsonObject& o);
 
@@ -58,4 +58,4 @@ Material materialFromJson(const QJsonObject& o);
 QJsonObject meshToJson(const Mesh& mesh);
 bool meshFromJson(const QJsonObject& o, Mesh& mesh);
 
-} // namespace gs
+} // namespace forma

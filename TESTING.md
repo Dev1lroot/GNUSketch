@@ -61,7 +61,7 @@ bottom. Screenshots help.
 - [ ] A face with no texture says so; Texture: Fit and Reset still work
 
 ## Bend
-- [ ] Open samples/stairs.gsketch, Ctrl+A, Ctrl+B, click the bottom front corner of the stairs, then a point along their run; move the mouse: the ghost follows both ways, snaps every 15°; type 90, Enter: a quarter-circle staircase with flat treads and smooth curved sides
+- [ ] Open samples/stairs.forma, Ctrl+A, Ctrl+B, click the bottom front corner of the stairs, then a point along their run; move the mouse: the ghost follows both ways, snaps every 15°; type 90, Enter: a quarter-circle staircase with flat treads and smooth curved sides
 - [ ] Walk up it in Game Mode; Undo restores it in one step; `24s` while bending
 - [ ] Arrow keys change the axis; a box bent around the red axis; a selected component with copies; lines without faces; too sharp a bend is refused with a message
 
@@ -158,12 +158,12 @@ bottom. Screenshots help.
 - [ ] Undo/redo of every timeline change and of an auto keyframe; save, reopen, the timeline is there
 
 ## Files
-- [ ] Save/Open `.gsketch`; Export OBJ/glTF/STL and open them in Blender; Import OBJ
+- [ ] Save/Open `.forma`; Export OBJ/glTF/STL and open them in Blender; Import OBJ
 - [ ] File > Import > formats and File > Export > formats (3D Model, 3D Printing sections), plugin formats included
 - [ ] File > Open Recent: files opened and saved appear newest first, numbered; a deleted file disappears; Clear Recent Files
 - [ ] Import (File > Import > 3D Printing, and File > Open) 3MF/AMF/STL/PLY/OFF from a slicer or Thingiverse: right size (unit question for STL/PLY/OFF from elsewhere, remembered), a component named after the file, flat sides as single faces, curved ones smooth, 3MF colours as materials, multi-part 3MF placed right
 - [ ] Export 3MF/AMF/STL/PLY/OFF of a 20 mm box in mm and in inches; open them in a slicer (PrusaSlicer, Cura, OrcaSlicer): right size, closed solid, 3MF/AMF colours
 - [ ] Ctrl+V of geometry/components: it follows the cursor at once (grabbed by its bottom corner, snaps to points/axes), click places it, typed distance works, Esc or Ctrl+Z cancels the whole paste, one Undo removes a placed paste
-- [ ] Clipboard: copy geometry (with a textured face) in one GNUSketch window and paste it into a second instance; paste a screenshot, a browser image and image files copied in Dolphin as planes
+- [ ] Clipboard: copy geometry (with a textured face) in one Forma window and paste it into a second instance; paste a screenshot, a browser image and image files copied in Dolphin as planes
 
 ## Notes

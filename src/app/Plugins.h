@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - finding and loading plugins (see plugin/FormatPlugin.h).
+// Forma - finding and loading plugins (see plugin/FormatPlugin.h).
 #pragma once
 
 #include "plugin/FormatPlugin.h"
@@ -8,7 +8,7 @@
 #include <QStringList>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 struct LoadedPlugin {
     QString file;                     // the shared library it came from
@@ -46,4 +46,4 @@ public:
     static QString fileFilters(bool forExport);
 };
 
-} // namespace gs
+} // namespace forma

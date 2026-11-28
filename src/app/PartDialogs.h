@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - dialogs for the standard engineering parts (Draw > Engineering,
+// Forma - dialogs for the standard engineering parts (Draw > Engineering,
 // Draw > Mechanical): pick a standard size, see what it will be, place it.
 #pragma once
 
@@ -10,7 +10,7 @@
 
 class QWidget;
 
-namespace gs {
+namespace forma {
 
 enum class PartFamily {
     Screw,  // hex bolt, socket cap, countersunk, threaded rod
@@ -48,8 +48,8 @@ bool runPartDialog(QWidget* parent, PartFamily family, PartChoice& out, const st
 
 // A gear's parameters kept with its component (ComponentDef::extra, JSON),
 // so a later gear can be fitted to it. gearFromComponent also reads the names
-// GNUSketch gives gears ("Spur Gear m1 z20", "Gear Rack m2 × 10").
+// Forma gives gears ("Spur Gear m1 z20", "Gear Rack m2 × 10").
 std::string withGearTag(const std::string& extra, const GearParams& p);
 bool gearFromComponent(const std::string& extra, const std::string& name, GearParams& out);
 
-} // namespace gs
+} // namespace forma

@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -304,4 +304,4 @@ void PhysicsWorld::step(double seconds, CollisionWorld& world, const std::functi
     }
 }
 
-} // namespace gs
+} // namespace forma

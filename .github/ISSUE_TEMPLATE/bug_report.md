@@ -17,10 +17,10 @@ labels: bug
 **System**
 - Distribution / desktop (Wayland or X11):
 - GPU and driver:
-- Output of `gnusketch --gl-probe`:
+- Output of `forma --gl-probe`:
 
 ```
 paste here
 ```
 
-Screenshots or a small `.gsketch` file help a lot.
+Screenshots or a small `.forma` file help a lot.

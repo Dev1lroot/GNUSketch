@@ -7,18 +7,18 @@ if(NOT nlohmann_json_FOUND)
 endif()
 
 # the conversion itself (also linked into the tests)
-add_library(gs_obm_format STATIC ObmFormat.h ObmFormat.cpp)
-set_target_properties(gs_obm_format PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(gs_obm_format PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(gs_obm_format PUBLIC gs_io PRIVATE nlohmann_json::nlohmann_json)
-target_compile_options(gs_obm_format PRIVATE -Wall -Wextra)
+add_library(forma_obm_format STATIC ObmFormat.h ObmFormat.cpp)
+set_target_properties(forma_obm_format PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(forma_obm_format PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(forma_obm_format PUBLIC forma_io PRIVATE nlohmann_json::nlohmann_json)
+target_compile_options(forma_obm_format PRIVATE -Wall -Wextra)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
-add_library(gnusketch_obm MODULE ObmPlugin.cpp ObmUi.h ObmUi.cpp obm.json)
-target_link_libraries(gnusketch_obm PRIVATE gs_obm_format gs_io Qt6::Widgets)
-set_target_properties(gnusketch_obm PROPERTIES
+add_library(forma_obm MODULE ObmPlugin.cpp ObmUi.h ObmUi.cpp obm.json)
+target_link_libraries(forma_obm PRIVATE forma_obm_format forma_io Qt6::Widgets)
+set_target_properties(forma_obm PROPERTIES
   PREFIX ""
-  LIBRARY_OUTPUT_DIRECTORY ${GNUSKETCH_PLUGIN_BUILD_DIR}
+  LIBRARY_OUTPUT_DIRECTORY ${FORMA_PLUGIN_BUILD_DIR}
   INSTALL_RPATH "$ORIGIN/../..")
-target_compile_options(gnusketch_obm PRIVATE -Wall -Wextra)
-install(TARGETS gnusketch_obm LIBRARY DESTINATION ${GNUSKETCH_PLUGIN_INSTALL_DIR})
+target_compile_options(forma_obm PRIVATE -Wall -Wextra)
+install(TARGETS forma_obm LIBRARY DESTINATION ${FORMA_PLUGIN_INSTALL_DIR})

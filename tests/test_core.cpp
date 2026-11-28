@@ -30,7 +30,7 @@
 #include <string>
 #include <vector>
 
-using namespace gs;
+using namespace forma;
 
 static int g_failed = 0, g_passed = 0;
 
@@ -5246,7 +5246,7 @@ int main() {
             for (const Vertex& v : m.vertices)
                 if (v.alive) CHECK(v.p.z == 0);
         }
-        // The same line twice, split at different points (pentagon_cap.gsketch):
+        // The same line twice, split at different points (pentagon_cap.forma):
         // a face running into the slit between them, and lines drawn over it
         // that do not divide it.
         {

@@ -13,7 +13,7 @@
 #include <QTextBrowser>
 #include <QVBoxLayout>
 
-namespace gs {
+namespace forma {
 
 PluginBrowser::PluginBrowser(QWidget* parent) : QDialog(parent) {
     setWindowTitle(QStringLiteral("Plugins"));
@@ -39,7 +39,7 @@ PluginBrowser::PluginBrowser(QWidget* parent) : QDialog(parent) {
     note_->setProperty("hint", true);
     lay->addWidget(note_);
     auto* box = new QDialogButtonBox(QDialogButtonBox::Close, this);
-    restart_ = box->addButton(QStringLiteral("Restart GNUSketch Now"), QDialogButtonBox::ActionRole);
+    restart_ = box->addButton(QStringLiteral("Restart Forma Now"), QDialogButtonBox::ActionRole);
     restart_->setEnabled(false);
     lay->addWidget(box);
     connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -78,7 +78,7 @@ void PluginBrowser::fill() {
     }
     if (!list_->currentItem() && list_->count()) list_->setCurrentRow(0);
     showDetails();
-    note_->setText(QStringLiteral("Tick a plugin to turn it on, untick to turn it off; this applies when GNUSketch starts again. "
+    note_->setText(QStringLiteral("Tick a plugin to turn it on, untick to turn it off; this applies when Forma starts again. "
                                   "Plugins are looked for in: %1")
                        .arg(Plugins::folders().join(QStringLiteral("; "))));
 }
@@ -120,4 +120,4 @@ void PluginBrowser::showDetails() {
     }
 }
 
-} // namespace gs
+} // namespace forma

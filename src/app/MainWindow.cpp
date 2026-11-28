@@ -76,7 +76,7 @@
 #include <QTimer>
 #include <QToolButton>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -90,7 +90,7 @@ Vec3 vec(const QJsonValue& j, const Vec3& def) {
     return a.size() == 3 ? Vec3(a[0].toDouble(), a[1].toDouble(), a[2].toDouble()) : def;
 }
 
-const char* kFileFilter = "GNUSketch Model (*.gsketch)";
+const char* kFileFilter = "Forma Model (*.forma)";
 
 } // namespace
 
@@ -125,7 +125,7 @@ MainWindow::MainWindow() {
     connect(viewport_, &Viewport::contextMenuAt, this, [this](const QPoint& p, PickResult pr) { contextMenu(p, pr); });
     connect(viewport_, &Viewport::glFailed, this, [this](const QString& log) {
         QMessageBox::critical(this, QStringLiteral("OpenGL error"),
-                              QStringLiteral("GNUSketch needs OpenGL 3.3 (core profile).\n\n%1").arg(log));
+                              QStringLiteral("Forma needs OpenGL 3.3 (core profile).\n\n%1").arg(log));
     });
     connect(materials_, &MaterialsPanel::materialChosen, this, [this] { entityInfo_->refresh(); });
     connect(styles_, &StylesPanel::styleChanged, this, [this] { syncStyleActions(); });
@@ -455,7 +455,7 @@ void MainWindow::buildActions() {
         if (instructorDock_->isVisible()) instructorDock_->raise();
     });
     act("shortcuts", "", QStringLiteral("&Keyboard Shortcuts"), QKeySequence(), [this] { showShortcuts(); });
-    act("about", "", QStringLiteral("&About GNUSketch"), QKeySequence(), [this] { about(); });
+    act("about", "", QStringLiteral("&About Forma"), QKeySequence(), [this] { about(); });
 }
 
 void MainWindow::buildMenus() {
@@ -503,8 +503,8 @@ void MainWindow::buildMenus() {
     exportSelMenu_->setToolTipsVisible(true);
     exportSelMenu_->menuAction()->setToolTip(QStringLiteral("Write only what is selected to a file"));
     {
-        QAction* own = exportSelMenu_->addAction(QStringLiteral("GNUSketch model (*.gsketch)…"), this, [this] { exportSelection(); });
-        own->setObjectName(QStringLiteral("exportsel_gsketch"));
+        QAction* own = exportSelMenu_->addAction(QStringLiteral("Forma model (*.forma)…"), this, [this] { exportSelection(); });
+        own->setObjectName(QStringLiteral("exportsel_forma"));
         for (QAction* a : exp->actions()) {
             if (a->isSeparator()) {
                 exportSelMenu_->addSection(a->text());
@@ -913,7 +913,7 @@ void MainWindow::buildStatusBar() {
         return l;
     };
     iconLabel("geo", QStringLiteral("Model location (not set)"));
-    iconLabel("credits", QStringLiteral("GNUSketch is free software"));
+    iconLabel("credits", QStringLiteral("Forma is free software"));
     QToolButton* help = iconLabel("help", QStringLiteral("Show Instructor"));
     connect(help, &QToolButton::clicked, acts_["instructor"], &QAction::trigger);
     statusLabel_ = new QLabel(sb);
@@ -984,7 +984,7 @@ void MainWindow::onSelectionChanged() {
 
 void MainWindow::updateTitle() {
     QString name = doc_.filePath.empty() ? QStringLiteral("Untitled") : QFileInfo(QString::fromStdString(doc_.filePath)).fileName();
-    setWindowTitle(QStringLiteral("%1%2 - GNUSketch").arg(name, doc_.modified ? QStringLiteral("*") : QString()));
+    setWindowTitle(QStringLiteral("%1%2 - Forma").arg(name, doc_.modified ? QStringLiteral("*") : QString()));
 }
 
 void MainWindow::updateUndoActions() {
@@ -1025,7 +1025,7 @@ void MainWindow::syncStyleActions() {
 
 bool MainWindow::maybeSave() {
     if (!doc_.modified) return true;
-    auto r = QMessageBox::question(this, QStringLiteral("GNUSketch"),
+    auto r = QMessageBox::question(this, QStringLiteral("Forma"),
                                    QStringLiteral("Save changes to the current model?"),
                                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
     if (r == QMessageBox::Cancel) return false;
@@ -1047,7 +1047,7 @@ void MainWindow::open() {
     if (!maybeSave()) return;
     QSettings s;
     QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Model"), s.value("files/lastDir").toString(),
-                                                QStringLiteral("GNUSketch Model (*.gsketch);;Wavefront OBJ (*.obj);;3D Printing (*.3mf *.amf *.stl *.ply *.off)") +
+                                                QStringLiteral("Forma Model (*.forma *.gsketch);;Wavefront OBJ (*.obj);;3D Printing (*.3mf *.amf *.stl *.ply *.off)") +
                                                     (Plugins::fileFilters(false).isEmpty() ? QString() : ";;" + Plugins::fileFilters(false)));
     if (path.isEmpty()) return;
     s.setValue("files/lastDir", QFileInfo(path).absolutePath());
@@ -1073,7 +1073,7 @@ bool MainWindow::openFile(const QString& path) {
     }
     if (path.endsWith(".obj", Qt::CaseInsensitive)) {
         doc_.reset();
-        if (gs::importObj(doc_, path, true, 1.0, &err) < 0) {
+        if (forma::importObj(doc_, path, true, 1.0, &err) < 0) {
             QMessageBox::warning(this, QStringLiteral("Open"), err);
             return false;
         }
@@ -1100,7 +1100,7 @@ bool MainWindow::openFile(const QString& path) {
 }
 
 bool MainWindow::save() {
-    if (doc_.filePath.empty() || !QString::fromStdString(doc_.filePath).endsWith(".gsketch")) return saveAs();
+    if (doc_.filePath.empty() || !QString::fromStdString(doc_.filePath).endsWith(".forma")) return saveAs();
     QString err;
     if (!saveNative(doc_, QString::fromStdString(doc_.filePath), viewState(), &err)) {
         QMessageBox::warning(this, QStringLiteral("Save"), err);
@@ -1118,7 +1118,7 @@ bool MainWindow::saveAs() {
     QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save Model"), s.value("files/lastDir").toString(),
                                                 QString::fromUtf8(kFileFilter));
     if (path.isEmpty()) return false;
-    if (!path.endsWith(".gsketch")) path += ".gsketch";
+    if (!path.endsWith(".forma")) path += ".forma";
     s.setValue("files/lastDir", QFileInfo(path).absolutePath());
     doc_.filePath = path.toStdString();
     return save();
@@ -1132,7 +1132,7 @@ void MainWindow::importObj() {
     viewport_->cancelTool();
     QString err;
     doc_.beginOp("Import");
-    int n = gs::importObj(doc_, path, true, 1.0, &err);
+    int n = forma::importObj(doc_, path, true, 1.0, &err);
     if (n < 0) {
         doc_.cancelOp();
         QMessageBox::warning(this, QStringLiteral("Import"), err);
@@ -1226,10 +1226,10 @@ bool MainWindow::exportSelection(const std::function<void()>& exportFn) {
     }
     // As a model of its own.
     QSettings s;
-    QString path = QFileDialog::getSaveFileName(this, exportTitle(QStringLiteral("GNUSketch Model")), s.value("files/lastDir").toString(),
-                                                QStringLiteral("GNUSketch model (*.gsketch)"));
+    QString path = QFileDialog::getSaveFileName(this, exportTitle(QStringLiteral("Forma Model")), s.value("files/lastDir").toString(),
+                                                QStringLiteral("Forma model (*.forma)"));
     if (path.isEmpty()) return true;
-    if (!path.endsWith(".gsketch", Qt::CaseInsensitive)) path += ".gsketch";
+    if (!path.endsWith(".forma", Qt::CaseInsensitive)) path += ".forma";
     s.setValue("files/lastDir", QFileInfo(path).absolutePath());
     QString err;
     if (!saveNative(part, path, {}, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
@@ -1244,7 +1244,7 @@ void MainWindow::exportObj() {
     if (path.isEmpty()) return;
     if (!path.endsWith(".obj", Qt::CaseInsensitive)) path += ".obj";
     QString err;
-    if (!gs::exportObj(exportDoc(), path, {}, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
+    if (!forma::exportObj(exportDoc(), path, {}, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
     else statusLabel_->setText(QStringLiteral("Exported %1").arg(path));
 }
 
@@ -1255,7 +1255,7 @@ void MainWindow::exportGltf() {
     if (path.isEmpty()) return;
     if (!path.endsWith(".gltf", Qt::CaseInsensitive)) path += ".gltf";
     QString err;
-    if (!gs::exportGltf(exportDoc(), path, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
+    if (!forma::exportGltf(exportDoc(), path, &err)) QMessageBox::warning(this, QStringLiteral("Export"), err);
     else statusLabel_->setText(QStringLiteral("Exported %1").arg(path));
 }
 
@@ -1339,7 +1339,7 @@ void MainWindow::importForPrint(const QString& ext) {
 
 bool MainWindow::importPrintFile(const QString& path, bool intoEmpty) {
     viewport_->cancelTool();
-    // STL, PLY and OFF have no unit: GNUSketch's own say it in a comment,
+    // STL, PLY and OFF have no unit: Forma's own say it in a comment,
     // for the others ask (slicers take millimeters).
     double metersPerUnit = 1e-3;
     if (!printFileUnit(path, metersPerUnit)) {
@@ -1490,9 +1490,9 @@ void MainWindow::applyViewState(const QJsonObject& o) {
 // Editing commands
 // ---------------------------------------------------------------------------
 
-// Geometry goes to the system clipboard as .gsketch JSON under this type, so
-// it can be pasted into any GNUSketch window or process.
-static const QString kClipMime = QStringLiteral("application/x-gnusketch");
+// Geometry goes to the system clipboard as .forma JSON under this type, so
+// it can be pasted into any Forma window or process.
+static const QString kClipMime = QStringLiteral("application/x-forma");
 
 void MainWindow::copySelection(bool cut) {
     if (doc_.selection.empty()) return;
@@ -1530,7 +1530,7 @@ void MainWindow::paste() {
     viewport_->cancelTool();
     ModelState c;
     if (!md->hasFormat(kClipMime) || !modelFromJson(md->data(kClipMime), c)) {
-        if (!pasteImages(md)) statusLabel_->setText(QStringLiteral("Nothing to paste: copy GNUSketch geometry or an image first."));
+        if (!pasteImages(md)) statusLabel_->setText(QStringLiteral("Nothing to paste: copy Forma geometry or an image first."));
         return;
     }
     viewport_->setTool(ToolId::Move);
@@ -1906,7 +1906,7 @@ void MainWindow::launchGame(const Vec3& feet, double yaw, bool native) {
     }
     if (entityProps_) entityProps_->applyScript(); // what is being typed counts
     if (!gameDir_) gameDir_ = std::make_unique<QTemporaryDir>();
-    const QString path = gameDir_->filePath(QStringLiteral("game.gsketch"));
+    const QString path = gameDir_->filePath(QStringLiteral("game.forma"));
     QString error;
     if (!gameDir_->isValid() || !saveNative(doc_, path, viewState(), &error)) {
         QMessageBox::warning(this, QStringLiteral("Game Mode"), QStringLiteral("Could not prepare the model for the game: %1").arg(error));
@@ -1983,7 +1983,7 @@ void MainWindow::roundCorners() {
         doc_.cancelOp();
         doc_.beginOp("Round Corners");
         std::string err;
-        ok = gs::roundCorners(doc_.mesh(), edges, radius->value() / 1000.0, segments->value(), &err);
+        ok = forma::roundCorners(doc_.mesh(), edges, radius->value() / 1000.0, segments->value(), &err);
         msg->setText(ok ? QString() : QString::fromStdString(err));
         bb->button(QDialogButtonBox::Ok)->setEnabled(ok);
         viewport_->update();
@@ -2013,7 +2013,7 @@ void MainWindow::makeComponent() {
                                          QString::fromStdString(uniqueComponentName(doc_.state, "Component")), &ok);
     if (!ok) return;
     doc_.beginOp("Make Component");
-    Id inst = gs::makeComponent(doc_.state, s, name.trimmed().toStdString());
+    Id inst = forma::makeComponent(doc_.state, s, name.trimmed().toStdString());
     if (inst == kNone) {
         doc_.cancelOp();
         return;
@@ -2061,7 +2061,7 @@ void MainWindow::saveAsPrefab() {
         Selection loose = s;
         loose.instances.clear();
         loose.objects.clear();
-        const Id inst = gs::makeComponent(doc_.state, loose, name.toStdString());
+        const Id inst = forma::makeComponent(doc_.state, loose, name.toStdString());
         if (inst == kNone) {
             doc_.cancelOp();
             return;
@@ -2421,7 +2421,7 @@ bool MainWindow::recordState(const QString& name) {
     if (!doc_.editingComponent() || name.trimmed().isEmpty()) return false;
     viewport_->cancelTool();
     doc_.beginOp("Record State");
-    if (!gs::recordState(doc_.state, name.trimmed().toStdString())) {
+    if (!forma::recordState(doc_.state, name.trimmed().toStdString())) {
         doc_.cancelOp();
         return false;
     }
@@ -2537,7 +2537,7 @@ void MainWindow::makeUnique() {
     if (doc_.selection.instances.empty()) return;
     viewport_->cancelTool();
     doc_.beginOp("Make Unique");
-    gs::makeUnique(doc_.state, doc_.selection.instances);
+    forma::makeUnique(doc_.state, doc_.selection.instances);
     doc_.commitOp();
     doc_.notifySelection();
 }
@@ -2705,10 +2705,10 @@ void MainWindow::about() {
     for (const LoadedPlugin& p : Plugins::all()) plugins += p.format != nullptr;
 
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("About GNUSketch"));
+    dlg.setWindowTitle(QStringLiteral("About Forma"));
     auto* lay = new QHBoxLayout(&dlg);
     auto* icon = new QLabel(&dlg);
-    icon->setPixmap(QIcon(QStringLiteral(":/gnusketch.svg")).pixmap(96, 96));
+    icon->setPixmap(QIcon(QStringLiteral(":/forma.png")).pixmap(96, 96));
     icon->setAlignment(Qt::AlignTop);
     lay->addWidget(icon);
     auto* col = new QVBoxLayout;
@@ -2720,22 +2720,23 @@ void MainWindow::about() {
     text->setWordWrap(true);
     text->setMinimumWidth(460);
     text->setText(QStringLiteral(
-        "<h2 style='margin-bottom:0'>GNUSketch %1</h2>"
-        "<p style='margin-top:2px'><i>3D modelling with direct drawing and push/pull</i> &mdash; alpha</p>"
+        "<h2 style='margin-bottom:0'>Forma %1</h2>"
+        "<p style='margin-top:2px'><b>Dev1lroot Software: Forma</b>, formerly GNUSketch<br>"
+        "<i>3D modelling with direct drawing and push/pull</i> &mdash; alpha</p>"
         "<p>For architectural and engineering models, game levels and 3D printing: n-gon modelling with "
         "inference, components, solid tools and effects; PBR materials and custom shaders; animation, "
         "scripting and physics; a first-person Game Mode; cinematic ray traced lighting.</p>"
-        "<p>Models are open JSON (<tt>.gsketch</tt>). Import and export OBJ, glTF 2.0, 3MF, AMF, STL, PLY and "
+        "<p>Models are open JSON (<tt>.forma</tt>). Import and export OBJ, glTF 2.0, 3MF, AMF, STL, PLY and "
         "OFF; plugins add more (%2 loaded, Help &gt; Plugins).</p>"
-        "<p><a href='https://github.com/Dev1lroot/GNUSketch'>github.com/Dev1lroot/GNUSketch</a> &middot; "
-        "<a href='https://github.com/Dev1lroot/GNUSketch/blob/main/DOCUMENTATION.md'>Documentation</a> &middot; "
-        "<a href='https://github.com/Dev1lroot/GNUSketch/issues'>Report a problem</a></p>"
-        "<p>Copyright &copy; GNUSketch contributors. Free software under the "
+        "<p><a href='https://github.com/Dev1lroot/Forma'>github.com/Dev1lroot/Forma</a> &middot; "
+        "<a href='https://github.com/Dev1lroot/Forma/blob/main/DOCUMENTATION.md'>Documentation</a> &middot; "
+        "<a href='https://github.com/Dev1lroot/Forma/issues'>Report a problem</a></p>"
+        "<p>Copyright &copy; 2026 David Eichendorf. Free software under the "
         "<a href='https://www.gnu.org/licenses/gpl-3.0.html'>GNU GPL, version 3 or later</a>; "
         "it comes with no warranty.</p>"
         "<p><small>Built with Qt %3 (running %4), %5, for %6.<br>OpenGL: %7</small></p>"
         "<p><small>SketchUp is a trademark of Trimble Inc.; Source, Hammer and Valve are trademarks of "
-        "Valve Corporation. GNUSketch is independent and not affiliated with either.</small></p>")
+        "Valve Corporation. Forma is independent and not affiliated with either.</small></p>")
                       .arg(QApplication::applicationVersion())
                       .arg(plugins)
                       .arg(QStringLiteral(QT_VERSION_STR), QString::fromLatin1(qVersion()), compiler, QSysInfo::prettyProductName(), gl.toHtmlEscaped()));
@@ -2905,7 +2906,7 @@ void MainWindow::dragEnterEvent(QDragEnterEvent* e) {
     if (e->mimeData()->hasUrls())
         for (const QUrl& u : e->mimeData()->urls()) {
             QString p = u.toLocalFile();
-            if (p.endsWith(".gsketch", Qt::CaseInsensitive) || p.endsWith(".obj", Qt::CaseInsensitive) || isImageFile(p) ||
+            if (p.endsWith(".forma", Qt::CaseInsensitive) || p.endsWith(".gsketch", Qt::CaseInsensitive) || p.endsWith(".obj", Qt::CaseInsensitive) || isImageFile(p) ||
                 Plugins::forFile(p, false)) {
                 e->acceptProposedAction();
                 return;
@@ -2917,14 +2918,14 @@ void MainWindow::dragEnterEvent(QDragEnterEvent* e) {
 void MainWindow::dropEvent(QDropEvent* e) {
     for (const QUrl& u : e->mimeData()->urls()) {
         QString p = u.toLocalFile();
-        if (p.endsWith(".gsketch", Qt::CaseInsensitive)) {
+        if (p.endsWith(".forma", Qt::CaseInsensitive) || p.endsWith(".gsketch", Qt::CaseInsensitive)) {
             if (maybeSave()) openFile(p);
             break;
         }
         if (p.endsWith(".obj", Qt::CaseInsensitive)) {
             doc_.beginOp("Import");
             QString err;
-            if (gs::importObj(doc_, p, true, 1.0, &err) < 0) doc_.cancelOp();
+            if (forma::importObj(doc_, p, true, 1.0, &err) < 0) doc_.cancelOp();
             else doc_.commitOp();
             viewport_->zoomExtents();
             break;
@@ -2938,4 +2939,4 @@ void MainWindow::dropEvent(QDropEvent* e) {
     e->acceptProposedAction();
 }
 
-} // namespace gs
+} // namespace forma

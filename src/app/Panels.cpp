@@ -39,7 +39,7 @@
 #include <cmath>
 #include <random>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -1050,4 +1050,4 @@ void InstructorPanel::showTool(ToolId id) {
     text_->setHtml(html);
 }
 
-} // namespace gs
+} // namespace forma

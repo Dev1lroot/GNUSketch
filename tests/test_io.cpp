@@ -33,7 +33,7 @@
 #include <cmath>
 #include <cstdio>
 
-using namespace gs;
+using namespace forma;
 
 static int g_failed = 0, g_passed = 0;
 #define CHECK(cond)                                                                    \
@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
         d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 1, 0}, {0, 1, 0}}, true);
         for (Face& f : d.mesh().faces)
             if (f.alive) { f.front.axis = Vec3(0, 0, 1); f.back.axis = Vec3(0, 0, -1); }
-        QString p = dir.filePath("axis.gsketch");
+        QString p = dir.filePath("axis.forma");
         CHECK(saveNative(d, p, {}));
         Document e;
         CHECK(loadNative(e, p, nullptr));
@@ -84,12 +84,32 @@ int main(int argc, char** argv) {
     }
 
     {
+        // Models saved by GNUSketch (the name before Forma) still open.
+        Document d;
+        d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 1, 0}, {0, 1, 0}}, true);
+        QString p = dir.filePath("old.gsketch");
+        CHECK(saveNative(d, p, {}));
+        QFile f(p);
+        CHECK(f.open(QIODevice::ReadOnly));
+        QByteArray json = f.readAll();
+        f.close();
+        CHECK(json.contains("\"format\":\"Forma\""));
+        json.replace("\"format\":\"Forma\"", "\"format\":\"GNUSketch\"");
+        CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(json);
+        f.close();
+        Document e;
+        CHECK(loadNative(e, p, nullptr));
+        CHECK(e.mesh().aliveFaceCount() == 1);
+    }
+
+    {
         // Texture Brush paint weights survive saving.
         Document d;
         d.mesh().drawPolyline({{0, 0, 0}, {2, 0, 0}, {2, 1, 0}, {0, 1, 0}}, true);
         d.mesh().vertices[0].paint = {{0, 0.75f}, {1, 0.125f}};
         Vec3 p0 = d.mesh().vertices[0].p;
-        QString p = dir.filePath("paint.gsketch");
+        QString p = dir.filePath("paint.forma");
         CHECK(saveNative(d, p, {}));
         Document e;
         CHECK(loadNative(e, p, nullptr));
@@ -106,7 +126,7 @@ int main(int argc, char** argv) {
     {
         Document d;
         makeModel(d);
-        QString p = dir.filePath("a.gsketch");
+        QString p = dir.filePath("a.forma");
         QJsonObject view;
         view["test"] = 42;
         CHECK(saveNative(d, p, view));
@@ -143,7 +163,7 @@ int main(int argc, char** argv) {
         Document e;
         int n = importObj(e, p);
         CHECK(n >= 2);
-        CHECK(e.state.materials.size() == 2); // gs_default + Red_Brick
+        CHECK(e.state.materials.size() == 2); // forma_default + Red_Brick
         bool tex = false;
         for (const auto& m : e.state.materials) tex |= m.hasTexture();
         CHECK(tex);
@@ -181,7 +201,7 @@ int main(int argc, char** argv) {
         Id dead = cloneInstance(d.state, a);
         d.state.instances[dead].alive = false;
         d.openComponent(b);
-        QString p = dir.filePath("comp.gsketch");
+        QString p = dir.filePath("comp.forma");
         CHECK(saveNative(d, p, {}));
         CHECK(d.editingComponent()); // saving does not close the open component
         Document e;
@@ -243,7 +263,7 @@ int main(int argc, char** argv) {
         gone.alive = false;
         d.state.objects.push_back(gone);
 
-        QString p = dir.filePath("pbr.gsketch");
+        QString p = dir.filePath("pbr.forma");
         CHECK(saveNative(d, p, {}));
         Document e;
         CHECK(loadNative(e, p, nullptr));
@@ -310,25 +330,25 @@ int main(int argc, char** argv) {
     }
 
     {
-        // The standard place: <XDG data home>/GNUSketch/prefabs on Linux, the
+        // The standard place: <XDG data home>/Forma/prefabs on Linux, the
         // system's data folder (%LOCALAPPDATA%) elsewhere.
         {
 #ifdef Q_OS_LINUX
             QTemporaryDir xdg;
             const QByteArray old = qgetenv("XDG_DATA_HOME");
             qputenv("XDG_DATA_HOME", xdg.path().toUtf8());
-            CHECK(assetDir("prefabs") == QDir(xdg.path()).filePath("GNUSketch/prefabs"));
+            CHECK(assetDir("prefabs") == QDir(xdg.path()).filePath("Forma/prefabs"));
             CHECK(QFileInfo(assetDir("prefabs")).isDir());
             qputenv("XDG_DATA_HOME", old);
 #else
             const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-            CHECK(assetDir("prefabs") == QDir(base).filePath("GNUSketch/prefabs"));
+            CHECK(assetDir("prefabs") == QDir(base).filePath("Forma/prefabs"));
             CHECK(QFileInfo(assetDir("prefabs")).isDir());
 #endif
         }
         // Prefabs live in the data directory, as ordinary model files.
         QTemporaryDir data;
-        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        qputenv("FORMA_DATA_DIR", data.path().toUtf8());
         CHECK(prefabFiles().isEmpty());
         CHECK(assetDir("prefabs").startsWith(data.path()));
         Document d;
@@ -349,10 +369,10 @@ int main(int argc, char** argv) {
         thumb.fill(Qt::green);
         QString err;
         const QString p1 = savePrefab(d.state, def, "Table", thumb, &err);
-        CHECK(!p1.isEmpty() && p1.endsWith("/prefabs/Table.gsketch"));
+        CHECK(!p1.isEmpty() && p1.endsWith("/prefabs/Table.forma"));
         // Never overwrites; odd names stay inside the folder.
         const QString p2 = savePrefab(d.state, def, "Table", thumb);
-        CHECK(p2.endsWith("/Table 2.gsketch") && QFile::exists(p1));
+        CHECK(p2.endsWith("/Table 2.forma") && QFile::exists(p1));
         const QString p3 = savePrefab(d.state, def, "../../evil/na:me", {});
         CHECK(QFileInfo(p3).absolutePath() == QFileInfo(p1).absolutePath());
         CHECK(prefabFiles().size() == 3);
@@ -370,7 +390,7 @@ int main(int argc, char** argv) {
         // Any other model dropped into the folder works too.
         Document loose;
         loose.mesh().drawPolyline({{5, 5, 1}, {6, 5, 1}, {6, 6, 1}, {5, 6, 1}}, true);
-        const QString p4 = QDir(assetDir("prefabs")).filePath("Handmade.gsketch");
+        const QString p4 = QDir(assetDir("prefabs")).filePath("Handmade.forma");
         CHECK(saveNative(loose, p4, {}));
         ModelState hand, hand2;
         CHECK(loadPrefab(p4, hand, &name));
@@ -382,10 +402,10 @@ int main(int argc, char** argv) {
         CHECK(any && mn.nearlyEquals(Vec3(0, 0, 0), 1e-9) && mx.nearlyEquals(Vec3(1, 1, 0), 1e-9));
         // Nothing to place.
         Document empty;
-        const QString p5 = QDir(assetDir("prefabs")).filePath("Empty.gsketch");
+        const QString p5 = QDir(assetDir("prefabs")).filePath("Empty.forma");
         CHECK(saveNative(empty, p5, {}));
         CHECK(!loadPrefab(p5, hand, nullptr, nullptr, &err) && err.contains("no geometry"));
-        CHECK(!loadPrefab(dir.filePath("missing.gsketch"), hand));
+        CHECK(!loadPrefab(dir.filePath("missing.forma"), hand));
         std::printf("[ ok ] prefab files\n");
 
         // Material library.
@@ -419,7 +439,7 @@ int main(int argc, char** argv) {
         CHECK(red.save(QDir(assetDir("textures")).filePath("wall.png")));
         CHECK(textureFiles({}).size() == 1);
         CHECK(textureFiles({dir.path()}).contains(files[0]));
-        qunsetenv("GNUSKETCH_DATA_DIR");
+        qunsetenv("FORMA_DATA_DIR");
         std::printf("[ ok ] material library\n");
     }
     {
@@ -504,11 +524,11 @@ int main(int argc, char** argv) {
             CHECK(e.classname == "func_door" && e.targetname == "gate" && e.targets.size() == 1 && e.targets[0].name == "next" && e.startState == "B" && e.script == "// mine\n");
             // And in a prefab.
             QTemporaryDir data;
-            qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+            qputenv("FORMA_DATA_DIR", data.path().toUtf8());
             const QString path = savePrefab(back, 0, "Gate", {}, nullptr, e);
             ModelState pre;
             CHECK(loadPrefab(path, pre) && pre.defs[0].states.size() == 2 && pre.instances[0].entity == e);
-            qunsetenv("GNUSKETCH_DATA_DIR");
+            qunsetenv("FORMA_DATA_DIR");
             std::printf("[ ok ] states and entities save/load\n");
         }
 
@@ -653,12 +673,12 @@ on("trigger", function (arg) {
         }
         // User presets.
         QTemporaryDir data;
-        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        qputenv("FORMA_DATA_DIR", data.path().toUtf8());
         const size_t n0 = scriptPresets().size();
         CHECK(!saveScriptPreset("My/Door", "func_door", "// hi\n").isEmpty());
         const auto presets = scriptPresets();
         CHECK(presets.size() == n0 + 1 && presets.back().name == "My_Door" && presets.back().classname == "func_door" && !presets.back().builtIn);
-        qunsetenv("GNUSKETCH_DATA_DIR");
+        qunsetenv("FORMA_DATA_DIR");
         std::printf("[ ok ] presets\n");
     }
     {
@@ -704,7 +724,7 @@ on("trigger", function (arg) {
         st.defs[doorDef].states = {closed, open};
 
         QTemporaryDir data;
-        qputenv("GNUSKETCH_DATA_DIR", data.path().toUtf8());
+        qputenv("FORMA_DATA_DIR", data.path().toUtf8());
         const QString path = savePrefab(st, frame, "Whole Door", {});
         ModelState pre;
         QString err, name;
@@ -715,7 +735,7 @@ on("trigger", function (arg) {
         const Id handleInPrefab = pre.defs[1].states[1].children[0].first;
         CHECK(handleInPrefab >= 0 && pre.instances[handleInPrefab].parent == 1);
         CHECK(pre.instances[1].entity.classname == "func_door" || pre.instances[2].entity.classname == "func_door");
-        qunsetenv("GNUSKETCH_DATA_DIR");
+        qunsetenv("FORMA_DATA_DIR");
 
         // Placed in a new model next to a button that sets off two things, the second later.
         Document w;

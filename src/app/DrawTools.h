@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - drawing tools: Line, Freehand, Rectangle, Circle, Polygon, Arc, 3D Curve.
+// Forma - drawing tools: Line, Freehand, Rectangle, Circle, Polygon, Arc, 3D Curve.
 #pragma once
 
 #include "Tool.h"
 
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 class LineTool : public Tool {
 public:
@@ -241,4 +241,4 @@ private:
     double pressX_ = 0, pressY_ = 0;
 };
 
-} // namespace gs
+} // namespace forma

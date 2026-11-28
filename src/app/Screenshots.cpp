@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - renders the pictures of the README (`--screenshots DIR`): a small
+// Forma - renders the pictures of the README (`--screenshots DIR`): a small
 // house built with the real tools' kernel calls, the window with its panels,
 // cinematic lighting, and frame sequences for animated GIFs (tools/readme-media.sh
 // runs it on a virtual screen and assembles the GIFs).
@@ -34,7 +34,7 @@
 #include <cstdio>
 #include <tuple>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -158,7 +158,7 @@ void place(Mesh& dst, const Mesh& src, const Mat4& xf) { appendMesh(dst, src, xf
 Mesh bentStairs() {
     Document tmp;
     QString err;
-    if (!loadNative(tmp, QStringLiteral(GNUSKETCH_SOURCE_DIR "/samples/stairs.gsketch"), nullptr, &err)) return Mesh();
+    if (!loadNative(tmp, QStringLiteral(FORMA_SOURCE_DIR "/samples/stairs.forma"), nullptr, &err)) return Mesh();
     Mesh m = flattenModel(tmp.state);
     Vec3 mn, mx;
     bool any;
@@ -839,7 +839,7 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
         fresh();
         Document tmp;
         QString err;
-        loadNative(tmp, QStringLiteral(GNUSKETCH_SOURCE_DIR "/samples/stairs.gsketch"), nullptr, &err);
+        loadNative(tmp, QStringLiteral(FORMA_SOURCE_DIR "/samples/stairs.forma"), nullptr, &err);
         const Mesh straight = flattenModel(tmp.state);
         Vec3 mn, mx;
         bool any;
@@ -1370,7 +1370,7 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
         Mesh p = pipe();
         place(doc.mesh(), p, Mat4::translation({-4, -3, 0}));
         QTemporaryDir tmp;
-        const QString path = QDir(tmp.path()).filePath(QStringLiteral("walk.gsketch"));
+        const QString path = QDir(tmp.path()).filePath(QStringLiteral("walk.forma"));
         if (saveNative(doc, path, {})) {
             GameWindow game;
             QString err;
@@ -1397,4 +1397,4 @@ int runScreenshots(MainWindow& w, const QString& dirPath) {
     return 0;
 }
 
-} // namespace gs
+} // namespace forma

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - JavaScript behind entities in Game Mode.
+// Forma - JavaScript behind entities in Game Mode.
 //
 // Every entity (func_door, func_button, func_actor) runs its own script. The
 // script has no access to files or the system. It sees:
@@ -48,7 +48,7 @@
 
 class QJSEngine;
 
-namespace gs {
+namespace forma {
 
 struct ScriptPreset {
     QString name;
@@ -132,4 +132,4 @@ private:
     std::unique_ptr<Watchdog> watchdog_;
 };
 
-} // namespace gs
+} // namespace forma

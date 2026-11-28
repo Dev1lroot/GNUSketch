@@ -17,7 +17,7 @@
 #include <cstdio>
 #include <thread>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -580,5 +580,5 @@ void EntityWorld::setTouching(int i, bool touching) {
     if (touching && !linked_[i]) call(QStringLiteral("__event"), i, QStringLiteral("touch"));
 }
 
-} // namespace gs
+} // namespace forma
 

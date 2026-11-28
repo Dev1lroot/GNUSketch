@@ -11,7 +11,7 @@
 #include <QOpenGLFramebufferObject>
 #include <QSurfaceFormat>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -204,4 +204,4 @@ bool OffscreenRenderer::compileShader(const std::string& source, QString* log) {
     return ok;
 }
 
-} // namespace gs
+} // namespace forma

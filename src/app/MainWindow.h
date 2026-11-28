@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - main application window.
+// Forma - main application window.
 #pragma once
 
 #include <functional>
@@ -24,7 +24,7 @@ class QDockWidget;
 class QProcess;
 class QTemporaryDir;
 
-namespace gs {
+namespace forma {
 
 class FormatPlugin;
 struct PrimitiveParams;
@@ -121,7 +121,7 @@ private:
     void showPlugins();
 public:
     // File > Export Selection: runs an export (a File > Export entry, or
-    // saving as .gsketch when empty) on a model holding only the selection.
+    // saving as .forma when empty) on a model holding only the selection.
     // Returns false when nothing is selected.
     bool exportSelection(const std::function<void()>& exportFn = {});
     // What the exports write: the document, or the selection while
@@ -217,4 +217,4 @@ private:
     bool pasteImages(const QMimeData* md);
 };
 
-} // namespace gs
+} // namespace forma

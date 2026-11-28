@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - primitive generator: spheres, cylinders, tori, the Platonic
+// Forma - primitive generator: spheres, cylinders, tori, the Platonic
 // solids and the like, built as closed n-gon meshes (quads stay quads,
 // pentagons stay pentagons). Curved surfaces get soft, smooth edges.
 #pragma once
@@ -8,7 +8,7 @@
 
 #include <string>
 
-namespace gs {
+namespace forma {
 
 enum class PrimitiveKind {
     Box,
@@ -51,4 +51,4 @@ PrimitiveFields primitiveFields(PrimitiveKind k);
 // pointing outwards. Returns false (and explains in `err`) for bad parameters.
 bool buildPrimitive(const PrimitiveParams& p, Mesh& out, std::string* err = nullptr);
 
-} // namespace gs
+} // namespace forma

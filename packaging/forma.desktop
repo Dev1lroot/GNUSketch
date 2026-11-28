@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Forma
+GenericName=3D Modeller
+Comment=Dev1lroot Software: Forma, 3D modelling with direct drawing and push/pull
+Exec=forma %f
+Icon=forma
+Terminal=false
+StartupWMClass=forma
+Categories=Graphics;3DGraphics;
+MimeType=application/x-forma;model/obj;

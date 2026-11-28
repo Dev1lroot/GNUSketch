@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - renders thumbnails and checks shaders without any window.
+// Forma - renders thumbnails and checks shaders without any window.
 #pragma once
 
 #include "core/Document.h"
@@ -13,7 +13,7 @@
 class QOffscreenSurface;
 class QOpenGLContext;
 
-namespace gs {
+namespace forma {
 
 class Renderer;
 
@@ -42,4 +42,4 @@ private:
     bool failed_ = false;
 };
 
-} // namespace gs
+} // namespace forma

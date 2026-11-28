@@ -8,7 +8,7 @@
 #include <cmath>
 #include <limits>
 
-namespace gs {
+namespace forma {
 
 Vec3 focusPointAt(InferenceEngine& eng, const Camera& cam, double x, double y) {
     double t = std::numeric_limits<double>::infinity();
@@ -128,4 +128,4 @@ void ZoomWindowTool::paintOverlay(QPainter& p) {
     p.drawRect(QRectF(a_, b_).normalized());
 }
 
-} // namespace gs
+} // namespace forma

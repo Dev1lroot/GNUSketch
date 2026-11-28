@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - document: geometry, materials, guides, selection and undo history.
+// Forma - document: geometry, materials, guides, selection and undo history.
 #pragma once
 
 #include "Material.h"
@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 struct Guide {
     enum Kind { Line, Point };
@@ -75,7 +75,7 @@ struct ComponentDef {
     Mesh mesh;
     std::vector<AnimState> states;
     std::string prefab; // the prefab it was placed from, for showing that
-    // What a file format keeps with it that GNUSketch has no place for (JSON text,
+    // What a file format keeps with it that Forma has no place for (JSON text,
     // saved with the model): an Open Block Model group's tags and cubes, for one.
     std::string extra;
 };
@@ -122,7 +122,7 @@ struct ModelState {
     std::vector<Instance> instances;
     std::vector<SceneObject> objects;
     Timeline timeline; // the Animator's layers and keyframes
-    // What a file format (a plugin) keeps with the whole model that GNUSketch has
+    // What a file format (a plugin) keeps with the whole model that Forma has
     // no place for: JSON text, saved with it (see ComponentDef::extra).
     std::string extra;
     // Instance open for editing (kNone = top level). While open, its
@@ -239,4 +239,4 @@ private:
     static constexpr size_t kMaxUndo = 200;
 };
 
-} // namespace gs
+} // namespace forma

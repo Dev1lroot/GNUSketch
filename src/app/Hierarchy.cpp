@@ -23,7 +23,7 @@
 #include <functional>
 #include <map>
 
-namespace gs {
+namespace forma {
 
 namespace {
 enum Role { KindRole = Qt::UserRole, IdRole, PathRole, KeyRole };
@@ -410,4 +410,4 @@ bool HierarchyPanel::eventFilter(QObject* o, QEvent* e) {
     return QWidget::eventFilter(o, e);
 }
 
-} // namespace gs
+} // namespace forma

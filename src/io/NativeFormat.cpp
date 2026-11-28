@@ -14,7 +14,7 @@
 #include <map>
 #include <set>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -322,7 +322,7 @@ static std::string extraFromJson(const QJsonValue& v) {
 QByteArray modelToJson(const ModelState& stateIn, const QJsonObject& view) {
     const ModelState state = closedState(stateIn);
     QJsonObject root = meshToJson(state.mesh);
-    root["format"] = "GNUSketch";
+    root["format"] = "Forma";
     root["version"] = 1;
     root["units"] = "meter";
     root["up"] = "Z";
@@ -528,8 +528,9 @@ bool modelFromJson(const QByteArray& json, ModelState& st, QJsonObject* view, QS
         return false;
     }
     QJsonObject root = jd.object();
-    if (root["format"].toString() != "GNUSketch") {
-        if (error) *error = QStringLiteral("Not a GNUSketch model");
+    // "GNUSketch": models saved before the rename to Forma (.gsketch)
+    if (root["format"].toString() != "Forma" && root["format"].toString() != "GNUSketch") {
+        if (error) *error = QStringLiteral("Not a Forma model");
         return false;
     }
     st = ModelState();
@@ -769,4 +770,4 @@ void styleFromJson(const QJsonObject& st, RenderStyle& s) {
     }
 }
 
-} // namespace gs
+} // namespace forma

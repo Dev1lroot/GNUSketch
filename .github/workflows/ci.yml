@@ -1,6 +1,6 @@
 name: CI
 
-# Builds and tests GNUSketch on Linux and Windows on every push and pull request.
+# Builds and tests Forma on Linux and Windows on every push and pull request.
 # A tag v* also packages both (AppImage, Windows zip) and publishes a release.
 on:
   push:
@@ -49,7 +49,7 @@ jobs:
         env:
           QMAKE: /usr/lib/qt6/bin/qmake
         run: |
-          VERSION=$(sed -n 's/^project(GNUSketch VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          VERSION=$(sed -n 's/^project(Forma VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           case "$GITHUB_REF" in refs/tags/v*) VERSION=${GITHUB_REF_NAME#v} ;; esac
           tools/build-appimage.sh build "$VERSION"
 
@@ -57,7 +57,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         with:
           name: linux
-          path: build/GNUSketch-*.AppImage
+          path: build/Forma-*.AppImage
 
   windows:
     runs-on: windows-latest
@@ -107,31 +107,31 @@ jobs:
           pacman -Ql mingw-w64-ucrt-x86_64-mesa | grep -i '\.dll$' || true
           cp /ucrt64/bin/opengl32.dll build/opengl32sw.dll
           for d in /ucrt64/bin/libgallium_wgl.dll /ucrt64/bin/libglapi.dll; do [ -f "$d" ] && cp "$d" build/; done
-          ./build/gnusketch.exe --gl-probe
-          ./build/gnusketch.exe --selftest
+          ./build/forma.exe --gl-probe
+          ./build/forma.exe --selftest
           rm -f build/opengl32sw.dll build/libgallium_wgl.dll build/libglapi.dll
 
       - name: Package
         run: |
-          VERSION=$(sed -n 's/^project(GNUSketch VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          VERSION=$(sed -n 's/^project(Forma VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           [[ "$GITHUB_REF_NAME" == v* ]] && VERSION=${GITHUB_REF_NAME#v}
-          DIST=dist/GNUSketch-${VERSION}-windows-x64
+          DIST=dist/Forma-${VERSION}-windows-x64
           cmake --install build --prefix "$DIST"
-          windeployqt6 --release --no-translations --compiler-runtime "$DIST/bin/gnusketch.exe" || \
-            windeployqt-qt6 --release --no-translations --compiler-runtime "$DIST/bin/gnusketch.exe"
+          windeployqt6 --release --no-translations --compiler-runtime "$DIST/bin/forma.exe" || \
+            windeployqt-qt6 --release --no-translations --compiler-runtime "$DIST/bin/forma.exe"
           # Every MinGW/MSYS2 DLL the program and its libraries need, until nothing new turns up.
           for pass in 1 2 3 4 5; do
             find "$DIST" -iname '*.exe' -o -iname '*.dll' | while read f; do
               ldd "$f" 2>/dev/null | awk '/\/ucrt64\// {print $3}'
             done | sort -u | while read d; do cp -n "$d" "$DIST/bin/" 2>/dev/null || true; done
           done
-          cp README.md DOCUMENTATION.md ANIMATION.md LICENSE packaging/gnusketch.ico "$DIST/"
-          (cd dist && zip -qr "GNUSketch-${VERSION}-windows-x64.zip" "GNUSketch-${VERSION}-windows-x64")
-          # The installer (.exe): Start menu, desktop shortcut, .gsketch files, uninstaller.
+          cp README.md DOCUMENTATION.md ANIMATION.md LICENSE packaging/forma.ico "$DIST/"
+          (cd dist && zip -qr "Forma-${VERSION}-windows-x64.zip" "Forma-${VERSION}-windows-x64")
+          # The installer (.exe): Start menu, desktop shortcut, .forma files, uninstaller.
           makensis -V2 -DVERSION="$VERSION" -DSRCDIR="$(cygpath -w "$PWD/$DIST")" \
-            -DOUTFILE="$(cygpath -w "$PWD/dist/GNUSketch-${VERSION}-windows-x64-setup.exe")" packaging/windows/installer.nsi
+            -DOUTFILE="$(cygpath -w "$PWD/dist/Forma-${VERSION}-windows-x64-setup.exe")" packaging/windows/installer.nsi
           ls -la dist
-          "$DIST/bin/gnusketch.exe" --version
+          "$DIST/bin/forma.exe" --version
 
       - uses: actions/upload-artifact@v4
         with:
@@ -154,5 +154,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" artifacts/*/* \
-            --title "GNUSketch ${GITHUB_REF_NAME#v}" \
+            --title "Forma ${GITHUB_REF_NAME#v}" \
             --notes-file packaging/release-notes.md --prerelease

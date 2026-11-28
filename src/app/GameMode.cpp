@@ -18,7 +18,7 @@
 
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 // ---------------------------------------------------------------------------
 // Placing the character
@@ -92,7 +92,7 @@ void PlaceCharacterTool::buildPreview(Preview& pv) {
 // ---------------------------------------------------------------------------
 
 GameWindow::GameWindow(QWidget* parent) : QOpenGLWidget(parent), walker_(world_) {
-    setWindowTitle(QStringLiteral("GNUSketch - Game Mode"));
+    setWindowTitle(QStringLiteral("Forma - Game Mode"));
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     resize(1280, 720);
@@ -379,4 +379,4 @@ int runGameWindow(const QString& path, const Vec3& feet, double yaw) {
     return QApplication::exec();
 }
 
-} // namespace gs
+} // namespace forma

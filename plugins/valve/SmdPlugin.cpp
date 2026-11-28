@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch plugin: Valve studio model (.smd + .qc) export (ValveFormat.h).
+// Forma plugin: Valve studio model (.smd + .qc) export (ValveFormat.h).
 #include "ValveFormat.h"
 #include "plugin/FormatPlugin.h"
 
@@ -13,10 +13,10 @@
 #include <QObject>
 #include <QSettings>
 
-class SmdPlugin : public QObject, public gs::FormatPlugin {
+class SmdPlugin : public QObject, public forma::FormatPlugin {
     Q_OBJECT
-    Q_PLUGIN_METADATA(IID GNUSKETCH_FORMAT_PLUGIN_IID FILE "smd.json")
-    Q_INTERFACES(gs::FormatPlugin)
+    Q_PLUGIN_METADATA(IID FORMA_FORMAT_PLUGIN_IID FILE "smd.json")
+    Q_INTERFACES(forma::FormatPlugin)
 
 public:
     QString formatName() const override { return QStringLiteral("Valve Studio Model"); }
@@ -25,13 +25,13 @@ public:
         return QStringLiteral("Source engine props: the model as a reference SMD (inches, Z up) and a .qc to compile it with studiomdl.");
     }
     bool canExport() const override { return true; }
-    bool exportFile(const gs::Document& doc, const QString& path, QStringList* messages) override {
-        gs::valve::SmdOptions o;
+    bool exportFile(const forma::Document& doc, const QString& path, QStringList* messages) override {
+        forma::valve::SmdOptions o;
         QSettings s;
         o.writeQc = s.value("valve/writeQc", o.writeQc).toBool();
         o.staticProp = s.value("valve/staticProp", o.staticProp).toBool();
         o.surfaceProp = s.value("valve/surfaceProp", QString::fromStdString(o.surfaceProp)).toString().toStdString();
-        if (qobject_cast<QApplication*>(QCoreApplication::instance()) && !qEnvironmentVariableIsSet("GNUSKETCH_NO_DIALOGS")) {
+        if (qobject_cast<QApplication*>(QCoreApplication::instance()) && !qEnvironmentVariableIsSet("FORMA_NO_DIALOGS")) {
             QDialog dlg(QApplication::activeWindow());
             dlg.setWindowTitle(QStringLiteral("Export Valve Studio Model"));
             auto* form = new QFormLayout(&dlg);
@@ -59,7 +59,7 @@ public:
             s.setValue("valve/staticProp", o.staticProp);
             s.setValue("valve/surfaceProp", surf->text().trimmed());
         }
-        return gs::valve::writeSmd(doc, path, o, messages);
+        return forma::valve::writeSmd(doc, path, o, messages);
     }
 };
 

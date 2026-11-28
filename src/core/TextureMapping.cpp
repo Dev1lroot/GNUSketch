@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "TextureMapping.h"
 
-namespace gs {
+namespace forma {
 
 UvAffine UvAffine::inverse() const {
     const double D = det();
@@ -130,4 +130,4 @@ double PlaneTexMap::angleOf(const Vec2& c, const Vec3& p) const {
 double PlaneTexMap::lengthU() const { return (pointAt(Vec2(1, 0)) - pointAt(Vec2(0, 0))).length(); }
 double PlaneTexMap::lengthV() const { return (pointAt(Vec2(0, 1)) - pointAt(Vec2(0, 0))).length(); }
 
-} // namespace gs
+} // namespace forma

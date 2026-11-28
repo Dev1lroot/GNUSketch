@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - entry point.
+// Forma - entry point.
 #include "app/GameMode.h"
 #include "app/MainWindow.h"
 #include "app/SelfTest.h"
@@ -8,9 +8,51 @@
 #include <QApplication>
 #include <QIcon>
 #include <QCommandLineParser>
+#include <QDir>
+#include <QDirIterator>
+#include <QFile>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QSurfaceFormat>
 #include <QTimer>
 
+namespace {
+
+// Copies the files under `from` that `to` does not have yet.
+void copyMissing(const QString& from, const QString& to) {
+    const QDir src(from);
+    if (!src.exists()) return;
+    QDirIterator it(from, QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString file = it.next();
+        const QString dest = QDir(to).filePath(src.relativeFilePath(file));
+        if (QFile::exists(dest)) continue;
+        QDir().mkpath(QFileInfo(dest).absolutePath());
+        QFile::copy(file, dest);
+    }
+}
+
+// Carries over what GNUSketch (the name before Forma) kept: settings, and the
+// user's prefabs, materials, textures, scripts and plugins. Runs once; the old
+// files stay where they are.
+void migrateFromGNUSketch() {
+    QSettings now;
+    if (now.value(QStringLiteral("migratedFromGNUSketch")).toBool()) return;
+    QSettings old(QStringLiteral("GNUSketch"), QStringLiteral("GNUSketch"));
+    if (now.allKeys().isEmpty())
+        for (const QString& k : old.allKeys()) now.setValue(k, old.value(k));
+    if (!qEnvironmentVariableIsSet("FORMA_DATA_DIR")) {
+        const QDir data(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
+        const QString oldRoot = data.filePath(QStringLiteral("GNUSketch"));
+        for (const char* kind : {"prefabs", "materials", "textures", "scripts"})
+            copyMissing(QDir(oldRoot).filePath(QLatin1String(kind)), data.filePath(QStringLiteral("Forma/") + QLatin1String(kind)));
+        copyMissing(QDir(oldRoot).filePath(QStringLiteral("GNUSketch/plugins")),
+                    QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/plugins"));
+    }
+    now.setValue(QStringLiteral("migratedFromGNUSketch"), true);
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     QSurfaceFormat fmt;
@@ -25,14 +67,16 @@ int main(int argc, char** argv) {
 
 
     QApplication app(argc, argv);
-    QApplication::setApplicationName("GNUSketch");
-    QApplication::setOrganizationName("GNUSketch");
-    QApplication::setApplicationVersion(QStringLiteral(GNUSKETCH_VERSION));
-    gs::Theme::applyStored();
-    QApplication::setWindowIcon(QIcon(QStringLiteral(":/gnusketch.svg")));
+    QApplication::setApplicationName("Forma");
+    QApplication::setOrganizationName("Dev1lroot Software");
+    QApplication::setApplicationVersion(QStringLiteral(FORMA_VERSION));
+    QApplication::setDesktopFileName(QStringLiteral("forma"));
+    migrateFromGNUSketch();
+    forma::Theme::applyStored();
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/forma.png")));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription("Native 3D sketching tool");
+    parser.setApplicationDescription("Dev1lroot Software: Forma, a native 3D sketching tool");
     parser.addHelpOption();
     parser.addVersionOption();
     QCommandLineOption selfTest("selftest", "Initialise the renderer, draw a few frames and exit (for CI; use with QT_QPA_PLATFORM=offscreen).");
@@ -51,31 +95,31 @@ int main(int argc, char** argv) {
     parser.addOption(spawn);
     QCommandLineOption yaw("yaw", "Game Mode: direction the character looks (radians).", "angle", "0");
     parser.addOption(yaw);
-    parser.addPositionalArgument("file", "Model to open (.gsketch or .obj)");
+    parser.addPositionalArgument("file", "Model to open (.forma or .obj)");
     parser.process(app);
 
-    if (parser.isSet(glProbe)) return gs::runGlProbe();
-    if (parser.isSet(bench)) return gs::runRenderBench(parser.value(bench), 120);
+    if (parser.isSet(glProbe)) return forma::runGlProbe();
+    if (parser.isSet(bench)) return forma::runRenderBench(parser.value(bench), 120);
 
     if (parser.isSet(game)) {
         const QStringList p = parser.value(spawn).split(',');
-        const gs::Vec3 feet = p.size() == 3 ? gs::Vec3(p[0].toDouble(), p[1].toDouble(), p[2].toDouble()) : gs::Vec3();
-        return gs::runGameWindow(parser.value(game), feet, parser.value(yaw).toDouble());
+        const forma::Vec3 feet = p.size() == 3 ? forma::Vec3(p[0].toDouble(), p[1].toDouble(), p[2].toDouble()) : forma::Vec3();
+        return forma::runGameWindow(parser.value(game), feet, parser.value(yaw).toDouble());
     }
 
-    gs::MainWindow w;
+    forma::MainWindow w;
     if (!parser.positionalArguments().isEmpty()) w.openFile(parser.positionalArguments().first());
     w.show();
 
     if (parser.isSet(shots)) {
         const QString dir = parser.value(shots);
-        QTimer::singleShot(300, &w, [&w, dir] { QApplication::exit(gs::runScreenshots(w, dir)); });
+        QTimer::singleShot(300, &w, [&w, dir] { QApplication::exit(forma::runScreenshots(w, dir)); });
     }
     if (parser.isSet(ibench)) {
-        QTimer::singleShot(300, &w, [&w] { QApplication::exit(gs::runInteractBench(w)); });
+        QTimer::singleShot(300, &w, [&w] { QApplication::exit(forma::runInteractBench(w)); });
     }
     if (parser.isSet(selfTest)) {
-        QTimer::singleShot(300, &w, [&w] { QApplication::exit(gs::runSelfTest(w)); });
+        QTimer::singleShot(300, &w, [&w] { QApplication::exit(forma::runSelfTest(w)); });
     }
     return app.exec();
 }

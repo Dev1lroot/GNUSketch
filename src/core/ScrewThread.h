@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Screw Thread: a helical thread carved into, or raised out of,
+// Forma - Screw Thread: a helical thread carved into, or raised out of,
 // a round surface.
 //
 // Works on the side of a cylinder: a rod or a beam (thread on the outside, a
@@ -20,7 +20,7 @@
 #include <set>
 #include <string>
 
-namespace gs {
+namespace forma {
 
 struct ScrewThreadParams {
     enum Profile { V, Metric, Square, Trapezoid, Buttress, Rounded };
@@ -46,4 +46,4 @@ struct ScrewThreadResult {
 bool screwThread(Mesh& m, const std::set<Id>& faces, const ScrewThreadParams& p, ScrewThreadResult* out = nullptr,
                  std::string* error = nullptr);
 
-} // namespace gs
+} // namespace forma

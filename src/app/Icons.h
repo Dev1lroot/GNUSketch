@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - original vector icon set (inline SVG) and tool cursors.
+// Forma - original vector icon set (inline SVG) and tool cursors.
 #pragma once
 
 #include "Tool.h"
@@ -8,7 +8,7 @@
 #include <QIcon>
 #include <QString>
 
-namespace gs {
+namespace forma {
 
 namespace Icons {
 
@@ -19,4 +19,4 @@ QString toolIconName(ToolId id);
 
 } // namespace Icons
 
-} // namespace gs
+} // namespace forma

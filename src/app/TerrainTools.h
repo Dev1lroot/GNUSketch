@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Terraform tools: Mountain, Pit and Flatten sculpting brushes.
+// Forma - Terraform tools: Mountain, Pit and Flatten sculpting brushes.
 #pragma once
 
 #include "Tool.h"
@@ -13,7 +13,7 @@
 
 class QTimer;
 
-namespace gs {
+namespace forma {
 
 // Brush settings shared by the three Terraform tools (edited in the tray,
 // remembered between sessions).
@@ -75,4 +75,4 @@ private:
     bool vertical_ = false; // Shift: brush along the vertical axis only
 };
 
-} // namespace gs
+} // namespace forma

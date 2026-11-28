@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - small linear algebra helpers (double precision, Z-up world).
+// Forma - small linear algebra helpers (double precision, Z-up world).
 #pragma once
 
 #include <algorithm>
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 // Global geometric tolerance in model units (meters). Two points closer than
 // this are considered coincident; points closer than this to a plane lie on it.
@@ -325,4 +325,4 @@ inline Vec3 transformCovector(const Mat4& m, const Vec3& c) {
             inv.at(0, 2) * c.x + inv.at(1, 2) * c.y + inv.at(2, 2) * c.z};
 }
 
-} // namespace gs
+} // namespace forma

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Game Mode physics: a character walking on the model.
+// Forma - Game Mode physics: a character walking on the model.
 //
 // The character is an upright capsule. It collides with every visible face
 // from both sides, climbs low steps, walks up slopes that are not too steep and
@@ -11,7 +11,7 @@
 
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 // All triangles of a model in world coordinates, with a grid for fast lookup.
 class CollisionWorld {
@@ -143,4 +143,4 @@ private:
     double slopeCos_ = 0;
 };
 
-} // namespace gs
+} // namespace forma

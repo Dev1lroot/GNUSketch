@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - 3D printing exports that keep the model's length unit:
+// Forma - 3D printing exports that keep the model's length unit:
 //   3MF  (unit declared in the file, colours as base materials)
 //   AMF  (unit declared in the file, colours per volume)
 //   STL  binary / ASCII (unitless format: written in the chosen unit, noted in the header)
@@ -15,7 +15,7 @@
 #include <array>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 enum class PrintFormat { ThreeMF, Amf, StlBinary, StlAscii, Ply, Off };
 
@@ -43,4 +43,4 @@ bool exportPrint(const Document& doc, const QString& path, PrintFormat fmt, Leng
 // Minimal ZIP writer (deflate), used for 3MF containers.
 QByteArray makeZip(const std::vector<std::pair<QString, QByteArray>>& files);
 
-} // namespace gs
+} // namespace forma

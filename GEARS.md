@@ -1,6 +1,6 @@
-# Gears in GNUSketch
+# Gears in Forma
 
-GNUSketch makes real, standard gears that mesh with each other: involute spur gears,
+Forma makes real, standard gears that mesh with each other: involute spur gears,
 gear racks and bevel gears. You can make them without knowing gear engineering:
 choose a tooth size and how big the gear should be, and the program works out the
 rest and places gears already meshing. The engineering settings (module, number of
@@ -20,7 +20,7 @@ teeth, pressure angle, backlash) are one click away when you need them.
 * [Tips for 3D printing](#tips-for-3d-printing)
 * [Limits](#limits)
 
-The animations below were rendered by GNUSketch itself (`GS_SHOTS=gears
+The animations below were rendered by Forma itself (`GS_SHOTS=gears
 tools/readme-media.sh`), with every gear turning at its true ratio.
 
 ## The one rule: same tooth size
@@ -33,7 +33,7 @@ So every module 1 gear meshes with every other module 1 gear and rack, whatever
 their size. The tooth flanks must also lean the same way (the **pressure angle**,
 almost always 20°).
 
-That is all GNUSketch needs from you. Pick a module once for a project (1 mm is
+That is all Forma needs from you. Pick a module once for a project (1 mm is
 a good size for small 3D-printed mechanisms, 1.5–2 mm for sturdier ones), and only
 change sizes.
 
@@ -166,7 +166,7 @@ How to make it:
 
 ![Sizing by eye](docs/media/gears_fit.gif)
 
-With **Choose by: Size**, you type roughly how big a gear should be. GNUSketch
+With **Choose by: Size**, you type roughly how big a gear should be. Forma
 rounds it to the nearest whole number of teeth of your tooth size: a gear can't
 have 20.4 teeth. Because the tooth size stays the same, the gear meshes with the
 others at every size. The dialog shows the size you actually get. In the animation
@@ -229,8 +229,8 @@ number of pieces per involute flank.
   tooth of a virtual spur gear of z / cos δ teeth. Every tooth line runs to the
   cone apex, so teeth scale evenly from the large end to the small end. Module and
   diameters are given at the large end.
-* Each gear keeps its parameters with its component (`gnusketchGear` in the
-  component's data in the .gsketch file), so **Fit to** works on saved models.
+* Each gear keeps its parameters with its component (`formaGear` in the
+  component's data in the .forma file), so **Fit to** works on saved models.
   Spur gears and racks from 0.3.2 are recognised from their names, with a 20°
   pressure angle assumed.
 

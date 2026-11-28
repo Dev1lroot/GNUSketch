@@ -4,7 +4,7 @@
 #include <map>
 #include <optional>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -540,4 +540,4 @@ bool roundCorners(Mesh& m, const std::set<Id>& edgeSet, double R, int N, std::st
     return true;
 }
 
-} // namespace gs
+} // namespace forma

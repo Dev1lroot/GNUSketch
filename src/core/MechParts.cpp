@@ -7,7 +7,7 @@
 #include <cmath>
 #include <cstdio>
 
-namespace gs {
+namespace forma {
 
 // clang-format off
 const std::vector<MetricSize>& metricSizes() {
@@ -719,4 +719,4 @@ bool gearMeshPlacement(const GearParams& a, const GearParams& b, Mat4& out, std:
     return fail(err, "Two racks do not mesh with each other: one of them must be a spur gear.");
 }
 
-} // namespace gs
+} // namespace forma

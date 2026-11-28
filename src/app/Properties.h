@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - the Properties panel: the settings of the equipped tool (the
+// Forma - the Properties panel: the settings of the equipped tool (the
 // terraform brushes, the light tools) or, for the other tools, what is
 // selected: a light or camera to edit, or the faces, edges and components.
 #pragma once
@@ -17,7 +17,7 @@ class QPushButton;
 class QDoubleSpinBox;
 class QSlider;
 
-namespace gs {
+namespace forma {
 
 class EntityInfoPanel;
 class PlacementSettings;
@@ -121,4 +121,4 @@ private:
     QString showing_;
 };
 
-} // namespace gs
+} // namespace forma

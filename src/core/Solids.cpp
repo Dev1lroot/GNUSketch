@@ -12,7 +12,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -1388,4 +1388,4 @@ bool knifeOperation(ModelState& st, Id knifeInstance, Id knifeFace, Id target, S
     return true;
 }
 
-} // namespace gs
+} // namespace forma

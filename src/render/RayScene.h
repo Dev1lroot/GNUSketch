@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - the scene for ray traced (cinematic) shadows: bounding volume
+// Forma - the scene for ray traced (cinematic) shadows: bounding volume
 // hierarchies over the model's triangles, packed into float arrays that the
 // shaders read from buffer textures (Renderer: GS_RT_GLSL).
 //
@@ -24,7 +24,7 @@
 #include <map>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 class RayScene {
 public:
@@ -79,4 +79,4 @@ private:
     int instCount_ = 0;
 };
 
-} // namespace gs
+} // namespace forma

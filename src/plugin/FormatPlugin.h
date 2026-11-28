@@ -1,35 +1,35 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - file format plugins.
+// Forma - file format plugins.
 //
-// A plugin is a shared library (a Qt plugin) that teaches GNUSketch another file
+// A plugin is a shared library (a Qt plugin) that teaches Forma another file
 // format: opening it (File > Open, drag and drop, the command line), importing it
 // into the model (File > Import) and exporting the model to it (File > Export).
 //
 // Writing one:
 //
-//   class MyFormat : public QObject, public gs::FormatPlugin {
+//   class MyFormat : public QObject, public forma::FormatPlugin {
 //       Q_OBJECT
-//       Q_PLUGIN_METADATA(IID GNUSKETCH_FORMAT_PLUGIN_IID FILE "myformat.json")
-//       Q_INTERFACES(gs::FormatPlugin)
+//       Q_PLUGIN_METADATA(IID FORMA_FORMAT_PLUGIN_IID FILE "myformat.json")
+//       Q_INTERFACES(forma::FormatPlugin)
 //   public:
 //       QString formatName() const override { return "My Format"; }
 //       QStringList extensions() const override { return {"myf"}; }
 //       bool canImport() const override { return true; }
-//       bool importFile(gs::Document& doc, const QString& path, QStringList* messages) override;
+//       bool importFile(forma::Document& doc, const QString& path, QStringList* messages) override;
 //   };
 //
-// link it against gs_io (which brings gs_core and Qt), build it as a MODULE
-// library and put the .so in one of the folders GNUSketch looks in (Help >
+// link it against forma_io (which brings forma_core and Qt), build it as a MODULE
+// library and put the .so in one of the folders Forma looks in (Help >
 // Plugins lists them, and what was found there):
 //
-//   * GNUSKETCH_PLUGIN_PATH (folders separated by ':')
-//   * ~/.local/share/GNUSketch/GNUSketch/plugins (the user's own)
-//   * <prefix>/lib/gnusketch/plugins (installed with GNUSketch)
-//   * plugins/ beside the gnusketch executable (a build tree)
+//   * FORMA_PLUGIN_PATH (folders separated by ':')
+//   * ~/.local/share/Dev1lroot Software/Forma/plugins (the user's own)
+//   * <prefix>/lib/forma/plugins (installed with Forma)
+//   * plugins/ beside the forma executable (a build tree)
 //
 // The host opens an undo step around an import ("Import <format>"), so a plugin
 // only adds to the document; for File > Open it imports into an empty one.
-// Geometry is in meters, Z up. What a format keeps that GNUSketch has no place for
+// Geometry is in meters, Z up. What a format keeps that Forma has no place for
 // can go in ModelState::extra and ComponentDef::extra (JSON text, saved with the
 // model), so that a model opened and exported again loses nothing.
 #pragma once
@@ -42,7 +42,7 @@
 
 class QWidget;
 
-namespace gs {
+namespace forma {
 
 class FormatPlugin {
 public:
@@ -90,7 +90,7 @@ public:
     }
 };
 
-} // namespace gs
+} // namespace forma
 
-#define GNUSKETCH_FORMAT_PLUGIN_IID "org.gnusketch.FormatPlugin/2"
-Q_DECLARE_INTERFACE(gs::FormatPlugin, GNUSKETCH_FORMAT_PLUGIN_IID)
+#define FORMA_FORMAT_PLUGIN_IID "software.dev1lroot.Forma.FormatPlugin/2"
+Q_DECLARE_INTERFACE(forma::FormatPlugin, FORMA_FORMAT_PLUGIN_IID)

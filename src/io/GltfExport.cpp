@@ -14,7 +14,7 @@
 #include <cstring>
 #include <map>
 
-namespace gs {
+namespace forma {
 
 FaceTriangles triangulateFace(const Mesh& m, Id f, bool frontSide, const Material* mat) {
     FaceTriangles r;
@@ -228,7 +228,7 @@ bool exportGltf(const Document& doc, const QString& path, QString* error) {
     QJsonObject root;
     QJsonObject asset;
     asset["version"] = "2.0";
-    asset["generator"] = "GNUSketch";
+    asset["generator"] = "Forma";
     root["asset"] = asset;
     root["scene"] = 0;
     QJsonObject scene;
@@ -359,4 +359,4 @@ bool exportGltf(const Document& doc, const QString& path, QString* error) {
     return true;
 }
 
-} // namespace gs
+} // namespace forma

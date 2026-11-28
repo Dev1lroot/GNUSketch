@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - the Open Block Model plugin's windows: a picture not found (Missing
+// Forma - the Open Block Model plugin's windows: a picture not found (Missing
 // Texture, with "Fix it": pick the file), and the OBM tab of a component's
 // Properties (its group's tags, its cubes' tags, the model's, its pictures).
 #pragma once
@@ -17,7 +17,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QTableWidget;
 
-namespace gs::obm {
+namespace forma::obm {
 
 // "Fix it": the picture for a material whose picture wasn't found, picked from the
 // files. Picked from where it would be in a textures folder ("…/textures/block/
@@ -50,4 +50,4 @@ private:
     QTableWidget* pictures_;
 };
 
-} // namespace gs::obm
+} // namespace forma::obm

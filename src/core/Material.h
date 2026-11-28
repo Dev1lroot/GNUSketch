@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - materials: colour, texture image (stored as encoded bytes), PBR maps
+// Forma - materials: colour, texture image (stored as encoded bytes), PBR maps
 // and an optional custom surface shader.
 #pragma once
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 struct Color {
     float r = 1, g = 1, b = 1, a = 1;
@@ -130,4 +130,4 @@ inline Color defaultBackColor() { return Color::rgb8(208, 64, 64); }
 // The grey-blue back colour of files saved before (moved to the red one on load).
 inline Color legacyBackColor() { return Color::rgb8(164, 178, 187); }
 
-} // namespace gs
+} // namespace forma

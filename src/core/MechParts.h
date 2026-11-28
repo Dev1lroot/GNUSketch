@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - standard engineering parts: ISO metric fasteners (screws, bolts,
+// Forma - standard engineering parts: ISO metric fasteners (screws, bolts,
 // threaded rods, nuts, washers) and involute gears (spur gears, racks).
 //
 // The sizes come from the standards' nominal dimensions (tables below), not
@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 // One ISO metric thread size and the parts made for it. Millimetres.
 struct MetricSize {
@@ -140,4 +140,4 @@ double gearCentreDistance(double module, int teethA, int teethB);
 // bevel gear with anything but the mate it was made for).
 bool gearMeshPlacement(const GearParams& a, const GearParams& b, Mat4& out, std::string* err = nullptr);
 
-} // namespace gs
+} // namespace forma

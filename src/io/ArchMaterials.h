@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - ready-made architectural materials with generated PBR maps.
+// Forma - ready-made architectural materials with generated PBR maps.
 #pragma once
 
 #include "core/Material.h"
@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 int architecturalMaterialCount();
 std::string architecturalMaterialName(int index);
@@ -17,4 +17,4 @@ const Material& architecturalMaterial(int index);
 // Starts generating them all in the background.
 void prepareArchitecturalMaterials();
 
-} // namespace gs
+} // namespace forma

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Valve Source engine exports: Hammer maps (.vmf) and studio
+// Forma - Valve Source engine exports: Hammer maps (.vmf) and studio
 // models (.smd, with a .qc to compile them).
 //
 // The behaviour follows Valve's SketchUp Source Tools (MIT, 2008-2010: vmf_export,
-// smd_export, "Hammer Time"), written anew for GNUSketch's model; no SketchUp
+// smd_export, "Hammer Time"), written anew for Forma's model; no SketchUp
 // code or formats are involved:
 //  * every closed, convex piece of geometry (in a component or loose) becomes a
 //    brush, its faces brush sides with their materials; a component with several
@@ -11,7 +11,7 @@
 //  * components named after an entity class (info_player_start, light,
 //    npc_zombie, weapon_ar2 ... also "ENT.npc_zombie" / "ENT_light") become
 //    point entities where they stand, turned as they are;
-//  * GNUSketch's lights become light, light_spot and light_environment, the sun
+//  * Forma's lights become light, light_spot and light_environment, the sun
 //    a light_environment;
 //  * material names map to Source materials: "tools-toolsnodraw" or
 //    "tools/toolsnodraw" is tools/toolsnodraw; unnamed faces get dev/graygrid;
@@ -25,7 +25,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace gs::valve {
+namespace forma::valve {
 
 constexpr double kUnitsPerMeter = 1.0 / 0.0254;
 
@@ -53,4 +53,4 @@ QByteArray smdText(const Document& doc, QStringList* messages);
 QByteArray qcText(const QString& smdFileName, const SmdOptions& o);
 bool writeSmd(const Document& doc, const QString& path, const SmdOptions& o, QStringList* messages);
 
-} // namespace gs::valve
+} // namespace forma::valve

@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -368,4 +368,4 @@ bool buildPrimitive(const PrimitiveParams& p, Mesh& out, std::string* err) {
     return true;
 }
 
-} // namespace gs
+} // namespace forma

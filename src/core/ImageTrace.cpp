@@ -3,7 +3,7 @@
 
 #include <unordered_map>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -312,4 +312,4 @@ bool traceImageOnFace(Mesh& m, Id f, const TexMap& map, const ScalarImage& img, 
     return true;
 }
 
-} // namespace gs
+} // namespace forma

@@ -6,7 +6,7 @@
 #
 #   tools/build-appimage.sh [build-dir] [version]
 #
-# The AppImage lands in the build dir: <build-dir>/GNUSketch-<version>-x86_64.AppImage
+# The AppImage lands in the build dir: <build-dir>/Forma-<version>-x86_64.AppImage
 # (version from CMakeLists.txt unless given). Needs xvfb-run, and kwin_wayland
 # or weston for the Wayland check; linuxdeploy is downloaded once into the
 # build dir.
@@ -14,9 +14,9 @@ set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$(cd "${1:-$SRC/build}" && pwd)"
-VERSION="${2:-$(sed -n 's/^project(GNUSketch VERSION \([0-9.]*\).*/\1/p' "$SRC/CMakeLists.txt")}"
+VERSION="${2:-$(sed -n 's/^project(Forma VERSION \([0-9.]*\).*/\1/p' "$SRC/CMakeLists.txt")}"
 export VERSION
-OUT="$BUILD/GNUSketch-$VERSION-x86_64.AppImage"
+OUT="$BUILD/Forma-$VERSION-x86_64.AppImage"
 LIBDIR="$(sed -n 's/^CMAKE_INSTALL_LIBDIR:PATH=//p' "$BUILD/CMakeCache.txt")"
 LIBDIR="${LIBDIR:-lib}"
 
@@ -40,7 +40,7 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 APPDIR="$BUILD/AppDir"
 rm -rf "$APPDIR" "$OUT"
 DESTDIR="$APPDIR" cmake --install "$BUILD" --prefix /usr >/dev/null
-cp "$SRC/packaging/gnusketch.png" "$APPDIR/gnusketch.png"
+cp "$SRC/packaging/forma.png" "$APPDIR/forma.png"
 
 export QMAKE
 export EXTRA_QT_MODULES=svg
@@ -48,7 +48,7 @@ export EXTRA_PLATFORM_PLUGINS=libqwayland.so
 export LD_LIBRARY_PATH="$APPDIR/usr/$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 cd "$BUILD"
 linuxdeploy-x86_64.AppImage --appdir "$APPDIR" \
-    --desktop-file "$SRC/packaging/gnusketch.desktop" --icon-file "$SRC/packaging/gnusketch.svg" \
+    --desktop-file "$SRC/packaging/forma.desktop" --icon-file "$SRC/packaging/forma.png" \
     --plugin qt
 
 # The Qt plugin leaves out Wayland's client buffer integrations, without which
@@ -64,7 +64,7 @@ done
 [ -f "$APPDIR/usr/plugins/$GFX/libqt-plugin-wayland-egl.so" ] || { echo "no wayland-egl plugin in $QT_PLUGINS/$GFX" >&2; exit 1; }
 
 linuxdeploy-x86_64.AppImage --appdir "$APPDIR" --deploy-deps-only "$APPDIR/usr/plugins/$GFX" --output appimage
-[ -f "$OUT" ] || mv "$BUILD"/GNUSketch-*x86_64.AppImage "$OUT"
+[ -f "$OUT" ] || mv "$BUILD"/Forma-*x86_64.AppImage "$OUT"
 
 # --- smoke tests -------------------------------------------------------------
 # The packaged program creates an OpenGL 3.3 context and renders a frame with

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Solid tools: Union, Intersect, Subtract, Trim and Split on
+// Forma - Solid tools: Union, Intersect, Subtract, Trim and Split on
 // component instances.
 #pragma once
 
@@ -8,7 +8,7 @@
 
 #include <map>
 
-namespace gs {
+namespace forma {
 
 bool isSolidTool(ToolId id);
 SolidOp solidToolOp(ToolId id);
@@ -54,4 +54,4 @@ private:
     std::map<Id, Cached> cache_, flatCache_; // by definition
 };
 
-} // namespace gs
+} // namespace forma

@@ -21,7 +21,7 @@
 #include <numeric>
 #include <set>
 
-namespace gs::obm {
+namespace forma::obm {
 
 using ojson = nlohmann::ordered_json;
 
@@ -67,7 +67,7 @@ void rectCorner(const double r[4], int k, double& u, double& v) {
     u = r[pick[k][0]], v = r[pick[k][1]];
 }
 
-// ---- OBM space (pixels, Y up, -Z north) and GNUSketch's (meters, Z up, +Y north) --
+// ---- OBM space (pixels, Y up, -Z north) and Forma's (meters, Z up, +Y north) --
 Vec3 toGs(const Vec3& o) { return {o.x * kPx, -o.z * kPx, o.y * kPx}; }
 Mat4 obmToGs() {
     Mat4 m;
@@ -746,7 +746,7 @@ QString texturesFolder(const QString& modelPath) {
         if (d.dirName() == "models" && QDir(d.absoluteFilePath("../textures")).exists()) return QDir::cleanPath(d.absoluteFilePath("../textures"));
         if (!d.cdUp()) break;
     }
-    const QString env = qEnvironmentVariable("GNUSKETCH_OBM_TEXTURES");
+    const QString env = qEnvironmentVariable("FORMA_OBM_TEXTURES");
     if (!env.isEmpty() && QDir(env).exists()) return env;
     const QString set = QSettings().value("obm/texturesDir").toString();
     return !set.isEmpty() && QDir(set).exists() ? set : QString();
@@ -836,7 +836,7 @@ bool importObm(Document& doc, const QString& path, QStringList* msgs, std::vecto
     if (msgs && !missing) {
         if (folder.isEmpty() && !rd.textures.empty())
             msgs->append(QStringLiteral("The game's textures folder wasn't found beside the model's \"models\" folder: its pictures are "
-                                        "shown magenta. Set GNUSKETCH_OBM_TEXTURES to the textures folder (or obm/texturesDir in the settings)."));
+                                        "shown magenta. Set FORMA_OBM_TEXTURES to the textures folder (or obm/texturesDir in the settings)."));
         else if (rd.missingPictures)
             msgs->append(QStringLiteral("%1 of its pictures weren't in %2: shown magenta.").arg(rd.missingPictures).arg(folder));
     }
@@ -1032,4 +1032,4 @@ QString picturePath(const QString& folder, const std::string& name) {
     return folder + "/" + QString::fromStdString(name.substr(0, name.find('@'))) + ".png";
 }
 
-} // namespace gs::obm
+} // namespace forma::obm

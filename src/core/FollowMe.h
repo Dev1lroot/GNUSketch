@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Follow Me: sweeps a profile face along a path of edges.
+// Forma - Follow Me: sweeps a profile face along a path of edges.
 #pragma once
 
 #include "Mesh.h"
@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 // Edges connected to `start` through vertices that join exactly two edges
 // (a line chain, arc or circle), in path order.
@@ -23,4 +23,4 @@ std::vector<Id> edgeChain(const Mesh& m, Id start);
 // On failure the mesh is left untouched and false is returned with a message.
 bool followMe(Mesh& m, Id profile, const std::set<Id>& path, std::string* error = nullptr);
 
-} // namespace gs
+} // namespace forma

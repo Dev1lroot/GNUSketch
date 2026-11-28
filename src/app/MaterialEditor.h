@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - window for editing one material: PBR maps and their strengths,
+// Forma - window for editing one material: PBR maps and their strengths,
 // and custom shader code.
 #pragma once
 
@@ -22,7 +22,7 @@ class QTabWidget;
 class QTimer;
 class QVBoxLayout;
 
-namespace gs {
+namespace forma {
 
 class Viewport;
 
@@ -100,4 +100,4 @@ private:
     bool updating_ = false;
 };
 
-} // namespace gs
+} // namespace forma

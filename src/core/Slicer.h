@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Slicer: cuts a solid into pieces that fit a box (a 3D printer's
+// Forma - Slicer: cuts a solid into pieces that fit a box (a 3D printer's
 // build volume), each piece a component of its own, optionally with
 // connectors on the cuts so the glued parts line up and hold better.
 //
@@ -18,7 +18,7 @@
 
 #include <string>
 
-namespace gs {
+namespace forma {
 
 struct SlicerParams {
     Vec3 size = Vec3(0.2, 0.2, 0.2); // largest piece along x (W), y (L), z (H), meters
@@ -53,4 +53,4 @@ void slicerGrid(const Vec3& mn, const Vec3& mx, const SlicerParams& p, int n[3],
 // Point inside a closed mesh (ray parity, voted over three directions).
 bool pointInSolid(const Mesh& m, const Vec3& p);
 
-} // namespace gs
+} // namespace forma

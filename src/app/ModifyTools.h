@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - selection and modification tools.
+// Forma - selection and modification tools.
 #pragma once
 
 #include "Tool.h"
@@ -12,7 +12,7 @@
 #include <map>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 // Expands selected edges to the whole run each is part of (a circle, an arc,
 // a smooth curve) up to where another edge divides it (Mesh::edgeChain).
@@ -367,4 +367,4 @@ private:
     double lastMeasured_ = 0;
 };
 
-} // namespace gs
+} // namespace forma

@@ -3,8 +3,8 @@
 // again after its cubes were worked out afresh, the same faces and pictures; a cube
 // moved, moved in the file.
 //
-//   gs_obm_tests                 the built-in models
-//   gs_obm_tests <folder>...     and every .obm under these folders (GNUBlocks'
+//   forma_obm_tests                 the built-in models
+//   forma_obm_tests <folder>...     and every .obm under these folders (GNUBlocks'
 //                                assets/, its build/obm/ from tools/obm_convert.py)
 #include "ObmFormat.h"
 
@@ -25,8 +25,8 @@
 #include <string>
 #include <vector>
 
-using namespace gs;
-using namespace gs::obm;
+using namespace forma;
+using namespace forma::obm;
 
 static int failures = 0;
 #define CHECK(c, msg)                                                         \
@@ -176,9 +176,9 @@ static void roundTrip(const QString& path, const QTemporaryDir& tmp, bool exact,
     const QString fresh = tmp.filePath("fresh.obm");
     CHECK(exportObm(b, fresh, &msgs), path.toStdString() + ": not written afresh");
     Document c;
-    qputenv("GNUSKETCH_OBM_TEXTURES", texturesFolder(path).toLocal8Bit());   // (it isn't beside a models folder: the source's pictures)
+    qputenv("FORMA_OBM_TEXTURES", texturesFolder(path).toLocal8Bit());   // (it isn't beside a models folder: the source's pictures)
     CHECK(importObm(c, fresh, &msgs), path.toStdString() + ": the fresh one not read");
-    qunsetenv("GNUSKETCH_OBM_TEXTURES");
+    qunsetenv("FORMA_OBM_TEXTURES");
     std::string why;
     if (sameFaces(worldFaces(a), worldFaces(c), &why)) ++*faceOk;
     else CHECK(false, path.toStdString() + ": written afresh, " + why);
@@ -596,7 +596,7 @@ int main(int argc, char** argv) {
         CHECK(t.find("\"from\": [\n      3,\n      0,\n      2\n     ]", foot) != std::string::npos, "from one pixel east: " + t.substr(foot, 200));
         CHECK(t.find("\"name\": \"pole\"") != std::string::npos && t.find("\"rotation\": [\n        0,\n        45,\n        0\n       ]") != std::string::npos,
               "the cube not moved: as it was");
-        CHECK(t.find("\"kept\": true") != std::string::npos && t.find("\"animations\"") != std::string::npos, "what GNUSketch can't show: kept");
+        CHECK(t.find("\"kept\": true") != std::string::npos && t.find("\"animations\"") != std::string::npos, "what Forma can't show: kept");
     }
     {   // made here: a box drawn and pushed up is a cube
         Document d;

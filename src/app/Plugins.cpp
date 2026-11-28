@@ -11,7 +11,7 @@
 #include <QSet>
 #include <QStandardPaths>
 
-namespace gs {
+namespace forma {
 
 namespace {
 std::vector<LoadedPlugin> gPlugins;
@@ -22,11 +22,11 @@ bool gLoaded = false;
 
 QStringList Plugins::folders() {
     QStringList out;
-    for (const QString& p : qEnvironmentVariable("GNUSKETCH_PLUGIN_PATH").split(QDir::listSeparator(), Qt::SkipEmptyParts)) out << p;
+    for (const QString& p : qEnvironmentVariable("FORMA_PLUGIN_PATH").split(QDir::listSeparator(), Qt::SkipEmptyParts)) out << p;
     const QString data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (!data.isEmpty()) out << data + "/plugins";
     const QString exe = QCoreApplication::applicationDirPath();
-    out << QDir::cleanPath(exe + "/../lib/gnusketch/plugins");
+    out << QDir::cleanPath(exe + "/../lib/forma/plugins");
     out << exe + "/plugins";
     return out;
 }
@@ -50,8 +50,8 @@ void Plugins::load() {
             QPluginLoader loader(fi.absoluteFilePath());
             // Its details come from the metadata, read without loading it.
             const QJsonObject meta = loader.metaData().value(QStringLiteral("MetaData")).toObject();
-            if (loader.metaData().value(QStringLiteral("IID")).toString() != QLatin1String(GNUSKETCH_FORMAT_PLUGIN_IID)) {
-                gProblems << QStringLiteral("%1: not a GNUSketch format plugin").arg(fi.absoluteFilePath());
+            if (loader.metaData().value(QStringLiteral("IID")).toString() != QLatin1String(FORMA_FORMAT_PLUGIN_IID)) {
+                gProblems << QStringLiteral("%1: not a Forma format plugin").arg(fi.absoluteFilePath());
                 continue;
             }
             seen.insert(fi.fileName());
@@ -70,7 +70,7 @@ void Plugins::load() {
                 QObject* obj = loader.instance();
                 auto* f = obj ? qobject_cast<FormatPlugin*>(obj) : nullptr;
                 if (!f) {
-                    info.problem = obj ? QStringLiteral("not a GNUSketch format plugin") : loader.errorString();
+                    info.problem = obj ? QStringLiteral("not a Forma format plugin") : loader.errorString();
                     gProblems << QStringLiteral("%1: %2").arg(fi.absoluteFilePath(), info.problem);
                 } else {
                     info.loaded = true;
@@ -133,4 +133,4 @@ QString Plugins::fileFilters(bool forExport) {
     return out.join(";;");
 }
 
-} // namespace gs
+} // namespace forma

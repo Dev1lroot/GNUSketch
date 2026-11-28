@@ -25,7 +25,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -685,4 +685,4 @@ void AnimatorPanel::refresh() {
     view_->update();
 }
 
-} // namespace gs
+} // namespace forma

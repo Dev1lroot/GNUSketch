@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - animation states of components and how they play back.
+// Forma - animation states of components and how they play back.
 //
 // A state remembers where the vertices of a component are. To play, each
 // connected piece of the component becomes its own moving part: between two
@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 // Saves the open component's geometry as a state (replacing one of that name).
 bool recordState(ModelState& st, const std::string& name);
@@ -74,4 +74,4 @@ bool poseEntity(ModelState& st, const AnimEntity& e, int a, int b, double t);
 // moved(j) is called for each of them.
 void poseMounted(ModelState& st, std::vector<AnimEntity>& all, int i, const std::function<void(int)>& moved);
 
-} // namespace gs
+} // namespace forma

@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace gs {
+namespace forma {
 
 const char* Units::suffix(LengthUnit u) {
     switch (u) {
@@ -160,4 +160,4 @@ bool Units::parseLength(const std::string& textIn, double& meters) const {
     return true;
 }
 
-} // namespace gs
+} // namespace forma

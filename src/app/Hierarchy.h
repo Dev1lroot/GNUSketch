@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - everything in the model as a tree: select, group, hide, rename.
+// Forma - everything in the model as a tree: select, group, hide, rename.
 #pragma once
 
 #include "core/Document.h"
@@ -12,7 +12,7 @@ class QPushButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 
-namespace gs {
+namespace forma {
 
 class Viewport;
 
@@ -56,4 +56,4 @@ private:
     bool updating_ = false;
 };
 
-} // namespace gs
+} // namespace forma

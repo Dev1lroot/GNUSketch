@@ -1,17 +1,17 @@
-GNUSketch is a free and open-source 3D modeller built around direct drawing and
+Dev1lroot Software: Forma (formerly GNUSketch) is a free and open-source 3D modeller built around direct drawing and
 push/pull, for architectural and engineering models, with PBR materials,
 animations, scripting, a first-person Game Mode and 3D printing import/export.
-See the [README](https://github.com/Dev1lroot/GNUSketch#readme) and the
-[documentation](https://github.com/Dev1lroot/GNUSketch/blob/main/DOCUMENTATION.md).
+See the [README](https://github.com/Dev1lroot/Forma#readme) and the
+[documentation](https://github.com/Dev1lroot/Forma/blob/main/DOCUMENTATION.md).
 
 **This is an alpha.** Save often and report problems in the issues.
 
 ### Downloads
-- **Linux:** `GNUSketch-*-x86_64.AppImage`: make it executable (`chmod +x`) and run it.
+- **Linux:** `Forma-*-x86_64.AppImage`: make it executable (`chmod +x`) and run it.
   Built on Ubuntu 26.04 (needs a distribution of that age or newer).
-- **Windows (64-bit):** `GNUSketch-*-windows-x64-setup.exe` installs it (Start menu,
-  desktop shortcut, opens .gsketch files); or unpack `GNUSketch-*-windows-x64.zip`
-  anywhere and run `bin\gnusketch.exe`. Needs a graphics driver with OpenGL 3.3.
+- **Windows (64-bit):** `Forma-*-windows-x64-setup.exe` installs it (Start menu,
+  desktop shortcut, opens .forma files); or unpack `Forma-*-windows-x64.zip`
+  anywhere and run `bin\forma.exe`. Needs a graphics driver with OpenGL 3.3.
 
 ### New in 0.3.3
 - Gears that fit each other without the engineering: choose a tooth size and roughly
@@ -22,7 +22,7 @@ See the [README](https://github.com/Dev1lroot/GNUSketch#readme) and the
   (45° miter pairs or reductions), placed alone or as a meshing pair
 - Gear Notches: a *Standard tooth size* that turns a circle into an exact involute gear
   and straight edges into a rack, meshing with Draw > Mechanical gears
-- [GEARS.md](https://github.com/Dev1lroot/GNUSketch/blob/main/GEARS.md): a guide to
+- [GEARS.md](https://github.com/Dev1lroot/Forma/blob/main/GEARS.md): a guide to
   gears with animations of every kind of junction
 - Eraser: a round brush you can see, sized in the Properties panel or with [ and ];
   it no longer erases components or edges behind the face you are cleaning

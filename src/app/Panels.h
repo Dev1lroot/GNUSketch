@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - "Default Tray" panels: Entity Info, Materials, Styles, Instructor.
+// Forma - "Default Tray" panels: Entity Info, Materials, Styles, Instructor.
 #pragma once
 
 #include "Tool.h"
@@ -23,7 +23,7 @@ class QVBoxLayout;
 class QButtonGroup;
 class QTimer;
 
-namespace gs {
+namespace forma {
 
 class Viewport;
 class MaterialEditor;
@@ -189,4 +189,4 @@ private:
     QTextBrowser* text_;
 };
 
-} // namespace gs
+} // namespace forma

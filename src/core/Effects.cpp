@@ -15,7 +15,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -3076,4 +3076,4 @@ bool effectThicken(Mesh& m, const std::set<Id>& facesIn, const ThickenParams& p,
     return true;
 }
 
-} // namespace gs
+} // namespace forma

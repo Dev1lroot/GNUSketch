@@ -34,7 +34,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -543,4 +543,4 @@ void PrefabBrowser::contextMenu(const QPoint& pos) {
     menu.exec(list()->viewport()->mapToGlobal(pos));
 }
 
-} // namespace gs
+} // namespace forma

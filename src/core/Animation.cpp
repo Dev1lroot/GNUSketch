@@ -8,7 +8,7 @@
 #include <functional>
 #include <numeric>
 
-namespace gs {
+namespace forma {
 
 int findState(const ComponentDef& def, const std::string& name) {
     for (int i = 0; i < (int)def.states.size(); ++i)
@@ -470,4 +470,4 @@ bool poseEntity(ModelState& st, const AnimEntity& e, int a, int b, double t) {
     return changedShape;
 }
 
-} // namespace gs
+} // namespace forma

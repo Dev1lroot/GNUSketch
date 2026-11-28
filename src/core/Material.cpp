@@ -6,7 +6,7 @@
 #include <regex>
 #include <sstream>
 
-namespace gs {
+namespace forma {
 
 void Material::tileSize(double& w, double& h) const {
     const Texture* t = hasTexture() ? &texture : nullptr;
@@ -165,4 +165,4 @@ void surface(inout Surface s) {
 )";
 }
 
-} // namespace gs
+} // namespace forma

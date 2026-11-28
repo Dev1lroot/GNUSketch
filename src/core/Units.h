@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - length units: formatting and parsing of user-typed values.
+// Forma - length units: formatting and parsing of user-typed values.
 #pragma once
 
 #include <string>
 
-namespace gs {
+namespace forma {
 
 enum class LengthUnit { Millimeters, Centimeters, Meters, Inches, Feet };
 
@@ -43,4 +43,4 @@ struct Units {
 // Parses a plain number (locale independent, accepts ',' as decimal comma).
 bool parseNumber(const std::string& text, double& out);
 
-} // namespace gs
+} // namespace forma

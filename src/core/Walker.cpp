@@ -8,7 +8,7 @@
 #include <cmath>
 #include <limits>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -492,4 +492,4 @@ void Walker::advance(double seconds, const WalkInput& input) {
     }
 }
 
-} // namespace gs
+} // namespace forma

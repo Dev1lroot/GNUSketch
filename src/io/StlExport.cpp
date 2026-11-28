@@ -8,13 +8,13 @@
 
 #include <cstring>
 
-namespace gs {
+namespace forma {
 
 bool exportStl(const Document& doc, const QString& path, double scale, QString* error) {
     const Mesh flat = flattenModel(doc.state);
     const Mesh& m = flat;
     QByteArray out(80, '\0');
-    std::memcpy(out.data(), "GNUSketch binary STL", 20);
+    std::memcpy(out.data(), "Forma binary STL", 16);
     QByteArray body;
     uint32_t count = 0;
     auto putF = [&](float v) { body.append(reinterpret_cast<const char*>(&v), 4); };
@@ -47,4 +47,4 @@ bool exportStl(const Document& doc, const QString& path, double scale, QString* 
     return true;
 }
 
-} // namespace gs
+} // namespace forma

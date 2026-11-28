@@ -21,7 +21,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -676,13 +676,15 @@ std::string withGearTag(const std::string& extra, const GearParams& p) {
     g[QStringLiteral("bore")] = p.bore;
     g[QStringLiteral("rackHeight")] = p.rackHeight;
     g[QStringLiteral("backlash")] = p.backlash;
-    root[QStringLiteral("gnusketchGear")] = g;
+    root[QStringLiteral("formaGear")] = g;
     return QJsonDocument(root).toJson(QJsonDocument::Compact).toStdString();
 }
 
 bool gearFromComponent(const std::string& extra, const std::string& name, GearParams& out) {
     if (!extra.empty()) {
-        const QJsonObject g = QJsonDocument::fromJson(QByteArray::fromStdString(extra)).object().value(QStringLiteral("gnusketchGear")).toObject();
+        const QJsonObject root = QJsonDocument::fromJson(QByteArray::fromStdString(extra)).object();
+        QJsonObject g = root.value(QStringLiteral("formaGear")).toObject();
+        if (g.isEmpty()) g = root.value(QStringLiteral("gnusketchGear")).toObject(); // saved before the rename to Forma
         if (!g.isEmpty() && g.value(QStringLiteral("module")).toDouble() > 0 && g.value(QStringLiteral("teeth")).toInt() > 0) {
             out = GearParams();
             const QString kind = g.value(QStringLiteral("kind")).toString();
@@ -713,4 +715,4 @@ bool gearFromComponent(const std::string& extra, const std::string& name, GearPa
     return out.module > 0 && out.teeth > 0;
 }
 
-} // namespace gs
+} // namespace forma

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - lights and cameras in the world: the placing tool and the panel.
+// Forma - lights and cameras in the world: the placing tool and the panel.
 #pragma once
 
 #include "Tool.h"
@@ -15,7 +15,7 @@ class QListWidget;
 class QPushButton;
 class QWidget;
 
-namespace gs {
+namespace forma {
 
 class Viewport;
 
@@ -101,4 +101,4 @@ private:
     bool updating_ = false;
 };
 
-} // namespace gs
+} // namespace forma

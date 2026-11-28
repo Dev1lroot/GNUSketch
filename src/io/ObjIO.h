@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Wavefront OBJ/MTL import & export. OBJ keeps n-gon faces, so the
+// Forma - Wavefront OBJ/MTL import & export. OBJ keeps n-gon faces, so the
 // exported model stays non-triangulated (faces with holes are the exception:
 // OBJ cannot express holes, so those faces are triangulated). OBJ is Y-up by
 // convention; the Z-up model is converted on the way in and out.
@@ -9,7 +9,7 @@
 
 #include <QString>
 
-namespace gs {
+namespace forma {
 
 struct ObjExportOptions {
     bool yUp = true;           // convert Z-up -> Y-up
@@ -22,4 +22,4 @@ bool exportObj(const Document& doc, const QString& path, const ObjExportOptions&
 // Imports into the document (adds geometry and materials). Returns the number of faces imported.
 int importObj(Document& doc, const QString& path, bool yUp = true, double scale = 1.0, QString* error = nullptr);
 
-} // namespace gs
+} // namespace forma

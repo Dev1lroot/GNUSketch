@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -485,4 +485,4 @@ bool screwThread(Mesh& m, const std::set<Id>& facesIn, const ScrewThreadParams& 
     return true;
 }
 
-} // namespace gs
+} // namespace forma

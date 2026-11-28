@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch plugin: Valve Hammer map (.vmf) export (ValveFormat.h).
+// Forma plugin: Valve Hammer map (.vmf) export (ValveFormat.h).
 #include "ValveFormat.h"
 #include "plugin/FormatPlugin.h"
 
@@ -13,10 +13,10 @@
 #include <QObject>
 #include <QSettings>
 
-class VmfPlugin : public QObject, public gs::FormatPlugin {
+class VmfPlugin : public QObject, public forma::FormatPlugin {
     Q_OBJECT
-    Q_PLUGIN_METADATA(IID GNUSKETCH_FORMAT_PLUGIN_IID FILE "vmf.json")
-    Q_INTERFACES(gs::FormatPlugin)
+    Q_PLUGIN_METADATA(IID FORMA_FORMAT_PLUGIN_IID FILE "vmf.json")
+    Q_INTERFACES(forma::FormatPlugin)
 
 public:
     QString formatName() const override { return QStringLiteral("Valve Hammer Map"); }
@@ -26,14 +26,14 @@ public:
                               "(info_player_start, light, npc_...) as entities, lights and the sun as light entities.");
     }
     bool canExport() const override { return true; }
-    bool exportFile(const gs::Document& doc, const QString& path, QStringList* messages) override {
-        gs::valve::VmfOptions o;
+    bool exportFile(const forma::Document& doc, const QString& path, QStringList* messages) override {
+        forma::valve::VmfOptions o;
         QSettings s;
         o.skyname = s.value("valve/skyname", QString::fromStdString(o.skyname)).toString().toStdString();
         o.defaultMaterial = s.value("valve/defaultMaterial", QString::fromStdString(o.defaultMaterial)).toString().toStdString();
         o.sealBox = s.value("valve/sealBox", o.sealBox).toBool();
         // With a window to ask in: the options, remembered.
-        if (qobject_cast<QApplication*>(QCoreApplication::instance()) && !qEnvironmentVariableIsSet("GNUSKETCH_NO_DIALOGS")) {
+        if (qobject_cast<QApplication*>(QCoreApplication::instance()) && !qEnvironmentVariableIsSet("FORMA_NO_DIALOGS")) {
             QDialog dlg(QApplication::activeWindow());
             dlg.setWindowTitle(QStringLiteral("Export Valve Hammer Map"));
             auto* form = new QFormLayout(&dlg);
@@ -65,7 +65,7 @@ public:
             s.setValue("valve/defaultMaterial", mat->text().trimmed());
             s.setValue("valve/sealBox", o.sealBox);
         }
-        return gs::valve::writeVmf(doc, path, o, messages);
+        return forma::valve::writeVmf(doc, path, o, messages);
     }
 };
 

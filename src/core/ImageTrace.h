@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Trace Image: turns an image's alpha cutout or its dark/light
+// Forma - Trace Image: turns an image's alpha cutout or its dark/light
 // shapes into outline geometry on the face that shows the image.
 #pragma once
 
@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 // Scalar image: values[y * width + x] in 0..1, row 0 at the top of the image.
 struct ScalarImage {
@@ -40,4 +40,4 @@ TexMap effectiveTexMap(const Face& f, bool frontSide, const Material* m);
 bool traceImageOnFace(Mesh& m, Id f, const TexMap& map, const ScalarImage& img, const TraceOptions& opt,
                       std::string* error = nullptr);
 
-} // namespace gs
+} // namespace forma

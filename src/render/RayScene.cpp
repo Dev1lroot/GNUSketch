@@ -5,7 +5,7 @@
 #include <cmath>
 #include <numeric>
 
-namespace gs {
+namespace forma {
 
 void RayScene::build(const std::vector<Vec3>& mn, const std::vector<Vec3>& mx, std::vector<Node>& nodes, std::vector<int>& order,
                      int leafSize) {
@@ -173,4 +173,4 @@ void RayScene::buildTop() {
     if (instData_.empty()) instData_.assign(16, 0.f);
 }
 
-} // namespace gs
+} // namespace forma

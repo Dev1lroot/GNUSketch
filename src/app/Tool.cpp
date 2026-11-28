@@ -6,7 +6,7 @@
 
 #include <QKeyEvent>
 
-namespace gs {
+namespace forma {
 
 Document& Tool::doc() { return vp_->doc(); }
 Mesh& Tool::mesh() { return vp_->doc().mesh(); }
@@ -202,4 +202,4 @@ bool Tool::keyRelease(QKeyEvent* e) {
     return false;
 }
 
-} // namespace gs
+} // namespace forma

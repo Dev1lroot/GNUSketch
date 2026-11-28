@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Gear Notches: teeth (or notches) along outlines and lines.
+// Forma - Gear Notches: teeth (or notches) along outlines and lines.
 //
 // Works on whatever is selected in a flat outline: a face (its outline, and
 // its holes if asked), a closed curve such as a circle's edges, a rectangle's
@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 struct GearNotchParams {
     enum Profile { Square, Trapezoid, Triangle, Sawtooth, Rounded, Gear };
@@ -77,4 +77,4 @@ std::vector<NotchPoint> notchPath(const std::vector<Vec3>& pts, bool closed, con
 bool gearNotch(Mesh& m, const std::set<Id>& faces, const std::set<Id>& edges, const GearNotchParams& p,
                GearNotchResult* out = nullptr, std::string* error = nullptr);
 
-} // namespace gs
+} // namespace forma

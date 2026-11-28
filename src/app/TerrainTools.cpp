@@ -9,7 +9,7 @@
 
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -284,4 +284,4 @@ void TerrainTool::buildPreview(Preview& pv) {
     pv.markers.push_back({center_, Preview::MarkerKind::Plain});
 }
 
-} // namespace gs
+} // namespace forma

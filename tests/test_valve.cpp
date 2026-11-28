@@ -12,7 +12,7 @@
 #include <cmath>
 #include <cstdio>
 
-using namespace gs;
+using namespace forma;
 
 static int g_failed = 0, g_passed = 0;
 #define CHECK(cond)                                                                       \
@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
         QFile qc(QDir(dir.path()).filePath(QStringLiteral("crate.qc")));
         CHECK(qc.open(QIODevice::ReadOnly));
         const QString q = QString::fromUtf8(qc.readAll());
-        CHECK(q.contains(QStringLiteral("$modelname \"gnusketch/crate.mdl\"")) && q.contains(QStringLiteral("$body body \"crate.smd\"")));
+        CHECK(q.contains(QStringLiteral("$modelname \"forma/crate.mdl\"")) && q.contains(QStringLiteral("$body body \"crate.smd\"")));
         CHECK(valve::sourceMaterial("dev-dev_measurewall01d", "x") == "dev/dev_measurewall01d");
         CHECK(valve::sourceMaterial("", "dev/graygrid") == "dev/graygrid");
         std::printf("[ ok ] sealing box, size warning, SMD and QC\n");

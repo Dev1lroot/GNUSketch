@@ -31,7 +31,7 @@
 #include <algorithm>
 #include <set>
 
-namespace gs {
+namespace forma {
 
 Instance* EntityProperties::instance() {
     auto& insts = doc_->state.instances;
@@ -559,4 +559,4 @@ void EntityProperties::closeEvent(QCloseEvent* e) {
     QWidget::closeEvent(e);
 }
 
-} // namespace gs
+} // namespace forma

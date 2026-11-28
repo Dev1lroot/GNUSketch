@@ -8,7 +8,7 @@
 
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -1481,4 +1481,4 @@ void Curve3DTool::buildPreview(Preview& pv) {
     if (stage_ < 2 || active_ >= 0) engine().addPreview(inf_, pv);
 }
 
-} // namespace gs
+} // namespace forma

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Help > Plugins: the plugins found, with their vendor, license,
+// Forma - Help > Plugins: the plugins found, with their vendor, license,
 // version and formats, each turned on or off (from the next start).
 #pragma once
 
@@ -11,7 +11,7 @@ class QListWidget;
 class QPushButton;
 class QTextBrowser;
 
-namespace gs {
+namespace forma {
 
 class PluginBrowser : public QDialog {
     Q_OBJECT
@@ -34,4 +34,4 @@ private:
     bool changed_ = false;
 };
 
-} // namespace gs
+} // namespace forma

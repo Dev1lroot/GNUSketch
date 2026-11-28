@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - terrain sculpting (Mountain / Pit / Flatten brushes).
+// Forma - terrain sculpting (Mountain / Pit / Flatten brushes).
 //
 // Faces under the brush are converted into a triangle mesh joined by soft,
 // smooth edges; triangles are bisected (longest edge first) whenever an edge
@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 enum class TerrainMode { Raise, Lower, Flatten, Paint };
 
@@ -86,4 +86,4 @@ private:
     Id paintMat_ = kNone;
 };
 
-} // namespace gs
+} // namespace forma

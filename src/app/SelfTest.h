@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - scripted smoke test driving the real UI with synthetic input.
+// Forma - scripted smoke test driving the real UI with synthetic input.
 #pragma once
 
 class QString;
 
-namespace gs {
+namespace forma {
 
 class MainWindow;
 // Runs the scripted session; returns the process exit code (0 = success).
@@ -18,4 +18,4 @@ int runInteractBench(MainWindow& w);
 // Renders the README pictures into dir (see Screenshots.cpp).
 int runScreenshots(MainWindow& w, const QString& dir);
 
-} // namespace gs
+} // namespace forma

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - rigid bodies for Game Mode: components that fall, slide and tumble.
+// Forma - rigid bodies for Game Mode: components that fall, slide and tumble.
 //
 // A small impulse solver. Contacts come from vertices of one thing against
 // triangles of another (both ways round, so a box lands on a thin post too);
@@ -13,7 +13,7 @@
 #include <set>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 struct PhysicsParams {
     double mass = 10;       // kg
@@ -71,4 +71,4 @@ private:
     double accumulator_ = 0;
 };
 
-} // namespace gs
+} // namespace forma

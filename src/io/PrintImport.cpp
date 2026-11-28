@@ -17,7 +17,7 @@
 #include <functional>
 #include <set>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -38,9 +38,9 @@ double unitMeters(QString u) {
     return 0;
 }
 
-// The unit tag GNUSketch writes into STL headers and PLY/OFF comments.
+// The unit tag Forma writes into STL headers and PLY/OFF comments.
 bool taggedUnit(const QByteArray& head, double& m) {
-    static const QRegularExpression re(QStringLiteral("(?:units[=_ ]|gnusketch_units_)(mm|cm|m|in|ft)\\b"));
+    static const QRegularExpression re(QStringLiteral("(?:units[=_ ]|(?:forma|gnusketch)_units_)(mm|cm|m|in|ft)\\b"));
     const auto match = re.match(QString::fromLatin1(head));
     if (!match.hasMatch()) return false;
     m = unitMeters(match.captured(1));
@@ -562,4 +562,4 @@ Id importPrintModel(Document& doc, const PrintModel& model, const std::string& n
     return (Id)st.instances.size() - 1;
 }
 
-} // namespace gs
+} // namespace forma

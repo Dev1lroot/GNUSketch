@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - the Animator panel: a timeline like Flash's. A layer per moving
+// Forma - the Animator panel: a timeline like Flash's. A layer per moving
 // thing (component placement, light, camera) with its name, a visibility eye,
 // a lock and a colour; frames to the right with keyframes, motion tweens
 // (blue, with an arrow) and held frames (grey); a ruler with the red playhead.
@@ -19,7 +19,7 @@ class QSpinBox;
 class QTimer;
 class QToolButton;
 
-namespace gs {
+namespace forma {
 
 class Viewport;
 class AnimatorPanel;
@@ -118,4 +118,4 @@ private:
     bool playing_ = false, autoKey_ = true, loop_ = true, applying_ = false, updating_ = false, suspended_ = false;
 };
 
-} // namespace gs
+} // namespace forma

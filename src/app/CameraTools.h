@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - camera tools: Orbit, Pan, Zoom, Zoom Window.
+// Forma - camera tools: Orbit, Pan, Zoom, Zoom Window.
 #pragma once
 
 #include "Tool.h"
 
 #include <QPointF>
 
-namespace gs {
+namespace forma {
 
 class OrbitTool : public Tool {
 public:
@@ -73,4 +73,4 @@ private:
 // Returns a good orbit/zoom focus point under the cursor (geometry or ground).
 Vec3 focusPointAt(InferenceEngine& eng, const Camera& cam, double x, double y);
 
-} // namespace gs
+} // namespace forma

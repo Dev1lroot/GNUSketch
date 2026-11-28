@@ -11,7 +11,7 @@
 #include <cstring>
 #include <map>
 
-namespace gs {
+namespace forma {
 
 PrintMesh buildPrintMesh(const Document& doc, LengthUnit unit) {
     const Mesh m = flattenModel(doc.state);
@@ -150,7 +150,7 @@ QByteArray build3mf(const PrintMesh& pm, const char* unit) {
     model.reserve(int(pm.verts.size() * 60 + pm.tris.size() * 50 + 1024));
     model += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
     model += "<model unit=\"" + QByteArray(unit) + "\" xml:lang=\"en-US\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\">\n";
-    model += " <metadata name=\"Application\">GNUSketch</metadata>\n";
+    model += " <metadata name=\"Application\">Forma</metadata>\n";
     model += " <resources>\n";
     const bool colored = !pm.colors.empty();
     if (colored) {
@@ -193,7 +193,7 @@ QByteArray buildAmf(const PrintMesh& pm, const char* unit) {
     QByteArray out;
     out += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
     out += "<amf unit=\"" + QByteArray(unit) + "\" version=\"1.1\">\n";
-    out += " <metadata type=\"producer\">GNUSketch</metadata>\n";
+    out += " <metadata type=\"producer\">Forma</metadata>\n";
     for (size_t i = 0; i < pm.colors.size(); ++i) {
         const Color& c = pm.colors[i];
         out += " <material id=\"" + QByteArray::number(int(i) + 1) + "\">\n  <metadata type=\"name\">" + xmlEscape(pm.colorNames[i]) +
@@ -226,7 +226,7 @@ Vec3 triNormal(const PrintMesh& pm, const std::array<int, 3>& t) {
 
 QByteArray buildStlBinary(const PrintMesh& pm, LengthUnit u) {
     QByteArray out(80, '\0');
-    const QByteArray head = "GNUSketch binary STL, units=" + unitTag(u);
+    const QByteArray head = "Forma binary STL, units=" + unitTag(u);
     std::memcpy(out.data(), head.constData(), std::min<qsizetype>(head.size(), 80));
     const uint32_t count = qToLittleEndian<uint32_t>((uint32_t)pm.tris.size());
     out.append(reinterpret_cast<const char*>(&count), 4);
@@ -248,20 +248,20 @@ QByteArray buildStlBinary(const PrintMesh& pm, LengthUnit u) {
 }
 
 QByteArray buildStlAscii(const PrintMesh& pm, LengthUnit u) {
-    QByteArray out = "solid gnusketch_units_" + unitTag(u) + "\n";
+    QByteArray out = "solid forma_units_" + unitTag(u) + "\n";
     for (const auto& t : pm.tris) {
         const Vec3 n = triNormal(pm, t);
         out += "  facet normal " + num(n.x) + " " + num(n.y) + " " + num(n.z) + "\n    outer loop\n";
         for (int k : t) out += "      vertex " + num(pm.verts[k].x) + " " + num(pm.verts[k].y) + " " + num(pm.verts[k].z) + "\n";
         out += "    endloop\n  endfacet\n";
     }
-    out += "endsolid gnusketch_units_" + unitTag(u) + "\n";
+    out += "endsolid forma_units_" + unitTag(u) + "\n";
     return out;
 }
 
 QByteArray buildPly(const PrintMesh& pm, LengthUnit u) {
     const bool colored = !pm.colors.empty();
-    QByteArray out = "ply\nformat ascii 1.0\ncomment GNUSketch export\ncomment units " + unitTag(u) + "\n";
+    QByteArray out = "ply\nformat ascii 1.0\ncomment Forma export\ncomment units " + unitTag(u) + "\n";
     out += "element vertex " + QByteArray::number((qsizetype)pm.verts.size()) + "\nproperty float x\nproperty float y\nproperty float z\n";
     out += "element face " + QByteArray::number((qsizetype)pm.tris.size()) + "\nproperty list uchar int vertex_indices\n";
     if (colored) out += "property uchar red\nproperty uchar green\nproperty uchar blue\n";
@@ -281,7 +281,7 @@ QByteArray buildPly(const PrintMesh& pm, LengthUnit u) {
 }
 
 QByteArray buildOff(const PrintMesh& pm, LengthUnit u) {
-    QByteArray out = "OFF\n# GNUSketch export, units " + unitTag(u) + "\n";
+    QByteArray out = "OFF\n# Forma export, units " + unitTag(u) + "\n";
     out += QByteArray::number((qsizetype)pm.verts.size()) + " " + QByteArray::number((qsizetype)pm.tris.size()) + " 0\n";
     for (const Vec3& v : pm.verts) out += num(v.x) + " " + num(v.y) + " " + num(v.z) + "\n";
     for (const auto& t : pm.tris) out += "3 " + QByteArray::number(t[0]) + " " + QByteArray::number(t[1]) + " " + QByteArray::number(t[2]) + "\n";
@@ -351,4 +351,4 @@ bool exportPrint(const Document& doc, const QString& path, PrintFormat fmt, Leng
     return true;
 }
 
-} // namespace gs
+} // namespace forma

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Position Texture tool: move, resize, rotate, skew and mirror the
+// Forma - Position Texture tool: move, resize, rotate, skew and mirror the
 // texture of the selected faces directly on the model, in real time.
 #pragma once
 
@@ -12,7 +12,7 @@
 #include <optional>
 #include <vector>
 
-namespace gs {
+namespace forma {
 
 class TextureTool : public Tool {
 public:
@@ -79,4 +79,4 @@ private:
     uint64_t imageRevision_ = 0;
 };
 
-} // namespace gs
+} // namespace forma

@@ -14,7 +14,7 @@
 
 #include <map>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -44,8 +44,8 @@ bool exportObj(const Document& doc, const QString& path, const ObjExportOptions&
     std::map<Id, QString> matNames;
     QString mtl;
     QTextStream ms(&mtl);
-    ms << "# GNUSketch material library\n";
-    ms << "newmtl gs_default\nKd 1 1 1\nd 1\n\n";
+    ms << "# Forma material library\n";
+    ms << "newmtl forma_default\nKd 1 1 1\nd 1\n\n";
     for (Id i = 0; i < (Id)doc.state.materials.size(); ++i) {
         const Material& mat = doc.state.materials[i];
         QString n = safeName(mat.name, i);
@@ -82,7 +82,7 @@ bool exportObj(const Document& doc, const QString& path, const ObjExportOptions&
 
     QString out;
     QTextStream os(&out);
-    os << "# Exported by GNUSketch\n";
+    os << "# Exported by Forma\n";
     os << "mtllib " << mtlName << "\n";
 
     // Vertex positions (shared).
@@ -103,7 +103,7 @@ bool exportObj(const Document& doc, const QString& path, const ObjExportOptions&
     int vtc = 0, vnc = 0;
     for (const auto& [mid, flist] : byMat) {
         const Material* mat = doc.material(mid);
-        os << "usemtl " << (mat ? matNames[mid] : QStringLiteral("gs_default")) << "\n";
+        os << "usemtl " << (mat ? matNames[mid] : QStringLiteral("forma_default")) << "\n";
         for (Id f : flist) {
             const Face& F = m.faces[f];
             Vec3 n = toFile(F.normal, opt.yUp, 1.0).normalized();
@@ -348,4 +348,4 @@ int importObj(Document& doc, const QString& path, bool yUp, double scale, QStrin
     return faceCount;
 }
 
-} // namespace gs
+} // namespace forma

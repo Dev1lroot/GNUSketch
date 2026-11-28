@@ -19,7 +19,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -347,4 +347,4 @@ void PropertiesPanel::refresh() {
     hint_->setText(QStringLiteral("Select something to see and change its properties. The terraform brushes, the Eraser and the light tools show their settings here."));
 }
 
-} // namespace gs
+} // namespace forma

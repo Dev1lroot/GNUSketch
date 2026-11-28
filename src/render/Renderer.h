@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - OpenGL 3.3 core renderer for the model viewport.
+// Forma - OpenGL 3.3 core renderer for the model viewport.
 #pragma once
 
 #include "Camera.h"
@@ -18,7 +18,7 @@
 
 class QOpenGLShaderProgram;
 
-namespace gs {
+namespace forma {
 
 enum class Dash { None = 0, Dashed = 1, Dotted = 2 };
 
@@ -196,4 +196,4 @@ private:
     float lightPos_[kMaxLights * 3] = {}, lightAim_[kMaxLights * 3] = {}, lightColor_[kMaxLights * 3] = {}, lightParam_[kMaxLights * 4] = {};
 };
 
-} // namespace gs
+} // namespace forma

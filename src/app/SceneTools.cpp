@@ -18,7 +18,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
-namespace gs {
+namespace forma {
 
 PlaceObjectTool::PlaceObjectTool(Viewport* vp, ToolId id) : Tool(vp), id_(id) {
     height_ = id == ToolId::PlaceDirectionalLight ? 5.0 : id == ToolId::PlaceCamera ? 1.6 : 2.0;
@@ -449,4 +449,4 @@ void ScenePanel::refresh() {
     updating_ = false;
 }
 
-} // namespace gs
+} // namespace forma

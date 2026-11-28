@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(GNUSketch VERSION 0.3.3 LANGUAGES CXX)
+project(Forma VERSION 0.3.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,18 +8,18 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-option(GNUSKETCH_BUILD_TESTS "Build kernel unit tests" ON)
+option(FORMA_BUILD_TESTS "Build kernel unit tests" ON)
 
 include(GNUInstallDirs)
 # The kernel and the file code are shared libraries: plugins (plugins/, see
 # src/plugin/FormatPlugin.h) use them too, and there must be one of each in the
 # program (one mesh revision counter, one texture revision counter).
 set(CMAKE_INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
-set(GNUSKETCH_PLUGIN_BUILD_DIR ${CMAKE_BINARY_DIR}/plugins)
-set(GNUSKETCH_PLUGIN_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/gnusketch/plugins)
+set(FORMA_PLUGIN_BUILD_DIR ${CMAKE_BINARY_DIR}/plugins)
+set(FORMA_PLUGIN_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/forma/plugins)
 
 # ---- geometry kernel (no Qt dependency) -------------------------------------
-add_library(gs_core SHARED
+add_library(forma_core SHARED
   src/core/Math.h
   src/core/Material.h src/core/Material.cpp
   src/core/Triangulate.h src/core/Triangulate.cpp
@@ -44,15 +44,15 @@ add_library(gs_core SHARED
   src/core/TextureMapping.h src/core/TextureMapping.cpp
   src/core/Primitives.h src/core/Primitives.cpp
 )
-target_include_directories(gs_core PUBLIC src)
-target_compile_options(gs_core PRIVATE -Wall -Wextra)
+target_include_directories(forma_core PUBLIC src)
+target_compile_options(forma_core PRIVATE -Wall -Wextra)
 
 # ---- application --------------------------------------------------------------
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Svg Qml)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-add_library(gs_io SHARED
+add_library(forma_io SHARED
   src/io/NativeFormat.h src/io/NativeFormat.cpp
   src/io/ObjIO.h src/io/ObjIO.cpp
   src/io/GltfExport.h src/io/GltfExport.cpp
@@ -65,11 +65,11 @@ add_library(gs_io SHARED
   src/io/EntityScript.h src/io/EntityScript.cpp
 )
 find_package(ZLIB REQUIRED)
-target_link_libraries(gs_io PUBLIC gs_core Qt6::Core Qt6::Gui Qt6::Qml PRIVATE ZLIB::ZLIB)
-target_compile_options(gs_io PRIVATE -Wall -Wextra)
+target_link_libraries(forma_io PUBLIC forma_core Qt6::Core Qt6::Gui Qt6::Qml PRIVATE ZLIB::ZLIB)
+target_compile_options(forma_io PRIVATE -Wall -Wextra)
 
-add_executable(gnusketch
-  packaging/gnusketch.qrc
+add_executable(forma
+  packaging/forma.qrc
   src/main.cpp
   src/render/Camera.h src/render/Camera.cpp
   src/render/Renderer.h src/render/Renderer.cpp
@@ -107,50 +107,50 @@ add_executable(gnusketch
 )
 if(WIN32)
   # The program's icon in Explorer and the task bar; no console window.
-  target_sources(gnusketch PRIVATE packaging/gnusketch.rc)
-  set_target_properties(gnusketch PROPERTIES WIN32_EXECUTABLE ON)
+  target_sources(forma PRIVATE packaging/forma.rc)
+  set_target_properties(forma PROPERTIES WIN32_EXECUTABLE ON)
 endif()
-target_link_libraries(gnusketch PRIVATE gs_io Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Svg)
-target_compile_definitions(gnusketch PRIVATE GNUSKETCH_SOURCE_DIR="${CMAKE_SOURCE_DIR}" GNUSKETCH_VERSION="${PROJECT_VERSION}")
-target_compile_options(gnusketch PRIVATE -Wall -Wextra)
+target_link_libraries(forma PRIVATE forma_io Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Svg)
+target_compile_definitions(forma PRIVATE FORMA_SOURCE_DIR="${CMAKE_SOURCE_DIR}" FORMA_VERSION="${PROJECT_VERSION}")
+target_compile_options(forma PRIVATE -Wall -Wextra)
 
-install(TARGETS gnusketch RUNTIME DESTINATION bin)
+install(TARGETS forma RUNTIME DESTINATION bin)
 # The libraries find each other beside themselves (the program finds them in ../lib).
-set_target_properties(gs_core gs_io PROPERTIES INSTALL_RPATH "$ORIGIN")
-install(TARGETS gs_core gs_io LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES src/plugin/FormatPlugin.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gnusketch/plugin)
+set_target_properties(forma_core forma_io PROPERTIES INSTALL_RPATH "$ORIGIN")
+install(TARGETS forma_core forma_io LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES src/plugin/FormatPlugin.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forma/plugin)
 
 # ---- plugins ----------------------------------------------------------------------
 add_subdirectory(plugins/obm)
 add_subdirectory(plugins/valve)
-install(FILES packaging/gnusketch.desktop DESTINATION share/applications)
-install(FILES packaging/gnusketch.svg DESTINATION share/icons/hicolor/scalable/apps)
+install(FILES packaging/forma.desktop DESTINATION share/applications)
+install(FILES packaging/forma.png DESTINATION share/icons/hicolor/512x512/apps)
 
 # `cmake --build build --target appimage`: packages this build as
-# build/GNUSketch-<version>-x86_64.AppImage and checks it starts with OpenGL on
+# build/Forma-<version>-x86_64.AppImage and checks it starts with OpenGL on
 # X11 and Wayland (off-screen). The same script makes the released AppImage.
 if(UNIX AND NOT APPLE)
   add_custom_target(appimage
     COMMAND ${CMAKE_SOURCE_DIR}/tools/build-appimage.sh ${CMAKE_BINARY_DIR} ${PROJECT_VERSION}
-    DEPENDS gnusketch gnusketch_obm gnusketch_valve_vmf gnusketch_valve_smd
+    DEPENDS forma forma_obm forma_valve_vmf forma_valve_smd
     USES_TERMINAL VERBATIM)
 endif()
 
-if(GNUSKETCH_BUILD_TESTS)
+if(FORMA_BUILD_TESTS)
   enable_testing()
-  add_executable(gs_tests tests/test_core.cpp)
-  target_link_libraries(gs_tests PRIVATE gs_core)
-  add_test(NAME core COMMAND gs_tests)
+  add_executable(forma_tests tests/test_core.cpp)
+  target_link_libraries(forma_tests PRIVATE forma_core)
+  add_test(NAME core COMMAND forma_tests)
 
-  add_executable(gs_io_tests tests/test_io.cpp)
-  target_link_libraries(gs_io_tests PRIVATE gs_io)
-  add_test(NAME io COMMAND gs_io_tests)
+  add_executable(forma_io_tests tests/test_io.cpp)
+  target_link_libraries(forma_io_tests PRIVATE forma_io)
+  add_test(NAME io COMMAND forma_io_tests)
 
-  add_executable(gs_valve_tests tests/test_valve.cpp)
-  target_link_libraries(gs_valve_tests PRIVATE gs_valve_format gs_io)
-  add_test(NAME valve COMMAND gs_valve_tests)
+  add_executable(forma_valve_tests tests/test_valve.cpp)
+  target_link_libraries(forma_valve_tests PRIVATE forma_valve_format forma_io)
+  add_test(NAME valve COMMAND forma_valve_tests)
 
-  add_executable(gs_obm_tests tests/test_obm.cpp)
-  target_link_libraries(gs_obm_tests PRIVATE gs_obm_format gs_io)
-  add_test(NAME obm COMMAND gs_obm_tests)
+  add_executable(forma_obm_tests tests/test_obm.cpp)
+  target_link_libraries(forma_obm_tests PRIVATE forma_obm_format forma_io)
+  add_test(NAME obm COMMAND forma_obm_tests)
 endif()

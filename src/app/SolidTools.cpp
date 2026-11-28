@@ -3,7 +3,7 @@
 
 #include "Viewport.h"
 
-namespace gs {
+namespace forma {
 
 bool isSolidTool(ToolId id) {
     return id == ToolId::SolidUnion || id == ToolId::SolidIntersect || id == ToolId::SolidSubtract ||
@@ -240,4 +240,4 @@ void SolidTool::buildPreview(Preview& pv) {
     if (hover_ != kNone && hover_ != first_ && solid(hover_)) pv.highlightInstances.insert(hover_);
 }
 
-} // namespace gs
+} // namespace forma

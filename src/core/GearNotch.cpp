@@ -7,7 +7,7 @@
 #include <map>
 #include <unordered_map>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -647,4 +647,4 @@ bool gearNotch(Mesh& m, const std::set<Id>& faces, const std::set<Id>& edgesIn, 
     return true;
 }
 
-} // namespace gs
+} // namespace forma

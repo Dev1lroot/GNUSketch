@@ -8,7 +8,7 @@
 
 #include <cmath>
 
-namespace gs {
+namespace forma {
 
 namespace {
 const Vec3 kAxes[3] = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)};
@@ -275,4 +275,4 @@ void BendTool::buildPreview(Preview& pv) {
     pv.line(start_, cur_, snapped_ ? Color::rgb8(220, 0, 220) : Color::rgb8(0, 0, 0), 1.0f, Dash::Dotted);
 }
 
-} // namespace gs
+} // namespace forma

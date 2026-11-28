@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GNUSketch - Round Corners: replaces sharp edges/corners with circular arcs.
+// Forma - Round Corners: replaces sharp edges/corners with circular arcs.
 #pragma once
 
 #include "Mesh.h"
@@ -7,7 +7,7 @@
 #include <set>
 #include <string>
 
-namespace gs {
+namespace forma {
 
 // Rounds the given edges with `radius` (model units) using `segments` facets.
 //  * An edge between two non-coplanar faces becomes a rounded strip (3D
@@ -19,4 +19,4 @@ namespace gs {
 // On failure the mesh is left untouched and false is returned with a message.
 bool roundCorners(Mesh& m, const std::set<Id>& edges, double radius, int segments, std::string* error = nullptr);
 
-} // namespace gs
+} // namespace forma

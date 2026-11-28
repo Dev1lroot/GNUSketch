@@ -14,7 +14,7 @@
 #include <mutex>
 #include <random>
 
-namespace gs {
+namespace forma {
 
 namespace {
 
@@ -386,4 +386,4 @@ void prepareArchitecturalMaterials() {
     });
 }
 
-} // namespace gs
+} // namespace forma

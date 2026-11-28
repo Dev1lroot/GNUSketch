@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Forma - finding and loading plugins (see plugin/FormatPlugin.h).
+// Forma - finding and loading plugins (see plugin/FormatPlugin.h and
+// plugin/ToolPlugin.h).
 #pragma once
 
 #include "plugin/FormatPlugin.h"
+#include "plugin/ToolPlugin.h"
 
 #include <QString>
 #include <QStringList>
@@ -12,7 +14,9 @@ namespace forma {
 
 struct LoadedPlugin {
     QString file;                     // the shared library it came from
-    FormatPlugin* format = nullptr;   // owned by Qt's plugin loader (lives as long as the program)
+    // One of them (owned by Qt's plugin loader: lives as long as the program).
+    FormatPlugin* format = nullptr;   // a file format
+    ToolPlugin* tool = nullptr;       // a command (Extensions menu)
 };
 
 // A plugin library found in a plugin folder, loaded or not: what its
@@ -24,6 +28,8 @@ struct PluginInfo {
     bool enabled = true;  // the user's choice (Help > Plugins), kept in the settings
     bool loaded = false;  // loaded now (enabled at start and working)
     bool canImport = false, canExport = false; // (known once loaded)
+    bool isTool = false;  // a command, not a file format
+    QString command;      // its menu entry (tools, once loaded)
     QString problem;      // why it did not load
 };
 

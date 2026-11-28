@@ -50,13 +50,16 @@ void Plugins::load() {
             QPluginLoader loader(fi.absoluteFilePath());
             // Its details come from the metadata, read without loading it.
             const QJsonObject meta = loader.metaData().value(QStringLiteral("MetaData")).toObject();
-            if (loader.metaData().value(QStringLiteral("IID")).toString() != QLatin1String(FORMA_FORMAT_PLUGIN_IID)) {
-                gProblems << QStringLiteral("%1: not a Forma format plugin").arg(fi.absoluteFilePath());
+            const QString iid = loader.metaData().value(QStringLiteral("IID")).toString();
+            const bool isTool = iid == QLatin1String(FORMA_TOOL_PLUGIN_IID);
+            if (!isTool && iid != QLatin1String(FORMA_FORMAT_PLUGIN_IID)) {
+                gProblems << QStringLiteral("%1: not a Forma plugin").arg(fi.absoluteFilePath());
                 continue;
             }
             seen.insert(fi.fileName());
             PluginInfo info;
             info.file = fi.absoluteFilePath();
+            info.isTool = isTool;
             info.name = meta.value(QStringLiteral("name")).toString(fi.completeBaseName());
             info.vendor = meta.value(QStringLiteral("vendor")).toString(QStringLiteral("unknown"));
             info.license = meta.value(QStringLiteral("license")).toString(QStringLiteral("unknown"));
@@ -68,17 +71,23 @@ void Plugins::load() {
             info.enabled = isEnabled(fi.fileName());
             if (info.enabled) {
                 QObject* obj = loader.instance();
-                auto* f = obj ? qobject_cast<FormatPlugin*>(obj) : nullptr;
-                if (!f) {
-                    info.problem = obj ? QStringLiteral("not a Forma format plugin") : loader.errorString();
+                auto* f = obj && !isTool ? qobject_cast<FormatPlugin*>(obj) : nullptr;
+                auto* t = obj && isTool ? qobject_cast<ToolPlugin*>(obj) : nullptr;
+                if (!f && !t) {
+                    info.problem = obj ? QStringLiteral("not a Forma plugin") : loader.errorString();
                     gProblems << QStringLiteral("%1: %2").arg(fi.absoluteFilePath(), info.problem);
-                } else {
+                } else if (f) {
                     info.loaded = true;
                     info.canImport = f->canImport();
                     info.canExport = f->canExport();
                     if (info.extensions.isEmpty()) info.extensions = f->extensions();
                     if (info.description.isEmpty()) info.description = f->description();
-                    gPlugins.push_back({fi.absoluteFilePath(), f});
+                    gPlugins.push_back({fi.absoluteFilePath(), f, nullptr});
+                } else {
+                    info.loaded = true;
+                    info.command = t->commandName();
+                    if (info.description.isEmpty()) info.description = t->description();
+                    gPlugins.push_back({fi.absoluteFilePath(), nullptr, t});
                 }
             }
             gInstalled.push_back(info);
@@ -117,7 +126,7 @@ const QStringList& Plugins::problems() {
 FormatPlugin* Plugins::forFile(const QString& path, bool forExport) {
     const QString ext = QFileInfo(path).suffix().toLower();
     for (const LoadedPlugin& p : all())
-        if ((forExport ? p.format->canExport() : p.format->canImport()) && p.format->extensions().contains(ext))
+        if (p.format && (forExport ? p.format->canExport() : p.format->canImport()) && p.format->extensions().contains(ext))
             return p.format;
     return nullptr;
 }
@@ -125,7 +134,7 @@ FormatPlugin* Plugins::forFile(const QString& path, bool forExport) {
 QString Plugins::fileFilters(bool forExport) {
     QStringList out;
     for (const LoadedPlugin& p : all()) {
-        if (!(forExport ? p.format->canExport() : p.format->canImport())) continue;
+        if (!p.format || !(forExport ? p.format->canExport() : p.format->canImport())) continue;
         QStringList pats;
         for (const QString& e : p.format->extensions()) pats << "*." + e;
         out << QStringLiteral("%1 (%2)").arg(p.format->formatName(), pats.join(' '));

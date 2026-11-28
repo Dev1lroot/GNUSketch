@@ -201,7 +201,7 @@ EntityProperties::EntityProperties(Document* doc, Viewport* vp, QWidget* parent)
     sl->addLayout(addRow);
     tabs_->addTab(sourcesPage, QStringLiteral("Sources"));
     for (const LoadedPlugin& lp : Plugins::all()) // (a format's own: an Open Block Model's tags)
-        if (const QString title = lp.format->propertiesTabTitle(); !title.isEmpty())
+        if (const QString title = lp.format ? lp.format->propertiesTabTitle() : QString(); !title.isEmpty())
             if (QWidget* page = lp.format->createPropertiesTab(*doc_, tabs_)) {
                 tabs_->addTab(page, title);
                 pluginTabs_.push_back({lp.format, page});

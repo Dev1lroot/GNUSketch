@@ -473,7 +473,7 @@ void MainWindow::buildMenus() {
     imp->setObjectName(QStringLiteral("ImportMenu"));
     imp->addAction(acts_["importobj"]);
     for (const LoadedPlugin& p : Plugins::all())   // (formats from plugins)
-        if (FormatPlugin* f = p.format; f->canImport())
+        if (FormatPlugin* f = p.format; f && f->canImport())
             imp->addAction(QStringLiteral("%1 (*.%2)…").arg(f->formatName(), f->extensions().join(", *.")), this, [this, f] { importPlugin(f); });
     imp->addSection(QStringLiteral("3D Printing"));
     for (const auto& [ext, text] : {std::pair<const char*, const char*>{"3mf", "3MF (*.3mf)…"}, {"amf", "AMF (*.amf)…"},
@@ -488,7 +488,7 @@ void MainWindow::buildMenus() {
     exp->addAction(acts_["exportobj"]);
     exp->addAction(acts_["exportgltf"]);
     for (const LoadedPlugin& p : Plugins::all())
-        if (FormatPlugin* f = p.format; f->canExport())
+        if (FormatPlugin* f = p.format; f && f->canExport())
             exp->addAction(QStringLiteral("%1 (*.%2)…").arg(f->formatName(), f->extensions().join(", *.")), this, [this, f] { exportPlugin(f); });
     exp->addSection(QStringLiteral("3D Printing"));
     exp->addAction(acts_["export3mf"]);
@@ -656,6 +656,20 @@ void MainWindow::buildMenus() {
     effects->addSeparator();
     effects->addAction(acts_["roundcorners"]);
     effects->addAction(acts_["traceimage"]);
+
+    // Commands from tool plugins (plugin/ToolPlugin.h).
+    QMenu* extensions = nullptr;
+    for (const LoadedPlugin& p : Plugins::all()) {
+        ToolPlugin* t = p.tool;
+        if (!t) continue;
+        if (!extensions) {
+            extensions = menuBar()->addMenu(QStringLiteral("E&xtensions"));
+            extensions->setObjectName(QStringLiteral("ExtensionsMenu"));
+        }
+        QAction* a = extensions->addAction(t->commandName() + QStringLiteral("…"), this, [this, t] { runToolPlugin(t); });
+        a->setObjectName(QStringLiteral("tool_") + QFileInfo(p.file).completeBaseName());
+        a->setStatusTip(t->description());
+    }
 
     QMenu* win = menuBar()->addMenu(QStringLiteral("&Window"));
     win->addAction(acts_["settings"]);
@@ -1192,6 +1206,20 @@ void MainWindow::exportPlugin(FormatPlugin* f) {
     }
     if (!msgs.isEmpty()) QMessageBox::information(this, f->formatName(), msgs.join('\n'));
     statusLabel_->setText(QStringLiteral("Exported %1").arg(path));
+}
+
+void MainWindow::runToolPlugin(ToolPlugin* t) {
+    viewport_->cancelTool();
+    QString why;
+    if (!t->canRun(doc_, &why)) {
+        QMessageBox::information(this, t->commandName(), why.isEmpty() ? QStringLiteral("It can't run on what is selected.") : why);
+        return;
+    }
+    t->run(doc_, this);
+    if (doc_.inOp()) doc_.cancelOp(); // (a plugin that forgot to finish its step changes nothing)
+    updateTitle();
+    onDocChanged();
+    onSelectionChanged();
 }
 
 void MainWindow::showPlugins() {
@@ -2702,7 +2730,7 @@ void MainWindow::about() {
     const QString compiler = QStringLiteral("unknown");
 #endif
     int plugins = 0;
-    for (const LoadedPlugin& p : Plugins::all()) plugins += p.format != nullptr;
+    for (const LoadedPlugin& p : Plugins::all()) plugins += p.format != nullptr || p.tool != nullptr;
 
     QDialog dlg(this);
     dlg.setWindowTitle(QStringLiteral("About Forma"));

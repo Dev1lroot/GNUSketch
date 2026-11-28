@@ -27,6 +27,7 @@ class QTemporaryDir;
 namespace forma {
 
 class FormatPlugin;
+class ToolPlugin;
 struct PrimitiveParams;
 struct PartChoice;
 struct GearRef;
@@ -119,6 +120,7 @@ private:
     void importPlugin(FormatPlugin* f);
     void exportPlugin(FormatPlugin* f);
     void showPlugins();
+    void runToolPlugin(ToolPlugin* t); // Extensions > (a tool plugin's command)
 public:
     // File > Export Selection: runs an export (a File > Export entry, or
     // saving as .forma when empty) on a model holding only the selection.

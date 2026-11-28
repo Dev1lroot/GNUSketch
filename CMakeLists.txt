@@ -103,6 +103,7 @@ add_executable(forma
   src/app/Plugins.h src/app/Plugins.cpp
   src/app/PluginBrowser.h src/app/PluginBrowser.cpp
   src/plugin/FormatPlugin.h
+  src/plugin/ToolPlugin.h
   src/app/SelfTest.h src/app/SelfTest.cpp
 )
 if(WIN32)
@@ -118,21 +119,57 @@ install(TARGETS forma RUNTIME DESTINATION bin)
 # The libraries find each other beside themselves (the program finds them in ../lib).
 set_target_properties(forma_core forma_io PROPERTIES INSTALL_RPATH "$ORIGIN")
 install(TARGETS forma_core forma_io LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES src/plugin/FormatPlugin.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forma/plugin)
+install(FILES src/plugin/FormatPlugin.h src/plugin/ToolPlugin.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forma/plugin)
 
 # ---- plugins ----------------------------------------------------------------------
 add_subdirectory(plugins/obm)
 add_subdirectory(plugins/valve)
+# Packing Solver (a tool plugin): built once it is complete.
+set(FORMA_HAVE_PACKING OFF)
+if(EXISTS ${CMAKE_SOURCE_DIR}/plugins/packing/CMakeLists.txt)
+  set(FORMA_HAVE_PACKING ON)
+  add_subdirectory(plugins/packing)
+endif()
 install(FILES packaging/forma.desktop DESTINATION share/applications)
 install(FILES packaging/forma.png DESTINATION share/icons/hicolor/512x512/apps)
+# refresh the desktop's caches so the app and its icon show up right away (skipped when packaging with DESTDIR)
+install(CODE [[
+  if("$ENV{DESTDIR}" STREQUAL "")
+    set(share "${CMAKE_INSTALL_PREFIX}/share")
+    # an icon left by an earlier version would be preferred to the new one (an SVG wins over a PNG)
+    file(REMOVE "${share}/icons/hicolor/scalable/apps/forma.svg")
+    find_program(UDD update-desktop-database)
+    find_program(GUIC gtk-update-icon-cache)
+    find_program(KSYCOCA kbuildsycoca6)
+    if(UDD)
+      execute_process(COMMAND ${UDD} -q "${share}/applications")
+    endif()
+    # GTK's cache: rebuilt even where the folder has no index.theme (as ~/.local's), else a stale one hides the icon
+    if(GUIC AND EXISTS "${share}/icons/hicolor")
+      execute_process(COMMAND ${GUIC} -q -t -f "${share}/icons/hicolor")
+    endif()
+    # KDE remembers the icons it looked up: let it look again
+    file(TOUCH_NOCREATE "${share}/icons/hicolor")
+    if(DEFINED ENV{HOME} AND EXISTS "$ENV{HOME}/.cache/icon-cache.kcache")
+      file(REMOVE "$ENV{HOME}/.cache/icon-cache.kcache")
+    endif()
+    if(KSYCOCA)
+      execute_process(COMMAND ${KSYCOCA} OUTPUT_QUIET ERROR_QUIET)
+    endif()
+  endif()
+]])
 
 # `cmake --build build --target appimage`: packages this build as
 # build/Forma-<version>-x86_64.AppImage and checks it starts with OpenGL on
 # X11 and Wayland (off-screen). The same script makes the released AppImage.
 if(UNIX AND NOT APPLE)
+  set(FORMA_APPIMAGE_PLUGINS forma_obm forma_valve_vmf forma_valve_smd)
+  if(FORMA_HAVE_PACKING)
+    list(APPEND FORMA_APPIMAGE_PLUGINS forma_packing)
+  endif()
   add_custom_target(appimage
     COMMAND ${CMAKE_SOURCE_DIR}/tools/build-appimage.sh ${CMAKE_BINARY_DIR} ${PROJECT_VERSION}
-    DEPENDS forma forma_obm forma_valve_vmf forma_valve_smd
+    DEPENDS forma ${FORMA_APPIMAGE_PLUGINS}
     USES_TERMINAL VERBATIM)
 endif()
 
@@ -153,4 +190,10 @@ if(FORMA_BUILD_TESTS)
   add_executable(forma_obm_tests tests/test_obm.cpp)
   target_link_libraries(forma_obm_tests PRIVATE forma_obm_format forma_io)
   add_test(NAME obm COMMAND forma_obm_tests)
+
+  if(FORMA_HAVE_PACKING AND EXISTS ${CMAKE_SOURCE_DIR}/tests/test_packing.cpp)
+    add_executable(forma_packing_tests tests/test_packing.cpp)
+    target_link_libraries(forma_packing_tests PRIVATE forma_packing_solver forma_core)
+    add_test(NAME packing COMMAND forma_packing_tests)
+  endif()
 endif()

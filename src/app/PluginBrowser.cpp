@@ -20,7 +20,7 @@ PluginBrowser::PluginBrowser(QWidget* parent) : QDialog(parent) {
     resize(820, 520);
     auto* lay = new QVBoxLayout(this);
     search_ = new QLineEdit(this);
-    search_->setPlaceholderText(QStringLiteral("Search plugins, vendors, formats…"));
+    search_->setPlaceholderText(QStringLiteral("Search plugins, vendors, formats, commands…"));
     search_->setClearButtonEnabled(true);
     lay->addWidget(search_);
     auto* split = new QSplitter(this);
@@ -67,7 +67,7 @@ void PluginBrowser::fill() {
     QSignalBlocker b(list_);
     list_->clear();
     for (const PluginInfo& p : Plugins::installed()) {
-        const QString hay = p.name + ' ' + p.vendor + ' ' + p.license + ' ' + p.description + ' ' + p.extensions.join(' ');
+        const QString hay = p.name + ' ' + p.vendor + ' ' + p.license + ' ' + p.description + ' ' + p.extensions.join(' ') + ' ' + p.command;
         if (!q.isEmpty() && !hay.contains(q, Qt::CaseInsensitive)) continue;
         auto* it = new QListWidgetItem(p.version.isEmpty() ? p.name : QStringLiteral("%1  %2").arg(p.name, p.version), list_);
         it->setData(Qt::UserRole, p.file);
@@ -110,6 +110,7 @@ void PluginBrowser::showDetails() {
         row(QStringLiteral("License"), p.license.toHtmlEscaped());
         row(QStringLiteral("Formats"), p.extensions.isEmpty() ? QString() : QStringLiteral(".") + p.extensions.join(QStringLiteral(", .")).toHtmlEscaped());
         row(QStringLiteral("Can"), can.join(QStringLiteral(", ")));
+        row(QStringLiteral("Command"), p.command.isEmpty() ? QString() : QStringLiteral("Extensions &gt; %1").arg(p.command.toHtmlEscaped()));
         row(QStringLiteral("State"), state);
         row(QStringLiteral("Website"), p.url.isEmpty() ? QString() : QStringLiteral("<a href='%1'>%1</a>").arg(p.url.toHtmlEscaped()));
         row(QStringLiteral("File"), QStringLiteral("<small>%1</small>").arg(p.file.toHtmlEscaped()));

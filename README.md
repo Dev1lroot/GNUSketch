@@ -44,6 +44,9 @@ code, formats or artwork); models are stored as open, documented JSON.
 
 ## Build
 
+Quick way: `./build.sh` (add `test`, `install`, `run`, `clean` or `debug`; see `./build.sh --help`).
+Or by hand:
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build -j
